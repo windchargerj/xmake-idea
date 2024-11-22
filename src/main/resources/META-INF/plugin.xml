@@ -18,14 +18,11 @@
     <depends optional="true" config-file="io.xmake-ssh.xml">
         com.intellij.modules.ssh
     </depends>
+
     <!--clion and c/cpp language-->
-    <!--
-    <depends>com.intellij.clion</depends>
-    <depends>com.intellij.modules.cidr.ide</depends>
-    <depends>com.intellij.modules.cidr.lang</depends>
-    <depends>com.intellij.modules.cidr.modulemap.language</depends>
-    <depends>com.intellij.modules.cmake</depends>
-    -->
+    <depends optional="true" config-file="io.xmake-clion.xml">
+        com.intellij.modules.clion
+    </depends>
 
     <extensions defaultExtensionNs="com.intellij">
 

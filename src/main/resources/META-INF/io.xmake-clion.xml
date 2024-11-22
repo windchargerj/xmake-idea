@@ -1,0 +1,4 @@
+<idea-plugin>
+    <depends>com.intellij.modules.cidr.ide</depends>
+    <depends>com.intellij.modules.cmake</depends>
+</idea-plugin>

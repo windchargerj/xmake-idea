@@ -66,6 +66,9 @@ intellij {
     downloadSources.set(true)
     ideaDependencyCachePath.set(dependencyCachePath)
     updateSinceUntilBuild.set(true)
+    plugins.set(
+        listOf("com.intellij.clion")
+    )
     /*
     plugins.set(
         listOf(
