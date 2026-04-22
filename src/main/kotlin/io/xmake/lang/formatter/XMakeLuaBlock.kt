@@ -34,13 +34,12 @@ class XMakeLuaBlock(
 
         return when (val currentPsi = node.psi) {
             is LuaStatement if parentPsi is DomainScope
-                    && currentPsi.firstLeaf().text !in DomainScope.DomainType.symbols
+                    && currentPsi.firstLeaf().text !in DomainScope.DomainType.allKeywords
                 -> Indent.getNormalIndent()
 
             is LuaBlock if parentPsi is LuaFunctionBody -> Indent.getNormalIndent()
 
-            is LuaFieldList if
-            parentPsi is LuaTableConstructor -> Indent.getNormalIndent()
+            is LuaFieldList if parentPsi is LuaTableConstructor -> Indent.getNormalIndent()
 
             is LuaBlock if parentPsi is LuaStatement -> Indent.getNormalIndent()
 
@@ -58,11 +57,19 @@ class XMakeLuaBlock(
 
     override fun getChildAttributes(newChildIndex: Int): ChildAttributes {
         return when (val currentPsi = node.psi) {
-            is LuaFunctionBody,
-            is LuaTableConstructor,
             is DomainScope -> ChildAttributes(Indent.getNormalIndent(), null)
 
-            is LuaBlock if currentPsi.parent !is LuaChunk -> ChildAttributes(Indent.getNormalIndent(), null)
+            is LuaFunctionBody,
+            is LuaTableConstructor -> ChildAttributes(Indent.getNormalIndent(), null)
+
+            is LuaBlock -> {
+                val parentPsi = currentPsi.parent
+                when {
+                    parentPsi is LuaChunk -> ChildAttributes(Indent.getNoneIndent(), null)
+                    else -> ChildAttributes(Indent.getNormalIndent(), null)
+                }
+            }
+
             else -> ChildAttributes(Indent.getNoneIndent(), null)
         }
     }

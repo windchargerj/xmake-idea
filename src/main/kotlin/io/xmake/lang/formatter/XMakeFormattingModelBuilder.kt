@@ -25,93 +25,32 @@ class XMakeFormattingModelBuilder : FormattingModelBuilder {
     }
 
     companion object {
+        // Helper function to create TokenSet
+        private fun tokenSet(vararg tokens: Int): TokenSet =
+            PSIElementTypeFactory.createTokenSet(XMakeLuaLanguage.INSTANCE, *tokens)
+
         // Token sets for operators
-        private val ASSIGNMENT_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.EQ
-        )
-
-        private val ADDITIVE_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.PLUS, LuaLexer.MINUS
-        )
-
-        private val MULTIPLICATIVE_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.STAR, LuaLexer.SLASH, LuaLexer.SS, LuaLexer.PER
-        )
-
-        private val RELATIONAL_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.LT, LuaLexer.GT, LuaLexer.LE, LuaLexer.GE
-        )
-
-        private val EQUALITY_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.EE, LuaLexer.SQEQ
-        )
-
-        private val LOGICAL_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.AND, LuaLexer.OR
-        )
-
-        private val UNARY_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.NOT, LuaLexer.POUND, LuaLexer.SQUIG
-        )
-
-        private val CONCAT_OPERATOR: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.DD
-        )
-
-        private val BITWISE_OPERATORS: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.AMP, LuaLexer.PIPE, LuaLexer.SQUIG, LuaLexer.LL, LuaLexer.GG, LuaLexer.CARET
-        )
+        private val ASSIGNMENT_OPERATORS = tokenSet(LuaLexer.EQ)
+        private val ADDITIVE_OPERATORS = tokenSet(LuaLexer.PLUS, LuaLexer.MINUS)
+        private val MULTIPLICATIVE_OPERATORS = tokenSet(LuaLexer.STAR, LuaLexer.SLASH, LuaLexer.SS, LuaLexer.PER)
+        private val RELATIONAL_OPERATORS = tokenSet(LuaLexer.LT, LuaLexer.GT, LuaLexer.LE, LuaLexer.GE)
+        private val EQUALITY_OPERATORS = tokenSet(LuaLexer.EE, LuaLexer.SQEQ)
+        private val LOGICAL_OPERATORS = tokenSet(LuaLexer.AND, LuaLexer.OR)
+        private val UNARY_OPERATORS = tokenSet(LuaLexer.NOT, LuaLexer.POUND, LuaLexer.SQUIG)
+        private val CONCAT_OPERATOR = tokenSet(LuaLexer.DD)
+        private val BITWISE_OPERATORS = tokenSet(LuaLexer.AMP, LuaLexer.PIPE, LuaLexer.SQUIG, LuaLexer.LL, LuaLexer.GG, LuaLexer.CARET)
 
         // Punctuation
-        private val COMMA: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.COMMA
-        )
-
-        private val OPEN_PAREN: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.OP
-        )
-
-        private val CLOSE_PAREN: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.CP
-        )
-
-        private val OPEN_BRACKET: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.OB
-        )
-
-        private val CLOSE_BRACKET: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.CB
-        )
-
-        private val OPEN_BRACE: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.OCU
-        )
-
-        private val CLOSE_BRACE: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.CCU
-        )
+        private val COMMA = tokenSet(LuaLexer.COMMA)
+        private val OPEN_PAREN = tokenSet(LuaLexer.OP)
+        private val CLOSE_PAREN = tokenSet(LuaLexer.CP)
+        private val OPEN_BRACKET = tokenSet(LuaLexer.OB)
+        private val CLOSE_BRACKET = tokenSet(LuaLexer.CB)
+        private val OPEN_BRACE = tokenSet(LuaLexer.OCU)
+        private val CLOSE_BRACE = tokenSet(LuaLexer.CCU)
 
         // Keywords
-        private val KEYWORDS_BEFORE_PAREN: TokenSet = PSIElementTypeFactory.createTokenSet(
-            XMakeLuaLanguage.INSTANCE,
-            LuaLexer.IF, LuaLexer.ELSEIF, LuaLexer.WHILE, LuaLexer.FOR, LuaLexer.FUNCTION
-        )
+        private val KEYWORDS_BEFORE_PAREN = tokenSet(LuaLexer.IF, LuaLexer.ELSEIF, LuaLexer.WHILE, LuaLexer.FOR, LuaLexer.FUNCTION)
 
         private fun createSpaceBuilder(settings: CodeStyleSettings): SpacingBuilder {
             val commonSettings = settings.getCommonSettings(XMakeLuaLanguage.INSTANCE)
