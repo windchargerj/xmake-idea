@@ -32,7 +32,6 @@ LOCAL    : 'local';
 LT       : '<';
 GT       : '>';
 RETURN   : 'return';
-CONTINUE : 'continue';
 CC       : '::';
 NIL      : 'nil';
 FALSE    : 'false';
@@ -74,9 +73,7 @@ NORMALSTRING: '"' ( EscapeSequence | ~('\\' | '"'))* '"';
 
 CHARSTRING: '\'' ( EscapeSequence | ~('\'' | '\\'))* '\'';
 
-LONGSTRING: '[' NESTED_STR ']';
-
-fragment NESTED_STR: '=' NESTED_STR '=' | '[' .*? ']';
+LONGSTRING: '[' { this.IsLongStringStart() }? { this.HandleLongString(); };
 
 INT: Digit+;
 
@@ -95,7 +92,7 @@ fragment ExponentPart: [eE] [+-]? Digit+;
 fragment HexExponentPart: [pP] [+-]? Digit+;
 
 fragment EscapeSequence:
-    '\\' [abfnrtvz"'|$#\\] // World of Warcraft Lua additionally escapes |$# 
+    '\\' [abfnrtvz"'|$#\\] // World of Warcraft Lua additionally escapes |$#
     | '\\' '\r'? '\n'
     | DecimalEscape
     | HexEscape
@@ -122,4 +119,4 @@ WS: [ \t\u000C\r\n]+ -> channel(HIDDEN);
 
 SHEBANG: '#' { this.IsLine1Col0() }? '!'? SingleLineInputCharacter* -> channel(HIDDEN);
 
-BAD_CHARACTER: . ;
+UNEXPECTED_CHAR : . ;
