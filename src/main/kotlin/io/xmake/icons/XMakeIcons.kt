@@ -32,6 +32,9 @@ object XMakeIcons {
     // file icon
     val FILE = load("/icons/xmake.svg")
 
+    // target icon
+    val TARGET = load("/icons/xmake-dark-fill-translucent.svg")
+
     // error icon
     val ERROR = AllIcons.General.Error
 

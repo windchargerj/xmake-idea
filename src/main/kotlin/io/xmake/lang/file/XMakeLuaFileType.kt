@@ -18,50 +18,34 @@
  * @file        XMakeLuaFileType.kt
  *
  */
-package io.xmake.file
+package io.xmake.lang.file
 
-import com.intellij.lang.Language
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.fileTypes.LanguageFileType
-import com.intellij.openapi.fileTypes.PlainTextLanguage
 import com.intellij.openapi.vfs.VirtualFile
 import io.xmake.icons.XMakeIcons
+import io.xmake.lang.XMakeLuaLanguage
 import org.jetbrains.annotations.Contract
 import javax.swing.Icon
 
 object XMakeLuaFileType : LanguageFileType(XMakeLuaLanguage) {
+    val INSTANCE = XMakeLuaFileType
 
     const val FILE_NAME: String = "xmake.lua"
-    val INSTANCE: XMakeLuaFileType = XMakeLuaFileType
 
-    override fun getName(): String {
-        return FILE_NAME
-    }
+    override fun getName(): String = FILE_NAME
 
-    override fun getDescription(): String {
-        return "XMake Lua file"
-    }
+    override fun getDescription(): String = "XMake Lua file"
 
-    override fun getDefaultExtension(): String {
-        return "lua"
-    }
+    override fun getDefaultExtension(): String = "lua"
 
-    override fun getIcon(): Icon {
-        return XMakeIcons.FILE
-    }
+    override fun getIcon(): Icon = XMakeIcons.FILE
 
-    override fun getDisplayName(): String {
-        return "XMake Lua"
-    }
-
-
-    private fun findLanguage(): Language {
-        return Language.findLanguageByID("xmake.lua") ?: PlainTextLanguage.INSTANCE
-    }
+    override fun getDisplayName(): String = "XMake Lua"
 
     @Contract("null->false")
     fun isFileOfType(file: VirtualFile?): Boolean {
-        return file != null && FileTypeManager.getInstance().isFileOfType(file, INSTANCE)
+        return file != null && FileTypeManager.getInstance().isFileOfType(file, XMakeLuaFileType)
     }
 
 }

@@ -15,23 +15,27 @@
  * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
- * @file        XMakeLuaFileChangeListener.kt
+ * @file        XMakeLuaLanguage.kt
  *
  */
-package io.xmake.file
+package io.xmake.lang
 
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiTreeAnyChangeAbstractAdapter
+import com.intellij.lang.Language
+import io.xmake.lang.antlr.LuaParser
+import org.antlr.intellij.adaptor.lexer.PSIElementTypeFactory
+import org.antlr.v4.runtime.VocabularyImpl
 
-class XMakeLuaFileChangeListener : PsiTreeAnyChangeAbstractAdapter() {
-    private val fileDocumentManager = FileDocumentManager.getInstance()
+object XMakeLuaLanguage : Language("xmake.lua") {
+    private fun readResolve(): Any = XMakeLuaLanguage
+    val INSTANCE: XMakeLuaLanguage = XMakeLuaLanguage
 
-    override fun onChange(file: PsiFile?) {
-        file?.let {
-            if (XMakeLuaFileType.isFileOfType(file.virtualFile)) {
-                fileDocumentManager.saveDocument(it.fileDocument)
-            }
-        }
+    init {
+        PSIElementTypeFactory.defineLanguageIElementTypes(
+            INSTANCE,
+            (LuaParser.VOCABULARY as VocabularyImpl).symbolicNames,
+            LuaParser.ruleNames
+        )
     }
+
+    override fun getDisplayName(): String = "XMake Lua"
 }
