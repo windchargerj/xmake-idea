@@ -1,0 +1,126 @@
+<templateSet group="XMake Lua">
+    <template
+            name="fn"
+            value="function $NAME$($PARAMS$)&#10;    $BODY$&#10;end$END$"
+            description="function ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+        <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="lfn"
+            value="local function $NAME$($PARAMS$)&#10;    $BODY$&#10;end$END$"
+            description="local function ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+        <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="afn"
+            value="function($PARAMS$)&#10;    $BODY$&#10;end$END$"
+            description="anonymous function ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="ife"
+            value="if $COND$ then&#10;    $BODY$&#10;end$END$"
+            description="if ... then ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="forp"
+            value="for $K$, $V$ in pairs($TABLE$) do&#10;    $BODY$&#10;end$END$"
+            description="for k, v in pairs(...) do ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="K" expression="" defaultValue="&quot;k&quot;" alwaysStopAt="true"/>
+        <variable name="V" expression="" defaultValue="&quot;v&quot;" alwaysStopAt="true"/>
+        <variable name="TABLE" expression="" defaultValue="&quot;t&quot;" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="forip"
+            value="for $I$, $V$ in ipairs($TABLE$) do&#10;    $BODY$&#10;end$END$"
+            description="for i, v in ipairs(...) do ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="I" expression="" defaultValue="&quot;i&quot;" alwaysStopAt="true"/>
+        <variable name="V" expression="" defaultValue="&quot;v&quot;" alwaysStopAt="true"/>
+        <variable name="TABLE" expression="" defaultValue="&quot;t&quot;" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="fori"
+            value="for $VAR$ = $FROM$, $TO$ do&#10;    $BODY$&#10;end$END$"
+            description="for i = ... do ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="VAR" expression="" defaultValue="&quot;i&quot;" alwaysStopAt="true"/>
+        <variable name="FROM" expression="" defaultValue="&quot;1&quot;" alwaysStopAt="true"/>
+        <variable name="TO" expression="" defaultValue="&quot;10&quot;" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="rep"
+            value="repeat&#10;    $BODY$&#10;until $COND$$END$"
+            description="repeat ... until"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+
+    <template
+            name="wh"
+            value="while $COND$ do&#10;    $BODY$&#10;end$END$"
+            description="while ... do ... end"
+            toReformat="true"
+            toShortenFQNames="false">
+        <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="XMAKE_LUA" value="true"/>
+        </context>
+    </template>
+</templateSet>
