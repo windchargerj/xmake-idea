@@ -50,24 +50,42 @@
                   fileNames="xmake.lua" fileNamesCaseInsensitive="xmake.lua"
                   implementationClass="io.xmake.lang.file.XMakeLuaFileType"/>
 
-        <lang.ast.factory language="xmake.lua" implementationClass="io.xmake.lang.XMakeLuaASTFactory"/>
-        <lang.parserDefinition language="xmake.lua" implementationClass="io.xmake.lang.XMakeLuaParserDefinition"/>
-        <lang.syntaxHighlighterFactory language="xmake.lua" implementationClass="io.xmake.lang.highlight.XMakeLuaSyntaxHighlighterFactory"/>
-        <lang.commenter language="xmake.lua" implementationClass="io.xmake.lang.comment.XMakeLuaCommenter"/>
-        <lang.foldingBuilder language="xmake.lua" implementationClass="io.xmake.lang.folding.XMakeLuaFoldingBuilder"/>
+        <lang.ast.factory language="xmake.lua" implementationClass="io.xmake.lang.syntax.XMakeLuaASTFactory"/>
+        <lang.parserDefinition language="xmake.lua" implementationClass="io.xmake.lang.syntax.XMakeLuaParserDefinition"/>
+        <lang.syntaxHighlighterFactory language="xmake.lua" implementationClass="io.xmake.lang.editor.highlighting.XMakeLuaSyntaxHighlighterFactory"/>
+        <lang.commenter language="xmake.lua" implementationClass="io.xmake.lang.editor.commenting.XMakeLuaCommenter"/>
+        <lang.foldingBuilder language="xmake.lua" implementationClass="io.xmake.lang.editor.folding.XMakeLuaFoldingBuilder"/>
+        <lang.braceMatcher language="xmake.lua" implementationClass="io.xmake.lang.editor.typing.XMakeLuaBraceMatcher"/>
+        <lang.quoteHandler language="xmake.lua" implementationClass="io.xmake.lang.editor.typing.XMakeLuaQuoteHandler"/>
+        <liveTemplateContext id="XMAKE_LUA"
+                             contextId="XMAKE_LUA"
+                             baseContextId="OTHER"
+                             implementation="io.xmake.lang.editor.template.XMakeLuaLiveTemplateContext"/>
+        <defaultLiveTemplates file="/liveTemplates/xmake-lua.xml"/>
         <lang.psiStructureViewFactory language="xmake.lua"
-                                      implementationClass="io.xmake.lang.structureView.LuaStructureViewFactory"/>
+                                      implementationClass="io.xmake.lang.navigation.structure.LuaStructureViewFactory"/>
         <lang.formatter
                 language="xmake.lua"
-                implementationClass="io.xmake.lang.formatter.XMakeFormattingModelBuilder"/>
+                implementationClass="io.xmake.lang.editor.formatting.XMakeFormattingModelBuilder"/>
 
-        <annotator language="xmake.lua" implementationClass="io.xmake.lang.annotation.XMakeLuaFunctionAnnotator"/>
+        <annotator language="xmake.lua" implementationClass="io.xmake.lang.codeInsight.annotation.XMakeAnnotator"/>
+        <typedHandler implementation="io.xmake.lang.editor.typing.XMakeLuaTypedHandler"/>
+        <localInspection language="xmake.lua"
+                         shortName="XMakeUnresolvedSymbol"
+                         displayName="Unresolved xmake symbol"
+                         groupName="XMake"
+                         enabledByDefault="true"
+                         level="ERROR"
+                         implementationClass="io.xmake.lang.codeInsight.inspection.XMakeUnresolvedSymbolInspection"/>
         <completion.contributor language="xmake.lua"
-                                implementationClass="io.xmake.lang.completion.XMakeCompletionContributor"/>
+                                implementationClass="io.xmake.lang.codeInsight.completion.XMakeCompletionContributor"/>
+        <psi.referenceContributor language="xmake.lua"
+                                  implementation="io.xmake.lang.resolution.reference.XMakeReferenceContributor"/>
+        <psi.declarationProvider implementation="io.xmake.lang.navigation.XMakeDeclarationProvider"/>
 
         <additionalTextAttributes scheme="Darcula" file="colorSchemes/xmake-lua.xml"/>
-        <colorSettingsPage id="XMake.ColorSettings" implementation="io.xmake.lang.highlight.XMakeColorSettingsPage"/>
-        <langCodeStyleSettingsProvider implementation="io.xmake.lang.formatter.XMakeCodeStyleSettingsProvider"/>
+        <colorSettingsPage id="XMake.ColorSettings" implementation="io.xmake.lang.editor.settings.colors.XMakeColorSettingsPage"/>
+        <langCodeStyleSettingsProvider implementation="io.xmake.lang.editor.settings.codeStyle.XMakeCodeStyleSettingsProvider"/>
     </extensions>
 
     <!--
@@ -148,3 +166,4 @@
     </actions>
 
 </idea-plugin>
+

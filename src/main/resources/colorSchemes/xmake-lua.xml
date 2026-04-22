@@ -1,25 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <list>
-    <option name="XMAKE_LUA_FUNCTION_CALL" baseAttributes="FUNCTION_CALL">
+    <!-- Theme-aligned Darcula palette: follow IntelliJ semantic defaults, with minimal xmake-specific emphasis. -->
+    <option name="XMAKE_LUA_FUNCTION_CALL" baseAttributes="FUNCTION_CALL"/>
+    <option name="XMAKE_LUA_DESCRIPTION_API_CALL" baseAttributes="PREDEFINED_SYMBOL">
         <value>
-            <option name="FOREGROUND" value="ffffd2"/> <!-- Light Yellow -->
+            <option name="FOREGROUND" value="d9c78f"/> <!-- DSL Pale Yellow -->
             <option name="FONT_TYPE" value="2"/>
         </value>
     </option>
-    <option name="XMAKE_LUA_DOMAIN_SCOPE" baseAttributes="FUNCTION_CALL">
+    <option name="XMAKE_LUA_SCRIPT_API_CALL" baseAttributes="FUNCTION_CALL">
         <value>
-            <option name="FOREGROUND" value="aa96da"/> <!-- Purple -->
+            <option name="FOREGROUND" value="c39bb9"/> <!-- Script API Mauve -->
+        </value>
+    </option>
+    <option name="XMAKE_LUA_CONFIGURATION_DOMAIN_API" baseAttributes="CLASS_NAME">
+        <value>
+            <option name="FOREGROUND" value="84b7c7"/> <!-- Light Domain Cyan -->
             <option name="FONT_TYPE" value="3"/>
         </value>
     </option>
-    <option name="XMAKE_LUA_INSTANCE" baseAttributes="IDENTIFIER">
+    <option name="XMAKE_LUA_INSTANCE_METHOD" baseAttributes="FUNCTION_CALL"/>
+    <option name="XMAKE_LUA_FUNCTION_DECLARATION" baseAttributes="FUNCTION_DECLARATION"/>
+    <option name="XMAKE_LUA_TABLE_KEY">
         <value>
-            <option name="FOREGROUND" value="a8d8ea"/> <!-- Light Blue -->
+            <option name="FOREGROUND" value="8dbfe0"/> <!-- Table Key Bright Sky Blue -->
         </value>
     </option>
-    <option name="XMAKE_LUA_INSTANCE_METHOD" baseAttributes="IDENTIFIER">
-        <value>
-            <option name="FOREGROUND" value="fcbad3"/> <!-- Pink -->
-        </value>
-    </option>
+    <option name="XMAKE_LUA_TABLE_FIELD" baseAttributes="INSTANCE_FIELD"/>
+    <option name="XMAKE_LUA_LOCAL_VARIABLE" baseAttributes="LOCAL_VARIABLE"/>
+    <option name="XMAKE_LUA_PARAMETER" baseAttributes="PARAMETER"/>
+    <option name="XMAKE_LUA_LABEL" baseAttributes="LABEL"/>
 </list>
