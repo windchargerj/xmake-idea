@@ -26,7 +26,7 @@ import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
-import io.xmake.file.highlight.XMakeLuaLexer
+//import io.xmake.file.highlight.XMakeLuaLexer
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.utils.execute.createProcess
 import io.xmake.utils.execute.runProcess
@@ -103,9 +103,9 @@ class XMakeInfoManager(val project: Project, private val scope: CoroutineScope) 
                     apis = parseApis(apisString)
                 }
 
-                if (xmakeInfo.apis.isNotEmpty()) {
-                    XMakeLuaLexer.updateApis(xmakeInfo.apis)
-                }
+//                if (xmakeInfo.apis.isNotEmpty()) {
+//                    XMakeLuaLexer.updateApis(xmakeInfo.apis)
+//                }
             }
         }
     }

@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  *
- * @author      ruki
+ * @author      ruki, windchargerj
  * @file        XMakeInfoTypes.kt
  *
  */
@@ -25,4 +25,4 @@ typealias XMakeBuildModes = List<String>
 typealias XMakePlatforms = List<String>
 typealias XMakeTargets = List<String>
 typealias XMakeToolchains = Map<String, String>
-typealias XMakeApis = Set<String>
+//typealias XMakeApis = Set<String>

@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  *
- * @author      ruki
+ * @author      ruki, windchargerj
  * @file        XMakeInfo.kt
  *
  */
@@ -22,13 +22,11 @@ package io.xmake.utils.info
 
 import io.xmake.utils.Logger
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.concurrent.Volatile
 
 class XMakeInfo {
 
@@ -37,7 +35,8 @@ class XMakeInfo {
     var platforms: XMakePlatforms = emptyList()
     var targets: XMakeTargets = emptyList()
     var toolchains: XMakeToolchains = emptyMap()
-    var apis: XMakeApis = emptySet()
+    @Volatile
+    var apis: XMakeApis = XMakeApis()// = emptySet()
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -150,27 +149,12 @@ class XMakeInfo {
     }
 
     fun parseApis(apiString: String): XMakeApis {
-        try {
-            val element = json.decodeFromString<JsonElement>(apiString)
-            if (element is JsonObject) {
-                val apis = mutableSetOf<String>()
-                val keysToInclude = listOf("description_builtin_apis", "script_builtin_apis", "description_scope_apis")
-                for (key in keysToInclude) {
-                    element[key]?.jsonArray?.forEach {
-                        val content = it.jsonPrimitive.content
-                        content.split(".").forEach { part ->
-                            if (part.isNotEmpty()) {
-                                apis.add(part)
-                            }
-                        }
-                    }
-                }
-                return apis
-            }
+        return try {
+            Json.decodeFromString(apiString)
         } catch (e: Exception) {
             Logger.w("Failed to parse apis: $e\n$apiString")
+            XMakeApis()
         }
-        return emptySet()
     }
 }
 

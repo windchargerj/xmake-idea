@@ -24,6 +24,8 @@ import junit.framework.TestCase.assertEquals
 import junit.framework.TestCase.assertNotNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,11 +35,18 @@ import org.junit.runners.JUnit4
 class ToolkitManagerTest {
 
     private lateinit var toolkitManager: ToolkitManager
+    private lateinit var testScope: CoroutineScope
 
     @Before
     fun setUp() {
-        toolkitManager = ToolkitManager(CoroutineScope(Dispatchers.Default))
+        testScope = CoroutineScope(Dispatchers.Default)
+        toolkitManager = ToolkitManager(testScope)
         toolkitManager.loadState(ToolkitManager.State())
+    }
+
+    @After
+    fun tearDown() {
+        testScope.cancel()
     }
 
     @Test
