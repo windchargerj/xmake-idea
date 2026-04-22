@@ -13,24 +13,24 @@ import org.antlr.v4.runtime.tree.Tree
 import java.util.*
 
 class XMakeLuaParseTreeToPSIConverter(
-    language: Language, parser: Parser, psiBuilder: PsiBuilder
+    language: Language,
+    parser: Parser,
+    psiBuilder: PsiBuilder
 ) : ANTLRParseTreeToPSIConverter(language, parser, psiBuilder), ParseTreeListener {
+
     private lateinit var globalScopeMarker: PsiBuilder.Marker
-    private val descriptionScopeMarkers: Deque<Pair<PsiBuilder.Marker, String?>> = ArrayDeque()
+    private val descriptionScopeMarkers: Deque<DescriptionScopeMarker> = ArrayDeque()
     private val scriptScopeMarkers: Deque<PsiBuilder.Marker> = ArrayDeque()
 
-    fun insideEnterFunctiondef(ctx: FunctiondefContext) {
-
-    }
-
-    fun insideExitFunctiondef(ctx: FunctiondefContext) {
-
-    }
+    private data class DescriptionScopeMarker(
+        val marker: PsiBuilder.Marker,
+        val typeName: String?
+    )
 
     private fun closeOpenDescriptionBlock() {
         if (descriptionScopeMarkers.isNotEmpty()) {
             descriptionScopeMarkers.pop().let { (marker, typeName) ->
-                marker.done(XMakeLanguageIElementTypes.DescriptionScopeType(typeName))
+                marker.done(resolveDescriptionScopeType(typeName))
             }
         }
     }
@@ -42,9 +42,15 @@ class XMakeLuaParseTreeToPSIConverter(
                     WhitespacesBinders.DEFAULT_LEFT_BINDER,
                     WhitespacesBinders.GREEDY_RIGHT_BINDER
                 )
-                marker.done(XMakeLanguageIElementTypes.DescriptionScopeType(typeName))
+                marker.done(resolveDescriptionScopeType(typeName))
             }
         }
+    }
+
+    private fun resolveDescriptionScopeType(typeName: String?) = when {
+        typeName == null -> XMakeLanguageIElementTypes.GLOBAL_SCOPE
+        typeName in DomainType.types -> XMakeLanguageIElementTypes.domainScope(typeName)!!
+        else -> XMakeLanguageIElementTypes.GLOBAL_SCOPE
     }
 
     private fun isSelfClosingDescription(ctx: FunctioncallContext, functionName: String): Boolean {
@@ -61,38 +67,33 @@ class XMakeLuaParseTreeToPSIConverter(
         while (context.parent != null) {
             if (context.parent is T) {
                 return context.parent as T
-            } else {
-                context = context.parent
             }
+            context = context.parent
         }
         return null
     }
 
     fun insideEnterBlock(ctx: BlockContext) {
-        if (ctx.parent is FuncbodyContext &&
-            ctx.findParentOfContext<FunctioncallContext>()?.NAME(0)?.text !in DomainType.types
-        ) {
+        if (ctx.parent is FuncbodyContext) {
             val marker = builder.mark()
             scriptScopeMarkers.push(marker)
         }
-        if (ctx.parent is ChunkContext){
+        if (ctx.parent is ChunkContext) {
             globalScopeMarker = builder.mark()
         }
     }
 
     fun insideExitBlock(ctx: BlockContext) {
-        if (ctx.parent is FuncbodyContext &&
-            ctx.findParentOfContext<FunctioncallContext>()?.NAME(0)?.text !in DomainType.types
-        ) {
+        if (ctx.parent is FuncbodyContext) {
             if (scriptScopeMarkers.isNotEmpty()) {
-                scriptScopeMarkers.pop().done(XMakeLanguageIElementTypes.ScriptScopeType())
+                scriptScopeMarkers.pop().done(XMakeLanguageIElementTypes.SCRIPT_SCOPE)
             }
         }
-        if (ctx.parent is ChunkContext){
+        if (ctx.parent is ChunkContext) {
             while (descriptionScopeMarkers.isNotEmpty()) {
                 closeLastOpenDescriptionBlock()
             }
-            globalScopeMarker.done(XMakeLanguageIElementTypes.DescriptionScopeType(null))
+            globalScopeMarker.done(XMakeLanguageIElementTypes.GLOBAL_SCOPE)
         }
     }
 
@@ -103,7 +104,7 @@ class XMakeLuaParseTreeToPSIConverter(
                     if (functionName in DomainType.types) {
                         closeLastOpenDescriptionBlock()
                         val marker = builder.mark()
-                        descriptionScopeMarkers.push(Pair(marker, functionName))
+                        descriptionScopeMarkers.push(DescriptionScopeMarker(marker, functionName))
                     }
                 }
             }
@@ -112,23 +113,31 @@ class XMakeLuaParseTreeToPSIConverter(
 
     fun outsideExitStat(ctx: StatContext) {
         if (ctx.parent is BlockContext && ctx.parent.parent is ChunkContext) {
-            getFunctionCall(ctx)?.let { functionCallContext ->
-                getFunctionName(functionCallContext)?.let { functionName ->
-                    if (isDescriptionScopeEndFunction(functionName) ||
-                        isSelfClosingDescription(functionCallContext, functionName)
-                    ) {
-                        closeOpenDescriptionBlock()
-                    }
+            val functionName = getFunctionName(ctx.functioncall())
+            if (functionName != null && functionName in DomainType.types) {
+                if (isDescriptionScopeEndFunction(functionName) ||
+                    isSelfClosingWithFunction(ctx) ||
+                    isSelfClosingWithDo(ctx)
+                ) {
+                    closeOpenDescriptionBlock()
                 }
             }
         }
     }
 
+    private fun isSelfClosingWithFunction(ctx: StatContext): Boolean {
+        val functionCall = ctx.functioncall() ?: return false
+        val args = functionCall.args() ?: return false
+        val expList = args.firstOrNull()?.explist() ?: return false
+        return expList.exp().any { it.functiondef() != null }
+    }
+
+    private fun isSelfClosingWithDo(ctx: StatContext): Boolean {
+        return false
+    }
+
     private fun getFunctionCall(ctx: StatContext): FunctioncallContext? {
-        if (ctx.functioncall() != null) {
-            return ctx.functioncall()
-        }
-        return null
+        return ctx.functioncall()
     }
 
     private fun getFunctionName(ctx: FunctioncallContext?): String? {
@@ -142,14 +151,12 @@ class XMakeLuaParseTreeToPSIConverter(
         super.enterEveryRule(ctx)
         when (ctx) {
             is BlockContext -> insideEnterBlock(ctx)
-            is FunctiondefContext -> insideEnterFunctiondef(ctx)
         }
     }
 
     override fun exitEveryRule(ctx: ParserRuleContext?) {
         when (ctx) {
             is BlockContext -> insideExitBlock(ctx)
-            is FunctiondefContext -> insideExitFunctiondef(ctx)
         }
         super.exitEveryRule(ctx)
         when (ctx) {
