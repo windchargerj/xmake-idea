@@ -2,6 +2,7 @@ package io.xmake.lang
 
 import com.intellij.lang.ASTNode
 import com.intellij.lang.ParserDefinition
+import com.intellij.lang.PsiBuilder
 import com.intellij.lang.PsiParser
 import com.intellij.lexer.Lexer
 import com.intellij.openapi.diagnostic.logger
@@ -16,10 +17,15 @@ import io.xmake.lang.antlr.LuaLexer
 import io.xmake.lang.antlr.LuaParser
 import io.xmake.lang.psi.XMakeLuaFile
 import io.xmake.lang.psi.lua.*
+import io.xmake.lang.psi.xmake.DomainScope
+import io.xmake.lang.psi.xmake.GlobalScope
+import io.xmake.lang.psi.xmake.NamespaceScope
+import io.xmake.lang.psi.xmake.ScriptScope
 import org.antlr.intellij.adaptor.lexer.ANTLRLexerAdaptor
 import org.antlr.intellij.adaptor.lexer.PSIElementTypeFactory
 import org.antlr.intellij.adaptor.lexer.RuleIElementType
 import org.antlr.intellij.adaptor.lexer.TokenIElementType
+import org.antlr.intellij.adaptor.parser.ANTLRParseTreeToPSIConverter
 import org.antlr.intellij.adaptor.parser.ANTLRParserAdaptor
 import org.antlr.intellij.adaptor.psi.ANTLRPsiNode
 import org.antlr.v4.runtime.Parser
@@ -43,6 +49,14 @@ class XMakeLuaParserDefinition : ParserDefinition {
                     return (parser as LuaParser).functiondef()
                 // let's hope it's an ID as needed by "rename function"
                 return (parser as LuaParser).getInvokingContext(root.index.toInt())
+            }
+
+            override fun createListener(
+                parser: Parser,
+                root: IElementType,
+                builder: PsiBuilder
+            ): ANTLRParseTreeToPSIConverter {
+                return XMakeLuaParseTreeToPSIConverter(language, parser, builder)
             }
         }
     }
@@ -74,6 +88,12 @@ class XMakeLuaParserDefinition : ParserDefinition {
 
     override fun createElement(node: ASTNode): PsiElement {
         return when (val elType = node.elementType) {
+            is XMakeLanguageIElementTypes.DescriptionScopeType ->
+                if (elType.typeName == null) GlobalScope(node) else DomainScope(node, elType.typeName)
+            is XMakeLanguageIElementTypes.ScriptScopeType ->
+                ScriptScope(node)
+            is XMakeLanguageIElementTypes.NamespaceScopeType ->
+                NamespaceScope(node)
             is TokenIElementType ->
                 ANTLRPsiNode(node)
             !is RuleIElementType ->
