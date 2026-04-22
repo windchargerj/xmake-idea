@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+    <option name="XMAKE_LUA_FUNCTION_CALL" baseAttributes="FUNCTION_CALL">
+        <value>
+            <option name="FOREGROUND" value="ffffd2"/> <!-- Light Yellow -->
+            <option name="FONT_TYPE" value="2"/>
+        </value>
+    </option>
+    <option name="XMAKE_LUA_DOMAIN_SCOPE" baseAttributes="FUNCTION_CALL">
+        <value>
+            <option name="FOREGROUND" value="aa96da"/> <!-- Purple -->
+            <option name="FONT_TYPE" value="3"/>
+        </value>
+    </option>
+    <option name="XMAKE_LUA_INSTANCE" baseAttributes="IDENTIFIER">
+        <value>
+            <option name="FOREGROUND" value="a8d8ea"/> <!-- Light Blue -->
+        </value>
+    </option>
+    <option name="XMAKE_LUA_INSTANCE_METHOD" baseAttributes="IDENTIFIER">
+        <value>
+            <option name="FOREGROUND" value="fcbad3"/> <!-- Pink -->
+        </value>
+    </option>
+</list>

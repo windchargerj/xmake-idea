@@ -52,6 +52,11 @@
 
         <lang.ast.factory language="xmake.lua" implementationClass="io.xmake.lang.XMakeLuaASTFactory"/>
         <lang.parserDefinition language="xmake.lua" implementationClass="io.xmake.lang.XMakeLuaParserDefinition"/>
+        <lang.syntaxHighlighterFactory language="xmake.lua"
+                                       implementationClass="io.xmake.lang.highlight.XMakeLuaSyntaxHighlighterFactory"/>
+
+        <additionalTextAttributes scheme="Darcula" file="colorSchemes/xmake-lua.xml"/>
+        <colorSettingsPage id="XMake.ColorSettings" implementation="io.xmake.lang.highlight.XMakeColorSettingsPage"/>
     </extensions>
 
     <!--
