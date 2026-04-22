@@ -34,21 +34,22 @@ class XMakeInfoActivity : ProjectActivity {
         // Initial probe
         val manager = XMakeInfoManager.getInstance(project)
         val toolkit = project.activatedToolkit ?: ToolkitManager.getInstance().getRegisteredToolkits().firstOrNull()
-        
+
         toolkit?.let {
-            manager.probeXMakeInfo(it)
-            manager.probeXMakeApis(it)
+            manager.refreshXMakeData(it)
         }
 
-        ApplicationManager.getApplication().messageBus.connect()
-            .subscribe(
-                ToolkitChangedNotifier.TOOLKIT_CHANGED_TOPIC,
-                object : ToolkitChangedNotifier {
-                    override fun toolkitChanged(toolkit: Toolkit?) {
-                        manager.probeXMakeInfo(toolkit)
-                        manager.probeXMakeApis(toolkit)
-                    }
+        // Subscribe to toolkit changes and hold the connection
+        // Use project dispose listener to properly disconnect
+        val connection = ApplicationManager.getApplication().messageBus.connect(project)
+        connection.subscribe(
+            ToolkitChangedNotifier.TOOLKIT_CHANGED_TOPIC,
+            object : ToolkitChangedNotifier {
+                override fun toolkitChanged(toolkit: Toolkit?) {
+                    manager.refreshXMakeData(toolkit)
                 }
-            )
+            }
+        )
+        // Connection will be automatically disconnected when project is disposed
     }
 }

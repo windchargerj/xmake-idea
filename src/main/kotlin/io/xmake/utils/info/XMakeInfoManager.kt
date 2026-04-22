@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  *
- * @author      ruki
+ * @author      ruki, windchargerj
  * @file        XMakeInfoManager.kt
  *
  */
@@ -26,11 +26,12 @@ import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
-//import io.xmake.file.highlight.XMakeLuaLexer
+import io.xmake.lang.declarations.source.ApiService
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.utils.execute.createProcess
 import io.xmake.utils.execute.runProcess
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -39,76 +40,80 @@ class XMakeInfoManager(val project: Project, private val scope: CoroutineScope) 
 
     val xmakeInfo: XMakeInfo = XMakeInfo()
 
-    // Todo
-    val cachedXMakeInfoMap: MutableMap<Toolkit, XMakeInfo> = mutableMapOf()
+    private val platformKeys = listOf("architectures", "buildmodes", "platforms", "toolchains")
 
-    fun probeXMakeInfo(toolkit: Toolkit?) {
+
+    fun refreshXMakeData(toolkit: Toolkit?) {
+        toolkit ?: return
         scope.launch {
-            toolkit?.let {
-                val workingDirectory = project.basePath?.let { path -> File(path) }
-
-                suspend fun runXMakeShow(key: String): String {
-                    val cmd = GeneralCommandLine(
-                        "xmake show -l $key --json".split(" ")
-                    ).apply {
-                        workingDirectory?.let { wd -> withWorkDirectory(wd) }
-                        withEnvironment("XMAKE_SKIP_HISTORY", "1")
-                        withEnvironment("XMAKE_ROOT", "y")
-                        withEnvironment("XMAKE_COLOR_TERM", "nocolor")
-                    }
-                    val result = runProcess(cmd.createProcess(it)).first.getOrDefault("")
-                    return result
-                }
-
-                val architecturesString = runXMakeShow("architectures")
-                val buildModesString = runXMakeShow("buildmodes")
-                val platformsString = runXMakeShow("platforms")
-                val targetsString = runXMakeShow("targets")
-                val toolchainsString = runXMakeShow("toolchains")
-
-                with(xmakeInfo) {
-                    architectures = parseArchitectures(architecturesString)
-                    buildModes = parseBuildModes(buildModesString)
-                    platforms = parsePlatforms(platformsString)
-                    targets = parseTargets(targetsString)
-                    toolchains = parseToolchains(toolchainsString)
-                }
-
-                project.messageBus.syncPublisher(XMAKE_INFO_TOPIC).onXMakeInfoUpdated(xmakeInfo)
+            coroutineScope {
+                launch { refreshPlatforms(toolkit) }
+                launch { refreshTargets(toolkit) }
+                launch { refreshApis(toolkit) }
             }
         }
     }
 
-    fun probeXMakeApis(toolkit: Toolkit?) {
+    fun refreshPlatforms(toolkit: Toolkit?) {
+        toolkit ?: return
         scope.launch {
-            toolkit?.let {
-                val workingDirectory = project.basePath?.let { path -> File(path) }
-
-                suspend fun runXMakeShow(key: String): String {
-                    val cmd = GeneralCommandLine(
-                        "xmake show -l $key --json".split(" ")
-                    ).apply {
-                        workingDirectory?.let { wd -> withWorkDirectory(wd) }
-                        withEnvironment("XMAKE_SKIP_HISTORY", "1")
-                        withEnvironment("XMAKE_ROOT", "y")
-                        withEnvironment("XMAKE_COLOR_TERM", "nocolor")
-                    }
-                    val result = runProcess(cmd.createProcess(it)).first.getOrDefault("")
-                    return result
+            coroutineScope {
+                platformKeys.forEach { key ->
+                    launch { refreshItem(toolkit, key) }
                 }
-
-                val apisString = runXMakeShow("apis")
-
-                with(xmakeInfo) {
-                    apis = parseApis(apisString)
-                }
-
-//                if (xmakeInfo.apis.isNotEmpty()) {
-//                    XMakeLuaLexer.updateApis(xmakeInfo.apis)
-//                }
             }
+            notifyUpdated()
         }
     }
+
+    fun refreshTargets(toolkit: Toolkit?, workingDir: String? = projectDir) {
+        toolkit ?: return
+        scope.launch {
+            val result = runXMakeShow(toolkit, "targets", workingDir)
+            xmakeInfo.targets = xmakeInfo.parseTargets(result)
+            notifyUpdated()
+        }
+    }
+
+    fun refreshApis(toolkit: Toolkit?) {
+        toolkit ?: return
+        scope.launch {
+            xmakeInfo.apis = xmakeInfo.parseApis(runXMakeShow(toolkit, "apis", projectDir))
+            ApiService.getInstance(project).reload()
+            notifyUpdated()
+        }
+    }
+
+    fun forceRefresh(toolkit: Toolkit?) = refreshXMakeData(toolkit)
+
+
+    private suspend fun refreshItem(toolkit: Toolkit, key: String) {
+        val result = runXMakeShow(toolkit, key, projectDir)
+        when (key) {
+            "architectures" -> xmakeInfo.architectures = xmakeInfo.parseArchitectures(result)
+            "buildmodes" -> xmakeInfo.buildModes = xmakeInfo.parseBuildModes(result)
+            "platforms" -> xmakeInfo.platforms = xmakeInfo.parsePlatforms(result)
+            "toolchains" -> xmakeInfo.toolchains = xmakeInfo.parseToolchains(result)
+        }
+    }
+
+    private val projectDir: String?
+        get() = project.basePath
+
+    private fun notifyUpdated() {
+        project.messageBus.syncPublisher(XMAKE_INFO_TOPIC).onXMakeInfoUpdated(xmakeInfo)
+    }
+
+    private suspend fun runXMakeShow(toolkit: Toolkit, key: String, dir: String?): String {
+        val cmd = GeneralCommandLine("xmake show -l $key --json".split(" ")).apply {
+            dir?.let { withWorkDirectory(File(it)) }
+            withEnvironment("XMAKE_SKIP_HISTORY", "1")
+            withEnvironment("XMAKE_ROOT", "y")
+            withEnvironment("XMAKE_COLOR_TERM", "nocolor")
+        }
+        return runProcess(cmd.createProcess(toolkit)).first.getOrDefault("")
+    }
+
 
     interface XMakeInfoListener {
         fun onXMakeInfoUpdated(xmakeInfo: XMakeInfo)
@@ -118,6 +123,7 @@ class XMakeInfoManager(val project: Project, private val scope: CoroutineScope) 
         val Log = logger<XMakeInfoManager>()
         val XMAKE_INFO_TOPIC = Topic.create("XMake Info Updated", XMakeInfoListener::class.java)
 
-        fun getInstance(project: Project): XMakeInfoManager = project.serviceOrNull() ?: throw IllegalStateException()
+        fun getInstance(project: Project): XMakeInfoManager =
+            project.serviceOrNull() ?: throw IllegalStateException()
     }
 }

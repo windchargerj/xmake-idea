@@ -144,8 +144,7 @@ class XMakeRunConfiguration(
         runToolkit = runToolkit?.let { toolkit ->
             ToolkitManager.getInstance().findRegisteredToolkitById(toolkit.id)
         }
-        // Todo: Optimize to avoid probing delay.
-        XMakeInfoManager.getInstance(project).probeXMakeInfo(runToolkit)
+        XMakeInfoManager.getInstance(project).refreshXMakeData(runToolkit)
     }
 
     override fun checkConfiguration() {

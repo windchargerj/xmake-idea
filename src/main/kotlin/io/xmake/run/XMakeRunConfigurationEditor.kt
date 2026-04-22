@@ -42,7 +42,6 @@ import com.intellij.ui.dsl.builder.RowLayout
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.layout.ComboBoxPredicate
 import io.xmake.project.directory.ui.DirectoryBrowser
-import io.xmake.project.target.TargetManager
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ui.ToolkitComboBox
 import io.xmake.project.toolkit.ui.ToolkitListItem
@@ -83,6 +82,11 @@ class XMakeRunConfigurationEditor(
 
         // Try to update combo boxes initially if info is already available
         SwingUtilities.invokeLater {
+            val toolkit = runConfiguration.runToolkit
+            val workingDir = runConfiguration.runWorkingDir.takeIf { it.isNotBlank() }
+            if (toolkit != null) {
+                XMakeInfoManager.getInstance(project).refreshTargets(toolkit, workingDir)
+            }
             updateComboBoxes()
         }
     }
@@ -134,9 +138,7 @@ class XMakeRunConfigurationEditor(
         val targets = if (xmakeInfo.targets.isNotEmpty()) {
             xmakeInfo.targets.plus("default")
         } else {
-            (runConfiguration.runToolkit?.let {
-                TargetManager.getInstance(project).detectXMakeTarget(it, runConfiguration.runWorkingDir)
-            } ?: emptyList()).plus("default")
+            listOf("default")
         }.distinct().toList()
         targetsModel.addAll(targets)
         targetsModel.selectedItem = if (targets.contains(selectedTarget)) selectedTarget else runConfiguration.runTarget
@@ -394,14 +396,14 @@ class XMakeRunConfigurationEditor(
                         workingDirectoryBrowser.addBrowserListenerByToolkit(it)
                         buildDirectoryBrowser.addBrowserListenerByToolkit(it)
                         androidNDKDirectoryBrowser.addBrowserListenerByToolkit(it)
-                        XMakeInfoManager.getInstance(project).probeXMakeInfo(it)
+                        XMakeInfoManager.getInstance(project).refreshXMakeData(it)
                     }
                 }
                 activatedToolkit?.let {
                     workingDirectoryBrowser.addBrowserListenerByToolkit(it)
                     buildDirectoryBrowser.addBrowserListenerByToolkit(it)
                     androidNDKDirectoryBrowser.addBrowserListenerByToolkit(it)
-                    XMakeInfoManager.getInstance(project).probeXMakeInfo(it)
+                    XMakeInfoManager.getInstance(project).refreshXMakeData(it)
                 }
             }
         }
