@@ -6,11 +6,12 @@ import com.intellij.psi.util.descendantsOfType
 import io.xmake.icons.XMakeIcons
 import io.xmake.lang.psi.lua.LuaArgs
 import io.xmake.lang.psi.xmake.DomainScope
+import io.xmake.lang.psi.xmake.DomainScope.DomainType.Companion.toPresentableText
 import javax.swing.Icon
 
 class XMakeDomainItemPresentation(private val element: PsiElement): ItemPresentation {
     override fun getPresentableText(): String {
-        return (element as DomainScope).type.presentableText
+        return (element as DomainScope).type.toPresentableText()
     }
 
     override fun getLocationString(): String {
