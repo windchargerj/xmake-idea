@@ -32,6 +32,7 @@ abstract class XMakeTestCase : BasePlatformTestCase() {
 
     override fun setUp() {
         super.setUp()
+        VfsRootAccess.allowRootAccess(testRootDisposable, *ImportModuleFileResolver.xmakeSearchRootsForTests().toTypedArray())
         loadXMakeApis()
     }
 
@@ -50,6 +51,7 @@ abstract class XMakeTestCase : BasePlatformTestCase() {
         try {
             val apis = Json.decodeFromString<XMakeApis>(jsonFile.readText())
             XMakeInfoManager.getInstance(project).xmakeInfo.apis = apis
+            ApiService.getInstance(project).reload()
         } catch (e: Exception) {
             Log.severe("Failed to load XMake APIs: ${e.message}")
             error("Failed to load XMake APIs: ${e.message}")
