@@ -15,6 +15,7 @@ import com.intellij.psi.tree.TokenSet
 import io.xmake.lang.antlr.LuaLexer
 import io.xmake.lang.antlr.LuaParser
 import io.xmake.lang.psi.XMakeLuaFile
+import io.xmake.lang.psi.lua.*
 import org.antlr.intellij.adaptor.lexer.ANTLRLexerAdaptor
 import org.antlr.intellij.adaptor.lexer.PSIElementTypeFactory
 import org.antlr.intellij.adaptor.lexer.RuleIElementType
@@ -72,12 +73,33 @@ class XMakeLuaParserDefinition : ParserDefinition {
     }
 
     override fun createElement(node: ASTNode): PsiElement {
-        return when (node.elementType) {
+        return when (val elType = node.elementType) {
             is TokenIElementType ->
                 ANTLRPsiNode(node)
             !is RuleIElementType ->
                 ANTLRPsiNode(node)
-            else -> ANTLRPsiNode(node)
+            else ->
+                when (elType.ruleIndex) {
+                    LuaParser.RULE_chunk -> LuaChunk(node)
+                    LuaParser.RULE_block -> LuaBlock(node)
+                    LuaParser.RULE_stat -> LuaStatement(node)
+                    LuaParser.RULE_attnamelist -> LuaAttributeNameList(node)
+                    LuaParser.RULE_tableconstructor -> LuaTableConstructor(node)
+                    LuaParser.RULE_varlist -> LuaVariableList(node)
+                    LuaParser.RULE_var -> LuaVariableDefinition(node, elType)
+                    LuaParser.RULE_functiondef -> LuaFunctionDefinition(node, elType)
+                    LuaParser.RULE_funcname -> LuaFunctionName(node)
+                    LuaParser.RULE_parlist -> LuaParameterList(node)
+                    LuaParser.RULE_funcbody -> LuaFunctionBody(node)
+                    LuaParser.RULE_retstat -> LuaReturnStatement(node)
+                    LuaParser.RULE_functioncall -> LuaFunctionCall(node)
+                    LuaParser.RULE_args -> LuaArgs(node)
+                    LuaParser.RULE_string -> LuaString(node)
+                    LuaParser.RULE_explist -> LuaExpressionList(node)
+                    LuaParser.RULE_exp -> LuaExpression(node)
+                    LuaParser.RULE_fieldlist -> LuaFieldList(node)
+                    else -> ANTLRPsiNode(node)
+                }
         }
     }
 
