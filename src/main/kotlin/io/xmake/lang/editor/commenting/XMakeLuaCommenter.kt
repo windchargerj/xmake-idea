@@ -1,0 +1,26 @@
+package io.xmake.lang.editor.commenting
+
+import com.intellij.lang.Commenter
+
+class XMakeLuaCommenter : Commenter {
+    override fun getLineCommentPrefix(): String {
+        return "--"
+    }
+
+    override fun getBlockCommentPrefix(): String {
+        return "--[["
+    }
+
+    override fun getBlockCommentSuffix(): String {
+        return "]]"
+    }
+
+    override fun getCommentedBlockCommentPrefix(): String? {
+        return null
+    }
+
+    override fun getCommentedBlockCommentSuffix(): String? {
+        return null
+    }
+
+}
