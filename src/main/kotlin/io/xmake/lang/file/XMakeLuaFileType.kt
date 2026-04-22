@@ -24,7 +24,7 @@ import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.vfs.VirtualFile
 import io.xmake.icons.XMakeIcons
-import io.xmake.lang.XMakeLuaLanguage
+import io.xmake.lang.syntax.XMakeLuaLanguage
 import org.jetbrains.annotations.Contract
 import javax.swing.Icon
 
