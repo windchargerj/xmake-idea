@@ -2,6 +2,7 @@ package io.xmake.lang
 
 import com.intellij.lang.Language
 import com.intellij.lang.PsiBuilder
+import com.intellij.lang.WhitespacesBinders
 import io.xmake.lang.antlr.LuaParser.*
 import io.xmake.lang.psi.xmake.DomainScope.DomainType
 import org.antlr.intellij.adaptor.parser.ANTLRParseTreeToPSIConverter
@@ -29,6 +30,18 @@ class XMakeLuaParseTreeToPSIConverter(
     private fun closeOpenDescriptionBlock() {
         if (descriptionScopeMarkers.isNotEmpty()) {
             descriptionScopeMarkers.pop().let { (marker, typeName) ->
+                marker.done(XMakeLanguageIElementTypes.DescriptionScopeType(typeName))
+            }
+        }
+    }
+
+    private fun closeLastOpenDescriptionBlock() {
+        if (descriptionScopeMarkers.isNotEmpty()) {
+            descriptionScopeMarkers.pop().let { (marker, typeName) ->
+                marker.setCustomEdgeTokenBinders(
+                    WhitespacesBinders.DEFAULT_LEFT_BINDER,
+                    WhitespacesBinders.GREEDY_RIGHT_BINDER
+                )
                 marker.done(XMakeLanguageIElementTypes.DescriptionScopeType(typeName))
             }
         }
@@ -76,29 +89,36 @@ class XMakeLuaParseTreeToPSIConverter(
             }
         }
         if (ctx.parent is ChunkContext){
-            closeOpenDescriptionBlock()
+            while (descriptionScopeMarkers.isNotEmpty()) {
+                closeLastOpenDescriptionBlock()
+            }
             globalScopeMarker.done(XMakeLanguageIElementTypes.DescriptionScopeType(null))
         }
     }
 
     fun outsideEnterStat(ctx: StatContext) {
-        getFunctionCall(ctx)?.let { functionCallContext ->
-            getFunctionName(functionCallContext)?.let { functionName ->
-                if (functionName in DomainType.types) {
-                    closeOpenDescriptionBlock()
-                    val marker = builder.mark()
-                    descriptionScopeMarkers.push(Pair(marker, functionName))
+        if (ctx.parent is BlockContext && ctx.parent.parent is ChunkContext) {
+            getFunctionCall(ctx)?.let { functionCallContext ->
+                getFunctionName(functionCallContext)?.let { functionName ->
+                    if (functionName in DomainType.types) {
+                        closeLastOpenDescriptionBlock()
+                        val marker = builder.mark()
+                        descriptionScopeMarkers.push(Pair(marker, functionName))
+                    }
                 }
             }
         }
     }
 
     fun outsideExitStat(ctx: StatContext) {
-        getFunctionCall(ctx)?.let { functionCallContext ->
-            getFunctionName(functionCallContext)?.let { functionName ->
-                if (isDescriptionScopeEndFunction(functionName) ||
-                    isSelfClosingDescription(functionCallContext, functionName)) {
-                    closeOpenDescriptionBlock()
+        if (ctx.parent is BlockContext && ctx.parent.parent is ChunkContext) {
+            getFunctionCall(ctx)?.let { functionCallContext ->
+                getFunctionName(functionCallContext)?.let { functionName ->
+                    if (isDescriptionScopeEndFunction(functionName) ||
+                        isSelfClosingDescription(functionCallContext, functionName)
+                    ) {
+                        closeOpenDescriptionBlock()
+                    }
                 }
             }
         }
