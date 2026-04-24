@@ -117,7 +117,7 @@ class XMakeScopeQueryTest : XMakeTestCase() {
                     import("core.base.json")
                 end)
                 on_config(function (target)
-                    option.show_m<caret>enu()
+                    option.showm<caret>enu()
                 end)
             target_end()
             """.trimIndent()
@@ -126,7 +126,7 @@ class XMakeScopeQueryTest : XMakeTestCase() {
         val searchRoot = XMakeScopeQuery.scriptSearchRoot(identifier)
 
         assertTrue(searchRoot is LuaBlock)
-        assertTrue(searchRoot.text.contains("option.show_menu"))
+        assertTrue(searchRoot.text.contains("option.showmenu"))
         assertFalse(searchRoot.text.contains("import(\"core.base.json\")"))
     }
 

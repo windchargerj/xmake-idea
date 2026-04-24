@@ -27,7 +27,7 @@ class ImportCallParserTest : XMakeTestCase() {
                 end)
                 on_config(function (target)
                     import("core.base.option")
-                    option.show_menu()
+                    option.showmenu()
                 end)
             target_end()
             """.trimIndent()

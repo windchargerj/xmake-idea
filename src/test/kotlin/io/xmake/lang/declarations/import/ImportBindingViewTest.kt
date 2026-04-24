@@ -83,7 +83,7 @@ class ImportBindingViewTest : XMakeTestCase() {
                 on_load(function (target)
                     import("core.base.json")
                     import("core.base.option", {alias = "json"})
-                    json.show_menu()
+                    json.showmenu()
                 end)
             target_end()
             """.trimIndent()
@@ -275,7 +275,7 @@ class ImportBindingViewTest : XMakeTestCase() {
                         import("core.base.option")
                     end
                     json.encode({})
-                    option.show_menu()
+                    option.showmenu()
                 end)
             target_end()
             """.trimIndent()

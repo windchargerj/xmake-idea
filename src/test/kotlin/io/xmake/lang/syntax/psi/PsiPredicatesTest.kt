@@ -28,6 +28,72 @@ class PsiPredicatesTest : XMakeTestCase() {
         assertTrue(PsiPredicates.isLocalVariable(identifier))
     }
 
+    fun testRecognizesAssignmentTarget() {
+        val identifier = configureAndFindIdentifier(
+            """
+            ali<caret>as = path
+            """.trimIndent()
+        )
+
+        assertTrue(PsiPredicates.isAssignmentTarget(identifier))
+    }
+
+    fun testRecognizesGotoLabelReference() {
+        val identifier = configureAndFindIdentifier(
+            """
+            goto fi<caret>nish
+            ::finish::
+            """.trimIndent()
+        )
+
+        assertTrue(PsiPredicates.isGotoLabelReference(identifier))
+    }
+
+    fun testRecognizesTableFieldAccess() {
+        val identifier = configureAndFindIdentifier(
+            """
+            print(core.ba<caret>se)
+            """.trimIndent()
+        )
+
+        assertTrue(PsiPredicates.isTableFieldAccess(identifier))
+    }
+
+    fun testRecognizesUnresolvedVariableCandidate() {
+        val identifier = configureAndFindIdentifier(
+            """
+            print(unres<caret>olved)
+            """.trimIndent()
+        )
+
+        assertTrue(PsiPredicates.isUnresolvedVariableCandidate(identifier))
+    }
+
+    fun testRecognizesDeclaration() {
+        val localVariable = configureAndFindIdentifier(
+            """
+            local ali<caret>as = path
+            """.trimIndent()
+        )
+        assertTrue(PsiPredicates.isDeclaration(localVariable))
+
+        val parameter = configureAndFindIdentifier(
+            """
+            function run(pa<caret>ram)
+            end
+            """.trimIndent()
+        )
+        assertTrue(PsiPredicates.isDeclaration(parameter))
+
+        val functionName = configureAndFindIdentifier(
+            """
+            function bu<caret>ild()
+            end
+            """.trimIndent()
+        )
+        assertTrue(PsiPredicates.isDeclaration(functionName))
+    }
+
     fun testRecognizesTableKeyWithoutTreatingValueAsKey() {
         val key = configureAndFindIdentifier(
             """

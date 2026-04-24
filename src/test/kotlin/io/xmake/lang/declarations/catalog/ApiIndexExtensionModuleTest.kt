@@ -11,6 +11,12 @@ class ApiIndexExtensionModuleTest : XMakeTestCase() {
         assertTrue(lookup.extensionChildModules("core").contains("base"))
         assertTrue(lookup.extensionChildModules("core.base").contains("json"))
         assertFalse(lookup.extensionChildModules("core.base.json").contains("json"))
+        assertTrue(
+            lookup.importableModuleApis("core.base.json")
+                .map { it.name }
+                .toSet()
+                .containsAll(setOf("decode", "encode", "loadfile", "savefile", "mark_as_array", "is_marked_as_array"))
+        )
     }
 
     fun testDetectsExtensionModuleOrChildren() {
