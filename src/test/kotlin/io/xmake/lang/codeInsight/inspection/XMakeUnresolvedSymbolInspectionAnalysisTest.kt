@@ -162,6 +162,16 @@ class XMakeUnresolvedSymbolInspectionAnalysisTest : XMakeInspectionTestCase() {
         target_end()
     """.trimIndent())
 
+    fun testImportedJsonArrayHelpersAreNotUnresolved() = highlight("""
+        target("demo")
+            on_load(function (target)
+                import("core.base.json")
+                local encoded = json.mark_as_array({})
+                local is_array = json.is_marked_as_array({})
+            end)
+        target_end()
+    """.trimIndent())
+
     fun testAnonymousImportReturnAliasModuleFunctionIsNotUnresolved() = highlight("""
         target("demo")
             on_load(function (target)

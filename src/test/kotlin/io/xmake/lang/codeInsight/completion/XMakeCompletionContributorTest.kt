@@ -374,7 +374,7 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
                 end)
             """.trimIndent()
         }
-            .expect("decode", "encode", "loadfile", "savefile")
+            .expect("decode", "encode", "is_marked_as_array", "loadfile", "mark_as_array", "savefile")
             .notExpect("join", "add", "targetfile")
 
         complete {
@@ -432,6 +432,20 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
         }
             .expect("decode", "encode", "loadfile", "savefile")
             .notExpect("join", "add", "targetfile")
+    }
+
+    fun testScriptDomainHashsetExtensionModule() {
+        complete {
+            """
+            target("test")
+                on_load(function (target)
+                    import("core.base.hashset")
+                    hashset.<caret>
+                end)
+            """.trimIndent()
+        }
+            .expect("clear", "from", "has", "new", "of", "to_array")
+            .notExpect("decode", "encode", "loadfile", "savefile")
     }
 
     fun testScriptDomainRootDirImportedLocalModules() {
