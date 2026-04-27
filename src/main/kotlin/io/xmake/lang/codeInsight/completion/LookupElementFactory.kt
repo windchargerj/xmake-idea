@@ -33,7 +33,6 @@ object LookupElementFactory {
     )
 
     private data class InheritedCompletionData(
-        val moduleNames: List<String>,
         val functions: List<ApiModel>
     )
 
@@ -70,7 +69,7 @@ object LookupElementFactory {
         place: PsiElement?
     ): InheritedCompletionData {
         val sourceFile = file ?: (place?.containingFile as? XMakeLuaFile)
-            ?: return InheritedCompletionData(emptyList(), emptyList())
+            ?: return InheritedCompletionData(emptyList())
         val inheritedPlace = when {
             place == null || place.containingFile == sourceFile -> place
             sourceFile.textLength <= 0 -> sourceFile
@@ -81,15 +80,11 @@ object LookupElementFactory {
             place = inheritedPlace
         )
 
-        val moduleNames = inheritedModules
-            .flatMap { module -> api.extensionChildModules(module.identifier) }
-            .distinct()
-
         val functions = inheritedModules
             .flatMap { it.apis }
             .distinctBy { it.fullName }
 
-        return InheritedCompletionData(moduleNames, functions)
+        return InheritedCompletionData(functions)
     }
 
     fun addNestedModuleCompletions(
@@ -197,16 +192,6 @@ object LookupElementFactory {
         }
 
         val inherited = resolveInheritedCompletionData(api, file, place)
-        inherited.moduleNames.forEach { moduleName ->
-            if (!seenNames.add(moduleName)) {
-                return@forEach
-            }
-            result.addElement(
-                LookupElementBuilder.create(moduleName)
-                    .withIcon(AllIcons.Nodes.Package)
-                    .withTypeText("module")
-            )
-        }
         inherited.functions.forEach { apiModel ->
             if (seenNames.add(apiModel.name)) {
                 addApiCompletion(apiModel, result)

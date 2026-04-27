@@ -49,7 +49,8 @@ class XMakeCompletionContextDetectorTest : XMakeCompletionTestCase() {
                 end)
             """.trimIndent()
         }
-            .notExpect("add", "name", "kind", "targetfile", "join", "decode", "add_files")
+            .expect("add", "name", "kind", "targetfile")
+            .notExpect("join", "decode", "add_files")
 
         complete {
             """
@@ -138,7 +139,7 @@ class XMakeCompletionContextDetectorTest : XMakeCompletionTestCase() {
             .expect("build_target", "foo_value", "target")
     }
 
-    fun testDoesNotCompleteChainedInstanceMethodsFromUnknownHookParameter() {
+    fun testDoesNotCompleteChainedInstanceMethodsWithoutVerifiedReturnType() {
         complete {
             """
             target("test")

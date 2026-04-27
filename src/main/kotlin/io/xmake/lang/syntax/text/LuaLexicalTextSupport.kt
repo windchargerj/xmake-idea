@@ -9,6 +9,11 @@ internal object LuaLexicalTextSupport {
         val receiverEndOffset: Int
     )
 
+    data class MemberAccessSyntax(
+        val separator: Char,
+        val separatorOffset: Int
+    )
+
     fun detectCallStringPrefix(
         text: String,
         caretOffset: Int,
@@ -46,23 +51,9 @@ internal object LuaLexicalTextSupport {
 
     fun detectMemberAccess(text: String, caretOffset: Int): MemberAccess? {
         // Heuristic boundary: this is a lexical recovery path for incomplete editor text, not Lua parsing.
-        if (caretOffset <= 0) {
-            return null
-        }
-
-        var separatorIndex = caretOffset - 1
-        while (separatorIndex >= 0 && isIdentifierPart(text[separatorIndex])) {
-            separatorIndex--
-        }
-
-        if (separatorIndex < 0) {
-            return null
-        }
-
-        val separator = text[separatorIndex]
-        if (separator != '.' && separator != ':') {
-            return null
-        }
+        val memberAccessSyntax = detectMemberAccessSyntax(text, caretOffset) ?: return null
+        val separatorIndex = memberAccessSyntax.separatorOffset
+        val separator = memberAccessSyntax.separator
 
         var start = separatorIndex - 1
         while (start >= 0 && isMemberAccessReceiverPart(text[start])) {
@@ -78,6 +69,14 @@ internal object LuaLexicalTextSupport {
                 receiverEndOffset = separatorIndex
             )
         }
+    }
+
+    fun detectMemberAccessSyntax(text: String, caretOffset: Int): MemberAccessSyntax? {
+        val separatorIndex = findMemberAccessSeparatorIndex(text, caretOffset) ?: return null
+        return MemberAccessSyntax(
+            separator = text[separatorIndex],
+            separatorOffset = separatorIndex
+        )
     }
 
     fun isInSingleLineComment(textBeforeCaret: String): Boolean {
@@ -166,66 +165,138 @@ internal object LuaLexicalTextSupport {
     fun isInsideBlockComment(text: String, caretOffset: Int): Boolean {
         if (caretOffset <= 0 || caretOffset > text.length) return false
 
-        // Find the last long bracket opener before the caret
-        val openerStart = findLastLongBracketOpener(text, caretOffset) ?: return false
+        var index = 0
+        while (index < caretOffset) {
+            val current = text[index]
+            when {
+                current == '"' || current == '\'' -> {
+                    index = skipQuotedString(text, index)
+                }
 
-        // Count equals signs in the opener to determine delimiter level
-        var eqCount = 0
-        var i = openerStart + 1
-        while (i < text.length && text[i] == '=') {
-            eqCount++
-            i++
+                current == '[' -> {
+                    val longString = parseLongBracketOpener(text, index)
+                    index = if (longString != null) {
+                        val closerStart = findLongBracketCloser(text, longString)
+                        if (closerStart == null) {
+                            return false
+                        }
+                        closerStart + longString.closerLength
+                    } else {
+                        index + 1
+                    }
+                }
+
+                isLineCommentStart(text, index) -> {
+                    val longComment = parseLongCommentOpener(text, index)
+                    if (longComment != null) {
+                        val closerStart = findLongBracketCloser(text, longComment)
+                        if (closerStart == null || caretOffset <= closerStart) {
+                            return true
+                        }
+                        index = closerStart + longComment.closerLength
+                    } else {
+                        index = indexOfNextLine(text, index + 2)
+                    }
+                }
+
+                else -> index++
+            }
         }
-        // openerStart+eqCount+1 should be '['
-        if (i >= text.length || text[i] != '[') return false
+        return false
+    }
 
-        // Build the matching closing bracket
+    private data class LongBracket(
+        val equalsCount: Int,
+        val contentStartOffset: Int
+    ) {
+        val closerLength: Int
+            get() = equalsCount + 2
+    }
+
+    private fun parseLongCommentOpener(text: String, startIndex: Int): LongBracket? {
+        if (!isLineCommentStart(text, startIndex)) {
+            return null
+        }
+        return parseLongBracketOpener(text, startIndex + 2)
+    }
+
+    private fun parseLongBracketOpener(text: String, startIndex: Int): LongBracket? {
+        if (startIndex >= text.length || text[startIndex] != '[') {
+            return null
+        }
+
+        var index = startIndex + 1
+        while (index < text.length && text[index] == '=') {
+            index++
+        }
+        if (index >= text.length || text[index] != '[') {
+            return null
+        }
+        return LongBracket(
+            equalsCount = index - startIndex - 1,
+            contentStartOffset = index + 1
+        )
+    }
+
+    private fun findLongBracketCloser(text: String, bracket: LongBracket): Int? {
         val closingBracket = buildString {
             append(']')
-            repeat(eqCount) { append('=') }
+            repeat(bracket.equalsCount) { append('=') }
             append(']')
         }
-        val closerStart = text.indexOf(closingBracket, i + 1)
-        return closerStart >= caretOffset
+        return text.indexOf(closingBracket, bracket.contentStartOffset).takeIf { it >= 0 }
     }
 
-    private fun findLastLongBracketOpener(text: String, beforeOffset: Int): Int? {
-        // Look for [[ or [=[ or [==[ etc., or --[[ or --[=[ etc.
-        // Search backwards from beforeOffset
-        var i = beforeOffset - 1
-        while (i >= 0) {
-            if (text[i] == '[') {
-                // Check if this is a long bracket opener
-                val openerStart = if (text.getOrNull(i - 1) == '-') i - 1 else i
-                if (isLongBracketOpener(text, openerStart)) {
-                    return openerStart
-                }
+    private fun skipQuotedString(text: String, startIndex: Int): Int {
+        val quote = text[startIndex]
+        var index = startIndex + 1
+        while (index < text.length) {
+            if (text[index] == quote && !isEscaped(text, index)) {
+                return index + 1
             }
-            i--
+            index++
         }
-        return null
+        return text.length
     }
 
-    private fun isLongBracketOpener(text: String, startIndex: Int): Boolean {
-        if (startIndex < 0) return false
-        var i = startIndex
-        if (i + 1 < text.length && text[i] == '-' && text[i + 1] == '[') {
-            i += 2
-        } else if (text[i] == '[') {
-            i++
-        } else {
-            return false
-        }
-        if (i >= text.length || text[i] != '[') return false
-        // Check it's a proper long bracket (at least one = or directly [[)
-        while (i + 1 < text.length && text[i] == '=') {
-            i++
-        }
-        return i < text.length && text[i] == '['
+    private fun indexOfNextLine(text: String, startIndex: Int): Int {
+        val newlineIndex = text.indexOfAny(charArrayOf('\n', '\r'), startIndex)
+        return if (newlineIndex >= 0) newlineIndex + 1 else text.length
     }
 
     private fun isLineCommentStart(text: String, index: Int): Boolean =
         text[index] == '-' && index + 1 < text.length && text[index + 1] == '-'
+
+    private fun findMemberAccessSeparatorIndex(text: String, caretOffset: Int): Int? {
+        if (caretOffset <= 0 || caretOffset > text.length) {
+            return null
+        }
+
+        var separatorIndex = caretOffset - 1
+        while (separatorIndex >= 0 && isIdentifierPart(text[separatorIndex])) {
+            separatorIndex--
+        }
+
+        if (separatorIndex < 0) {
+            return null
+        }
+
+        val separator = text[separatorIndex]
+        if (separator != '.' && separator != ':') {
+            return null
+        }
+        if (separator == '.' && text.hasNeighbor(separatorIndex, '.')) {
+            return null
+        }
+        if (separator == ':' && text.hasNeighbor(separatorIndex, ':')) {
+            return null
+        }
+        return separatorIndex
+    }
+
+    private fun String.hasNeighbor(index: Int, char: Char): Boolean =
+        (index > 0 && this[index - 1] == char) ||
+            (index + 1 < length && this[index + 1] == char)
 
     private fun isIdentifierPart(char: Char): Boolean =
         char == '_' || char.isLetterOrDigit()

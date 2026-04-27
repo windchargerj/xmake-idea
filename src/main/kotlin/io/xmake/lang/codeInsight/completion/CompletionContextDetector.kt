@@ -35,8 +35,6 @@ object CompletionContextDetector {
     fun detect(parameters: CompletionParameters): CompletionContext {
         val position = parameters.originalPosition ?: parameters.position
         val project = parameters.editor.project ?: return CompletionContext.Unknown
-        val originalFile = CompletionMemberAccessAnalyzer.resolveXMakeFile(project, parameters.originalFile)
-        val lookupView = CompletionScopeResolver.inferLookupView(parameters)
 
         LOG.debug("Starting context analysis at offset ${parameters.offset}")
 
@@ -46,14 +44,22 @@ object CompletionContextDetector {
                 return CompletionContext.ImportPath(importPrefix)
             }
 
-            if (CompletionSyntaxContext.isInsideImportString(position)) {
+            CompletionSyntaxContext.findImportPathString(position)?.let { luaString ->
                 LOG.debug("Detected import path context via PSI")
-                return CompletionContext.ImportPath("")
+                return CompletionContext.ImportPath(
+                    CompletionSyntaxContext.extractImportModulePrefix(luaString).orEmpty()
+                )
             }
 
+            val originalFile = CompletionMemberAccessAnalyzer.resolveXMakeFile(project, parameters.originalFile)
+            val lookupView = CompletionScopeResolver.inferLookupView(parameters)
             CompletionMemberAccessAnalyzer.detectContext(position, parameters.editor, originalFile, lookupView)?.let { memberAccess ->
                 LOG.debug("Detected member access context: receiver=${memberAccess.receiverPath}, kind=${memberAccess.memberAccessKind}")
                 return memberAccess
+            }
+            if (CompletionSyntaxContext.hasMemberAccessSyntax(parameters)) {
+                LOG.debug("Detected unsupported member access syntax")
+                return CompletionContext.Unknown
             }
 
             LOG.debug("Falling back to identifier context")

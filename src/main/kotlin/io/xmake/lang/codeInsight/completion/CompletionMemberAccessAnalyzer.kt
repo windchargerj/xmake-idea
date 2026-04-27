@@ -312,6 +312,11 @@ internal object CompletionMemberAccessAnalyzer {
         receiverEndOffset: Int,
         apiContext: ApiLookupView
     ): XMakeType? {
+        val receiverText = originalFile?.text?.substring(receiverStartOffset, receiverEndOffset)?.trim()
+        if (receiverText == null || !SIMPLE_IDENTIFIER.matches(receiverText)) {
+            return null
+        }
+
         return resolveAnalysisPositions(position, originalFile, receiverStartOffset, receiverEndOffset)
             .mapNotNull { candidate ->
                 val candidateFile = candidate.containingFile ?: return@mapNotNull null
@@ -320,6 +325,8 @@ internal object CompletionMemberAccessAnalyzer {
             }
             .firstOrNull()
     }
+
+    private val SIMPLE_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
     private fun identifiersInRange(
         file: PsiElement,

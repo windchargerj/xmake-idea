@@ -23,7 +23,7 @@ internal object CompletionSyntaxContext {
 
     fun hasMemberAccessSyntax(parameters: CompletionParameters): Boolean =
         // Heuristic boundary: completion dispatch asks the live document before a stable PSI call exists.
-        LuaLexicalTextSupport.detectMemberAccess(
+        LuaLexicalTextSupport.detectMemberAccessSyntax(
             parameters.editor.document.text,
             parameters.editor.caretModel.offset
         ) != null

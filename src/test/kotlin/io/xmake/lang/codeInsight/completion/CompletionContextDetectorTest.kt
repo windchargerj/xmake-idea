@@ -9,7 +9,7 @@ import io.xmake.lang.syntax.psi.XMakeLuaFile
  * Editor-context detector contract for completion dispatch.
  *
  * This suite validates repository-local context extraction, including imported
- * aliases, unknown receiver isolation, and lookup-view selection at the caret.
+ * aliases, verified receiver lifting, and lookup-view selection at the caret.
  */
 class CompletionContextDetectorTest : XMakeTestCase() {
 
@@ -49,7 +49,7 @@ class CompletionContextDetectorTest : XMakeTestCase() {
         assertEquals(XMakeDomain.Script, CompletionScopeResolver.inferLookupView(position, myFixture.editor).domain)
     }
 
-    fun testDoesNotDetectInstanceMethodContextFromUnknownHookParameter() {
+    fun testDetectsInstanceMethodContextFromVerifiedHookParameter() {
         val (file, position) = configureAtCaret(
             """
             target("demo")
@@ -67,7 +67,9 @@ class CompletionContextDetectorTest : XMakeTestCase() {
             CompletionScopeResolver.inferLookupView(position, myFixture.editor)
         )
 
-        assertNull(result)
+        assertNotNull(result)
+        assertEquals("target", result?.receiverPath)
+        assertEquals(CompletionContextDetector.MemberAccessKind.INSTANCE_METHOD, result?.memberAccessKind)
     }
 
     fun testDoesNotTreatBareXMakeNameAsResolvedInstanceMethodWithoutLuaBinding() {

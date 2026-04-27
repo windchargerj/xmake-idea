@@ -19,6 +19,35 @@ class XMakeCompletionEditorBehaviorTest : XMakeCompletionTestCase() {
         }.expectEmpty()
     }
 
+    fun testUnsupportedMemberAccessReceiverStaysIsolated() {
+        complete {
+            """
+            target("test")
+                on_load(function (target)
+                    get_path().<caret>
+                end)
+            """.trimIndent()
+        }.expectEmpty()
+
+        complete {
+            """
+            target("test")
+                on_load(function (target)
+                    (path).<caret>
+                end)
+            """.trimIndent()
+        }.expectEmpty()
+
+        complete {
+            """
+            target("test")
+                on_load(function (target)
+                    json["encode"].<caret>
+                end)
+            """.trimIndent()
+        }.expectEmpty()
+    }
+
     fun testInvalidInstanceStyleAccessStaysIsolated() {
         complete {
             """

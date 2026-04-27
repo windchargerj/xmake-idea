@@ -157,15 +157,15 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
             """.trimIndent()
         }
             .expect(
-                "format", "get_config", "getenv", "has_config", "has_package", "includes", "ipairs",
+                "format", "get_config", "getenv", "has_config", "has_package", "ipairs",
                 "is_arch", "is_config", "is_cross", "is_host", "is_kind", "is_mode", "is_os", "is_plat", "is_subhost",
-                "pairs", "print", "printf", "set_xmakever", "tonumber", "tostring", "type", "unpack",
-                "add_moduledirs", "add_platformdirs", "add_plugindirs", "add_toolchaindirs"
+                "pairs", "print", "printf", "tonumber", "tostring", "type", "unpack"
             )
             .notExpect(
                 "set_project", "set_description", "set_config", "set_allowedarchs", "set_allowedmodes", "set_allowedplats",
-                "set_defaultarchs", "set_defaultmode", "set_defaultplat",
-                "add_packagedirs", "add_repositories", "add_requireconfs", "add_requires"
+                "set_defaultarchs", "set_defaultmode", "set_defaultplat", "set_xmakever",
+                "add_moduledirs", "add_packagedirs", "add_platformdirs", "add_plugindirs", "add_repositories",
+                "add_requireconfs", "add_requires", "add_toolchaindirs", "includes"
             )
     }
 
@@ -256,15 +256,15 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
         }
             .expect(
                 "add_imports", "set_description", "on_load", "package_end",
-                "format", "get_config", "getenv", "has_config", "has_package", "includes", "ipairs",
+                "format", "get_config", "getenv", "has_config", "has_package", "ipairs",
                 "is_arch", "is_config", "is_cross", "is_host", "is_kind", "is_mode", "is_os", "is_plat", "is_subhost",
-                "pairs", "print", "printf", "set_xmakever", "tonumber", "tostring", "type", "unpack",
-                "add_moduledirs", "add_platformdirs", "add_plugindirs", "add_toolchaindirs"
+                "pairs", "print", "printf", "tonumber", "tostring", "type", "unpack"
             )
             .notExpect(
-                "add_packagedirs", "add_repositories", "add_requireconfs", "add_requires",
+                "add_moduledirs", "add_packagedirs", "add_platformdirs", "add_plugindirs", "add_repositories",
+                "add_requireconfs", "add_requires", "add_toolchaindirs", "includes",
                 "set_allowedarchs", "set_allowedmodes", "set_allowedplats", "set_config",
-                "set_defaultarchs", "set_defaultmode", "set_defaultplat", "set_project",
+                "set_defaultarchs", "set_defaultmode", "set_defaultplat", "set_project", "set_xmakever",
                 "add_cfuncs", "add_cincludes", "add_csnippets", "add_ctypes",
                 "add_cxxfuncs", "add_cxxincludes", "add_cxxsnippets", "add_cxxtypes",
                 "add_features", "after_check", "before_check", "set_category", "set_showmenu"
@@ -287,10 +287,10 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
             )
     }
 
-    fun testConfigurationDomainOptionAnonymous() {
+    fun testConfigurationDomainOptionApis() {
         complete {
             """
-            option()
+            option("demo")
                 <caret>
             option("demo")
             """.trimIndent()
@@ -470,7 +470,7 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
             .notExpect("decode", "encode", "join")
     }
 
-    fun testScriptDomainDoesNotCompleteHookObjectsWithoutVerifiedReceiverType() {
+    fun testScriptDomainCompletesVerifiedHookReceiverObjects() {
         complete {
             """
             target("test")
@@ -479,7 +479,8 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
                 end)
             """.trimIndent()
         }
-            .notExpect("add", "get", "set", "name", "kind", "targetfile", "path", "json", "math", "add_files")
+            .expect("add", "get", "set", "name", "kind", "targetfile")
+            .notExpect("path", "json", "math", "add_files")
 
         complete {
             """
@@ -490,7 +491,8 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
             option_end()
             """.trimIndent()
         }
-            .notExpect("enabled", "enable", "get", "set", "add", "dep", "join", "targetfile", "add_files")
+            .expect("enabled", "enable", "get", "set", "add", "dep")
+            .notExpect("join", "targetfile", "add_files")
 
         complete {
             """
@@ -501,7 +503,8 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
             package_end()
             """.trimIndent()
         }
-            .notExpect("installdir", "config", "add", "set", "dep", "version", "join", "enabled", "add_files")
+            .expect("installdir", "config", "add", "set", "dep", "version")
+            .notExpect("join", "enabled", "add_files")
 
         complete {
             """
@@ -512,10 +515,11 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
             toolchain_end()
             """.trimIndent()
         }
-            .notExpect("load_cross_toolchain", "add", "set", "is_arch", "join", "enabled", "add_files")
+            .expect("load_cross_toolchain", "add", "set", "is_arch")
+            .notExpect("join", "enabled", "add_files")
     }
 
-    fun testScriptDomainMemberPrefixDoesNotInferUnknownHookReceiver() {
+    fun testScriptDomainMemberPrefixCompletesVerifiedHookReceiver() {
         complete {
             """
             target("test")
@@ -524,7 +528,8 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
                 end)
             """.trimIndent()
         }
-            .notExpect("name", "kind", "set", "join")
+            .expect("name")
+            .notExpect("kind", "set", "join")
     }
 
     fun testScriptDomainImportedModulesStayUnavailableWithoutImport() {

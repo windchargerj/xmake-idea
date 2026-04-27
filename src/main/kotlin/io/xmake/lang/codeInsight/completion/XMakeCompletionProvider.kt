@@ -34,22 +34,30 @@ class XMakeCompletionProvider : CompletionProvider<CompletionParameters>() {
         val position = parameters.position
         val analysisPosition = parameters.originalPosition ?: position
 
-        if (tryImportCompletion(project, parameters, position, result)) {
+        if (CompletionSyntaxContext.isInsideComment(parameters)) {
             return
         }
 
-        if (CompletionSyntaxContext.isInsideComment(parameters) ||
-            CompletionSyntaxContext.isInsideStringLiteral(analysisPosition)
+        val completionContext = CompletionContextDetector.detect(parameters)
+        if (CompletionSyntaxContext.isInsideStringLiteral(analysisPosition) &&
+            completionContext !is CompletionContextDetector.CompletionContext.ImportPath
         ) {
             return
         }
 
-        if (tryMemberCompletion(project, parameters, result)) {
-            return
-        }
+        when (completionContext) {
+            is CompletionContextDetector.CompletionContext.MemberAccess -> {
+                addMemberCompletions(project, parameters, completionContext, result)
+                return
+            }
 
-        if (CompletionSyntaxContext.hasMemberAccessSyntax(parameters)) {
-            return
+            is CompletionContextDetector.CompletionContext.ImportPath -> {
+                processImportCompletion(project, position, completionContext.importPrefix, result)
+                return
+            }
+
+            CompletionContextDetector.CompletionContext.Unknown -> return
+            CompletionContextDetector.CompletionContext.Identifier -> Unit
         }
 
         if (CompletionSyntaxContext.isInsideTableConstructor(analysisPosition) &&
@@ -57,24 +65,7 @@ class XMakeCompletionProvider : CompletionProvider<CompletionParameters>() {
         ) {
             return
         }
-
         tryIdentifierCompletion(project, parameters, result)
-    }
-
-    private fun tryImportCompletion(
-        project: Project,
-        parameters: CompletionParameters,
-        position: PsiElement,
-        result: CompletionResultSet
-    ): Boolean {
-        CompletionSyntaxContext.detectImportPrefix(parameters)?.let { prefix ->
-            return processImportCompletion(project, position, prefix, result)
-        }
-
-        val luaString = CompletionSyntaxContext.findImportPathString(position) ?: return false
-
-        val prefix = CompletionSyntaxContext.extractImportModulePrefix(luaString) ?: ""
-        return processImportCompletion(project, position, prefix, result)
     }
 
     private fun processImportCompletion(
@@ -136,19 +127,16 @@ class XMakeCompletionProvider : CompletionProvider<CompletionParameters>() {
         )
     }
 
-    private fun tryMemberCompletion(
+    private fun addMemberCompletions(
         project: Project,
         parameters: CompletionParameters,
+        memberAccess: CompletionContextDetector.CompletionContext.MemberAccess,
         result: CompletionResultSet
-    ): Boolean {
-        val memberAccess =
-            CompletionContextDetector.detect(parameters) as? CompletionContextDetector.CompletionContext.MemberAccess
-                ?: return false
-
+    ) {
         val receiverPath = memberAccess.receiverPath
         val memberAccessKind = memberAccess.memberAccessKind
         if (receiverPath.isBlank()) {
-            return false
+            return
         }
 
         val api = XMakeApi.getInstance(project)
@@ -176,7 +164,6 @@ class XMakeCompletionProvider : CompletionProvider<CompletionParameters>() {
                     instanceCompletionView(apiContext)
                 )
         }
-        return true
     }
 
     private fun resolveMemberPrefix(parameters: CompletionParameters): String? {

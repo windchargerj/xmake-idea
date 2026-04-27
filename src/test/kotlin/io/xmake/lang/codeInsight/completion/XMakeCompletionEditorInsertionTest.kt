@@ -86,7 +86,7 @@ class XMakeCompletionEditorInsertionTest : XMakeCompletionTestCase() {
         )
     }
 
-    fun testDoesNotOfferInstanceMethodCompletionForUnknownHookReceiver() {
+    fun testOffersInstanceMethodCompletionForVerifiedHookReceiver() {
         complete {
             """
             target("demo")
@@ -94,7 +94,7 @@ class XMakeCompletionEditorInsertionTest : XMakeCompletionTestCase() {
                     target:na<caret>
                 end)
             """.trimIndent()
-        }.notExpect("name")
+        }.expect("name")
     }
 
     fun testTargetHookCompletionInsertionAddsCallParensOnly() {
