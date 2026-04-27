@@ -9,6 +9,20 @@ import com.intellij.psi.PsiFile
 import io.xmake.lang.syntax.XMakeLuaLanguage
 import io.xmake.lang.syntax.text.LuaLexicalTextSupport
 
+private val OPENING_BRACKETS = linkedMapOf(
+    '(' to ')',
+    '[' to ']',
+    '{' to '}',
+)
+
+private val CLOSING_BRACKETS = OPENING_BRACKETS.values.toSet()
+
+private val QUOTES = setOf('"', '\'')
+
+private val PAIR_BOUNDARY_CHARS = setOf(
+    ')', ']', '}', ',', ';', ':', '\n', '\r'
+)
+
 class XMakeLuaTypedHandler : TypedHandlerDelegate() {
 
     override fun beforeCharTyped(
@@ -38,7 +52,7 @@ class XMakeLuaTypedHandler : TypedHandlerDelegate() {
         if (c in QUOTES && settings.AUTOINSERT_PAIR_QUOTE) {
             if (offset < chars.length &&
                 chars[offset] == c &&
-                !isEscaped(chars, offset)
+                !LuaLexicalTextSupport.isEscaped(chars, offset)
             ) {
                 editor.caretModel.moveToOffset(offset + 1)
                 return Result.STOP
@@ -65,9 +79,9 @@ class XMakeLuaTypedHandler : TypedHandlerDelegate() {
         }
 
         val settings = CodeInsightSettings.getInstance()
-        val closing = when {
-            c in OPENING_BRACKETS && settings.AUTOINSERT_PAIR_BRACKET -> OPENING_BRACKETS.getValue(c)
-            c in QUOTES && settings.AUTOINSERT_PAIR_QUOTE -> c
+        val closing = when (c) {
+            in OPENING_BRACKETS -> if (settings.AUTOINSERT_PAIR_BRACKET) OPENING_BRACKETS.getValue(c) else return Result.CONTINUE
+            in QUOTES -> if (settings.AUTOINSERT_PAIR_QUOTE) c else return Result.CONTINUE
             else -> return Result.CONTINUE
         }
 
@@ -96,7 +110,11 @@ class XMakeLuaTypedHandler : TypedHandlerDelegate() {
             return false
         }
 
-        if (typedChar in QUOTES && isEscaped(text, offset - 1)) {
+        if (typedChar in QUOTES && LuaLexicalTextSupport.isEscaped(text, offset - 1)) {
+            return false
+        }
+
+        if (typedChar in QUOTES && isInsideOrdinaryString(text, offset - 1)) {
             return false
         }
 
@@ -118,7 +136,11 @@ class XMakeLuaTypedHandler : TypedHandlerDelegate() {
             return false
         }
 
-        if (typedChar in QUOTES && isEscaped(text, offset)) {
+        if (typedChar in QUOTES && LuaLexicalTextSupport.isEscaped(text, offset)) {
+            return false
+        }
+
+        if (typedChar in QUOTES && isInsideOrdinaryString(text, offset)) {
             return false
         }
 
@@ -126,18 +148,25 @@ class XMakeLuaTypedHandler : TypedHandlerDelegate() {
         return nextChar == null || nextChar.isWhitespace() || nextChar in PAIR_BOUNDARY_CHARS
     }
 
-    private fun isEscaped(text: CharSequence, index: Int): Boolean {
-        if (index <= 0 || index > text.lastIndex) {
+    private fun isInsideOrdinaryString(text: CharSequence, offset: Int): Boolean {
+        if (offset < 0 || offset > text.length) {
             return false
         }
 
-        var slashCount = 0
-        var cursor = index - 1
-        while (cursor >= 0 && text[cursor] == '\\') {
-            slashCount++
-            cursor--
+        var quote: Char? = null
+        var index = lineStartOffset(text.toString(), offset)
+        while (index < offset) {
+            val current = text[index]
+            if (quote != null) {
+                if (current == quote && !LuaLexicalTextSupport.isEscaped(text, index)) {
+                    quote = null
+                }
+            } else if (current in QUOTES && !LuaLexicalTextSupport.isEscaped(text, index)) {
+                quote = current
+            }
+            index++
         }
-        return slashCount % 2 == 1
+        return quote != null
     }
 
     private fun lineStartOffset(text: String, offset: Int): Int {
@@ -150,20 +179,4 @@ class XMakeLuaTypedHandler : TypedHandlerDelegate() {
 
     private fun isXMakeFile(file: PsiFile): Boolean =
         file.language.isKindOf(XMakeLuaLanguage.INSTANCE)
-
-    companion object {
-        private val OPENING_BRACKETS = linkedMapOf(
-            '(' to ')',
-            '[' to ']',
-            '{' to '}',
-        )
-
-        private val CLOSING_BRACKETS = OPENING_BRACKETS.values.toSet()
-
-        private val QUOTES = setOf('"', '\'')
-
-        private val PAIR_BOUNDARY_CHARS = setOf(
-            ')', ']', '}', ',', ';', ':', '\n', '\r'
-        )
-    }
 }

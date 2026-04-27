@@ -9,6 +9,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
 import com.intellij.psi.util.PsiTreeUtil
 import io.xmake.lang.scope.model.XMakeDomain
+import io.xmake.lang.scope.model.XMakeRoot
 import io.xmake.lang.scope.model.XMakeRegion
 import io.xmake.lang.scope.query.XMakeScopeQuery
 import io.xmake.lang.syntax.psi.lua.LuaFunctionCall
@@ -31,7 +32,7 @@ class XMakeLuaFoldingBuilder : CustomFoldingBuilder(), DumbAware {
             when (region.domain) {
                 is XMakeDomain.Configuration -> addConfigurationDescriptor(descriptors, file, region)
                 is XMakeDomain.Script -> addScriptDescriptor(descriptors, file, region)
-                is XMakeDomain.Description -> Unit
+                is XMakeDomain.Description -> addNamespaceDescriptor(descriptors, file, region)
             }
         }
     }
@@ -50,6 +51,20 @@ class XMakeLuaFoldingBuilder : CustomFoldingBuilder(), DumbAware {
         val firstString = PsiTreeUtil.findChildOfType(call, LuaString::class.java)?.text ?: ""
         val placeholder = "${scope.type.toKeyword()}($firstString)"
         descriptors.add(FoldingDescriptor(anchor.node, region.range, null, placeholder))
+    }
+
+    private fun addNamespaceDescriptor(
+        descriptors: MutableList<FoldingDescriptor>,
+        root: PsiElement,
+        region: XMakeRegion
+    ) {
+        if (region.range.length <= 0 || region.root !is XMakeRoot.Namespace) {
+            return
+        }
+        val call = findOpeningCall(root, region) ?: return
+        val anchor = findAnchor(root, region.range) ?: return
+        val firstString = PsiTreeUtil.findChildOfType(call, LuaString::class.java)?.text ?: ""
+        descriptors.add(FoldingDescriptor(anchor.node, region.range, null, "namespace($firstString)"))
     }
 
     private fun addScriptDescriptor(

@@ -33,6 +33,14 @@ class XMakeLuaBlock(
             PSIElementTypeFactory.createTokenSet(XMakeLuaLanguage.INSTANCE, *tokens)
 
         private val COMMENT_TOKENS = tokenSet(LuaLexer.COMMENT, LuaLexer.SHEBANG)
+        private val LUA_BLOCK_OPENING_TOKENS = tokenSet(
+            LuaLexer.DO,
+            LuaLexer.THEN,
+            LuaLexer.ELSE,
+            LuaLexer.REPEAT
+        )
+        private val LUA_FUNCTION_HEADER_END_TOKENS = tokenSet(LuaLexer.CP)
+        private val LUA_BLOCK_CLOSING_TOKENS = tokenSet(LuaLexer.END, LuaLexer.UNTIL)
         private val CONTEXTUAL_ADDITIVE_OPERATORS = tokenSet(LuaLexer.PLUS, LuaLexer.MINUS)
         private val CONTEXTUAL_BITWISE_OPERATOR = tokenSet(LuaLexer.SQUIG)
         private val UNARY_OPERATOR_PREFIXES = setOf(
@@ -81,6 +89,7 @@ class XMakeLuaBlock(
             is LuaBlock if parentPsi is LuaStatement -> Indent.getNormalIndent()
             is LuaBlock if parentPsi is LuaChunk -> Indent.getNoneIndent()
             is LuaStatement if isRootLevelChild(parentPsi) -> indentOf(rootIndentDepthForStatement(currentPsi))
+            is LuaStatement if isNestedLuaStatement(currentPsi) -> Indent.getNoneIndent()
             is LuaStatement if isIndentedDescriptionStatement(currentPsi) -> Indent.getNormalIndent()
             else -> when {
                 isRootLevelChild(parentPsi) && isCommentNode(myNode) -> indentOf(scopeIndentDepthFor(currentPsi))
@@ -97,6 +106,9 @@ class XMakeLuaBlock(
 
     override fun getChildAttributes(newChildIndex: Int): ChildAttributes {
         return when (val currentPsi = node.psi) {
+            is LuaStatement if opensLuaBlock(currentPsi) ->
+                ChildAttributes(Indent.getNormalIndent(), null)
+
             is LuaStatement if opensDescriptionStructure(currentPsi) ->
                 ChildAttributes(Indent.getNormalIndent(), null)
 
@@ -106,6 +118,14 @@ class XMakeLuaBlock(
             is LuaBlock -> blockChildAttributes(currentPsi, newChildIndex)
 
             else -> ChildAttributes(Indent.getNoneIndent(), null)
+        }
+    }
+
+    override fun isIncomplete(): Boolean {
+        return when (val currentPsi = node.psi) {
+            is LuaFunctionBody -> !myNode.hasMeaningfulToken(LUA_BLOCK_CLOSING_TOKENS)
+            is LuaStatement -> opensLuaBlock(currentPsi) && !myNode.hasMeaningfulToken(LUA_BLOCK_CLOSING_TOKENS)
+            else -> false
         }
     }
 
@@ -159,14 +179,15 @@ class XMakeLuaBlock(
 
         val file = currentBlock.containingFile
         val insertionOffset = previousMeaningfulChild.textRange.endOffset
+        if (previousMeaningfulChild.psi is LuaStatement) {
+            return postStatementIndentDepth(previousMeaningfulChild.psi as LuaStatement)
+        }
+
         if (insertionOffset < file.textLength) {
             return scopeIndentDepthFor(XMakeScopeQuery.model(currentBlock).stateAt(insertionOffset))
         }
 
-        return when (val previousPsi = previousMeaningfulChild.psi) {
-            is LuaStatement -> postStatementIndentDepth(previousPsi)
-            else -> scopeIndentDepthFor(previousPsi)
-        }
+        return scopeIndentDepthFor(previousMeaningfulChild.psi)
     }
 
     private fun rootIndentDepthForStatement(statement: LuaStatement): Int {
@@ -182,8 +203,23 @@ class XMakeLuaBlock(
         return when {
             closesDescriptionStructure(statement) -> (depth - 1).coerceAtLeast(0)
             opensDescriptionStructure(statement) && isSelfClosingDescriptionStatement(statement) -> (depth - 1).coerceAtLeast(0)
+            opensLuaBlock(statement) -> depth + 1
             else -> depth
         }
+    }
+
+    private fun opensLuaBlock(statement: LuaStatement): Boolean {
+        if (statement.node.hasMeaningfulToken(LUA_BLOCK_OPENING_TOKENS) &&
+            !statement.node.hasMeaningfulToken(LUA_BLOCK_CLOSING_TOKENS)
+        ) {
+            return true
+        }
+
+        val lastLeaf = statement.node.lastMeaningfulLeaf() ?: return false
+        if (LUA_BLOCK_OPENING_TOKENS.contains(lastLeaf.elementType)) {
+            return true
+        }
+        return LUA_FUNCTION_HEADER_END_TOKENS.contains(lastLeaf.elementType) && statement.children.any { it is LuaFunctionBody }
     }
 
     private fun indentOf(depth: Int): Indent {
@@ -216,6 +252,9 @@ class XMakeLuaBlock(
     private fun isRootLevelChild(parentPsi: PsiElement): Boolean =
         parentPsi is LuaBlock && parentPsi.parent is LuaChunk
 
+    private fun isNestedLuaStatement(statement: LuaStatement): Boolean =
+        statement.parent is LuaBlock && statement.parent.parent is LuaStatement
+
     private fun isWhitespaceNode(node: ASTNode): Boolean =
         node.elementType == TokenType.WHITE_SPACE
 
@@ -224,6 +263,26 @@ class XMakeLuaBlock(
 
     private fun isMeaningfulNode(node: ASTNode): Boolean =
         !isWhitespaceNode(node) && !isCommentNode(node)
+
+    private fun ASTNode.lastMeaningfulLeaf(): ASTNode? {
+        var child = lastChildNode
+        while (child != null) {
+            child.lastMeaningfulLeaf()?.let { return it }
+            child = child.treePrev
+        }
+        return takeIf(::isMeaningfulNode)
+    }
+
+    private fun ASTNode.hasMeaningfulToken(tokens: TokenSet): Boolean {
+        var child = firstChildNode
+        while (child != null) {
+            if (child.hasMeaningfulToken(tokens)) {
+                return true
+            }
+            child = child.treeNext
+        }
+        return isMeaningfulNode(this) && tokens.contains(elementType)
+    }
 
     private fun customSpacing(child1: Block?, child2: Block): Spacing? {
         val leftNode = (child1 as? XMakeLuaBlock)?.luaNode
