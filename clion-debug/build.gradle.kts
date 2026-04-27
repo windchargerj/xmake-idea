@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm")
-    id("org.jetbrains.intellij.platform") version "2.7.2"
+    id("org.jetbrains.kotlin.jvm") version "2.1.21"
+    id("org.jetbrains.intellij.platform.module")
 }
 
 group = "io.xmake.debug"
@@ -16,7 +16,7 @@ repositories {
 intellijPlatform {
     dependencies {
         intellijPlatform {
-            clion("2025.3")
+            clion(providers.gradleProperty("runIdeVersion"))
             bundledPlugin("com.intellij.nativeDebug")
         }
     }
@@ -34,6 +34,23 @@ tasks.matching { task -> task.name.contains("buildSearchableOptions") }.configur
 
 // Disable runIde for CLion module (should not run IDE from debug module)
 tasks.matching { task -> task.name.contains("runIde") }.configureEach {
+    enabled = false
+}
+
+// This module does not contain tests; disabling test-related IntelliJ tasks avoids
+// pulling its sandbox preparation into the root `test` task graph.
+tasks.matching { task ->
+    task.name in setOf(
+        "compileTestKotlin",
+        "compileTestJava",
+        "processTestResources",
+        "testClasses",
+        "instrumentTestCode",
+        "prepareTestSandbox",
+        "prepareTest",
+        "test"
+    )
+}.configureEach {
     enabled = false
 }
 

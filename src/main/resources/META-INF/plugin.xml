@@ -20,14 +20,6 @@
     <depends optional="true" config-file="io.xmake-ssh.xml">
         com.intellij.modules.ssh
     </depends>
-    <!--clion and c/cpp language-->
-    <!--
-    <depends>com.intellij.clion</depends>
-    <depends>com.intellij.modules.cidr.ide</depends>
-    <depends>com.intellij.modules.cidr.lang</depends>
-    <depends>com.intellij.modules.cidr.modulemap.language</depends>
-    <depends>com.intellij.modules.cmake</depends>
-    -->
 
     <extensions defaultExtensionNs="com.intellij">
 
@@ -104,7 +96,7 @@
                     icon="AllIcons.Actions.ClearCash"
                     description="Clean target and object files."/>
             <separator/>
-            <reference id="editRunConfigurations"/>
+            <reference ref="editRunConfigurations"/>
             <action id="XMake.CleanConfiguration"
                     class="io.xmake.actions.CleanConfigurationAction"
                     text="Clean Configuration"
