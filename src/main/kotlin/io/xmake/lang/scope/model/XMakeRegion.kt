@@ -9,7 +9,8 @@ data class XMakeRegion(
     val source: Source = Source.PSI
 ) {
     enum class Source {
-        PSI
+        PSI,
+        RECOVERY
     }
 
     val startOffset: Int

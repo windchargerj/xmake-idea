@@ -115,7 +115,10 @@ internal class CachedIdentifierValidator : CachedAnalyzer<ValidationError?>() {
 
         // Uses XMakeScopeQuery (precise): domain-issue detection requires structural accuracy, not heuristic tolerance.
         XMakeScopeQuery.issuesAt(element)
-            .firstOrNull { it.kind == ScopeIssue.Kind.UNMATCHED_SCOPE_END }
+            .firstOrNull {
+                it.kind == ScopeIssue.Kind.INVALID_SCOPE_ENTRY ||
+                    it.kind == ScopeIssue.Kind.UNMATCHED_SCOPE_END
+            }
             ?.let { issue ->
                 return ValidationError(
                     message = issue.message,

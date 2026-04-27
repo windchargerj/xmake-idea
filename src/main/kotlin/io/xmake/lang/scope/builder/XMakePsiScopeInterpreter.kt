@@ -12,6 +12,7 @@ import io.xmake.lang.scope.model.XMakeRoot
 import io.xmake.lang.scope.model.ScriptSearchRoot
 import io.xmake.lang.scope.model.XMakeFileScopeModel
 import io.xmake.lang.scope.model.XMakeConfigurationDomainType
+import io.xmake.lang.scope.model.XMakeConfigurationEntryCall
 import io.xmake.lang.syntax.psi.XMakeLuaIdentifier
 import io.xmake.lang.syntax.psi.lua.LuaBlock
 import io.xmake.lang.syntax.psi.lua.LuaFunctionBody
@@ -61,10 +62,10 @@ internal object XMakePsiScopeInterpreter {
             val functionName = identifier?.name
             val isDescriptionApi = phase == Phase.DESCRIPTION
 
-            val openedDescriptionFrame = if (isDescriptionApi) {
-                openDescriptionFrame(statement, call, functionName)
+            val openedDescriptionEntry = if (isDescriptionApi) {
+                openDescriptionFrame(statement, call, identifier, functionName)
             } else {
-                false
+                null
             }
 
             walkNestedScopes(statement, phase)
@@ -74,12 +75,12 @@ internal object XMakePsiScopeInterpreter {
             }
 
             val shouldSelfCloseConfiguration =
-                openedDescriptionFrame &&
+                openedDescriptionEntry != null &&
+                    openedDescriptionEntry.opensConfigurationFrame &&
                     XMakeDescriptionDomainRules.isConfigurationDomainEntry(functionName) &&
-                    isSelfClosingConfigurationEntry(call)
+                    openedDescriptionEntry.isSelfClosingConfiguration
             val shouldSelfCloseNamespace =
-                openedDescriptionFrame &&
-                    XMakeDescriptionDomainRules.isNamespaceEntry(functionName) &&
+                XMakeDescriptionDomainRules.isNamespaceEntry(functionName) &&
                     isSelfClosingNamespaceEntry(call)
 
             when {
@@ -131,10 +132,11 @@ internal object XMakePsiScopeInterpreter {
         private fun openDescriptionFrame(
             statement: LuaStatement,
             call: LuaFunctionCall?,
+            identifier: XMakeLuaIdentifier?,
             functionName: String?
-        ): Boolean {
+        ): XMakeConfigurationEntryCall? {
             if (functionName == null || !isDescriptionStructureEntryFunction(functionName)) {
-                return false
+                return null
             }
 
             if (XMakeDescriptionDomainRules.isNamespaceEntry(functionName)) {
@@ -149,22 +151,31 @@ internal object XMakePsiScopeInterpreter {
                         )
                     )
                 )
-                return true
+                return null
             }
 
-            val type = XMakeDescriptionDomainRules.configurationDomainTypeForEntry(functionName) ?: return false
-            if (!hasConfigurationDomainNameArgument(call)) {
-                return false
+            val entryCall = XMakeConfigurationEntryCall.from(functionName, call) ?: return null
+            entryCall.entryIssueMessage?.let { message ->
+                issues += ScopeIssue(
+                    kind = ScopeIssue.Kind.INVALID_SCOPE_ENTRY,
+                    range = identifier?.textRange ?: statement.textRange,
+                    message = message
+                )
+            }
+
+            if (!entryCall.opensConfigurationFrame) {
+                return entryCall
             }
             closeOpenConfiguration(statement.textRange.startOffset)
             openFrames.addLast(
                 OpenDescriptionFrame.Configuration(
                     startOffset = statement.textRange.startOffset,
-                    type = type,
-                    root = currentRoot()
+                    type = entryCall.type,
+                    root = currentRoot(),
+                    source = if (entryCall.usesRecoveryFrame) XMakeRegion.Source.RECOVERY else XMakeRegion.Source.PSI
                 )
             )
-            return true
+            return entryCall
         }
 
         private fun closeMatchingDescriptionFrame(
@@ -277,41 +288,8 @@ internal object XMakePsiScopeInterpreter {
         private fun isDescriptionStructureEndFunction(functionName: String): Boolean =
             XMakeDescriptionDomainRules.isStructuralEnd(functionName)
 
-        private fun hasConfigurationDomainNameArgument(functionCall: LuaFunctionCall?): Boolean {
-            return when (functionCall?.argumentKind(0)) {
-                LuaFunctionCall.ArgumentKind.STRING,
-                LuaFunctionCall.ArgumentKind.DYNAMIC -> true
-                LuaFunctionCall.ArgumentKind.TABLE,
-                LuaFunctionCall.ArgumentKind.FUNCTION,
-                null -> false
-            }
-        }
-
-        private fun isSelfClosingConfigurationEntry(functionCall: LuaFunctionCall?): Boolean =
-            when (configurationEntryArgumentShape(functionCall)) {
-                StructuralEntryArgumentShape.PERSISTENT -> false
-                StructuralEntryArgumentShape.TABLE,
-                StructuralEntryArgumentShape.FUNCTION,
-                StructuralEntryArgumentShape.DYNAMIC -> true
-            }
-
         private fun isSelfClosingNamespaceEntry(functionCall: LuaFunctionCall?): Boolean =
             functionCall?.argumentKind(1) == LuaFunctionCall.ArgumentKind.FUNCTION
-
-        private fun configurationEntryArgumentShape(functionCall: LuaFunctionCall?): StructuralEntryArgumentShape {
-            val arguments = functionCall?.arguments.orEmpty()
-            if (arguments.size < 2) {
-                return StructuralEntryArgumentShape.PERSISTENT
-            }
-            val secondArgumentKind = functionCall?.argumentKind(1) ?: LuaFunctionCall.ArgumentKind.DYNAMIC
-
-            return when (secondArgumentKind) {
-                LuaFunctionCall.ArgumentKind.TABLE -> StructuralEntryArgumentShape.TABLE
-                LuaFunctionCall.ArgumentKind.FUNCTION -> StructuralEntryArgumentShape.FUNCTION
-                LuaFunctionCall.ArgumentKind.STRING,
-                LuaFunctionCall.ArgumentKind.DYNAMIC -> StructuralEntryArgumentShape.DYNAMIC
-            }
-        }
 
         private fun dynamicNamespaceIdentity(startOffset: Int): String =
             "<dynamic>@$startOffset"
@@ -319,9 +297,8 @@ internal object XMakePsiScopeInterpreter {
         private fun isConfigurationDomainFunctionBody(functionBody: LuaFunctionBody): Boolean {
             val functionCall = PsiTreeUtil.getParentOfType(functionBody, LuaFunctionCall::class.java) ?: return false
             val calledName = functionCall.calleeName ?: return false
-            if (!XMakeDescriptionDomainRules.isStructuralEntry(calledName)) {
-                return false
-            }
+            val entryCall = XMakeConfigurationEntryCall.from(calledName, functionCall) ?: return false
+            if (!entryCall.opensConfigurationFrame) return false
             return functionCall.arguments.any { argument ->
                 PsiTreeUtil.findChildOfType(argument, LuaFunctionBody::class.java) == functionBody
             }
@@ -331,13 +308,6 @@ internal object XMakePsiScopeInterpreter {
     private enum class Phase {
         DESCRIPTION,
         SCRIPT
-    }
-
-    private enum class StructuralEntryArgumentShape {
-        PERSISTENT,
-        TABLE,
-        FUNCTION,
-        DYNAMIC
     }
 
     private sealed interface OpenDescriptionFrame {
@@ -370,14 +340,15 @@ internal object XMakePsiScopeInterpreter {
         data class Configuration(
             override val startOffset: Int,
             val type: XMakeConfigurationDomainType,
-            override val root: XMakeRoot
+            override val root: XMakeRoot,
+            val source: XMakeRegion.Source = XMakeRegion.Source.PSI
         ) : OpenDescriptionFrame {
             override fun toRegion(endOffset: Int): XMakeRegion =
                 XMakeRegion(
                     domain = XMakeDomain.Configuration(type),
                     root = root,
                     range = TextRange(startOffset, endOffset.coerceAtLeast(startOffset)),
-                    source = XMakeRegion.Source.PSI
+                    source = source
                 )
 
             override fun describe(): String = "Configuration domain (${type.toKeyword()})"

@@ -8,6 +8,7 @@ data class ScopeIssue(
     val message: String
 ) {
     enum class Kind {
+        INVALID_SCOPE_ENTRY,
         UNMATCHED_SCOPE_END,
         UNCLOSED_SCOPE
     }
