@@ -70,6 +70,7 @@
 
         <annotator language="xmake.lua" implementationClass="io.xmake.lang.codeInsight.annotation.XMakeAnnotator"/>
         <typedHandler implementation="io.xmake.lang.editor.typing.XMakeLuaTypedHandler"/>
+        <enterHandlerDelegate implementation="io.xmake.lang.editor.typing.XMakeLuaEnterBetweenBlockDelimitersHandler"/>
         <localInspection language="xmake.lua"
                          shortName="XMakeUnresolvedSymbol"
                          displayName="Unresolved xmake symbol"

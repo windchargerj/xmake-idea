@@ -72,7 +72,7 @@ class XMakeLuaBlock(
         get() = myNode
 
     override fun buildChildren(): List<Block> =
-        nonWhitespaceChildren()
+        formattingChildren()
             .map { createChildBlock(it) }
             .toList()
 
@@ -88,11 +88,9 @@ class XMakeLuaBlock(
             is LuaFieldList if parentPsi is LuaTableConstructor -> Indent.getNormalIndent()
             is LuaBlock if parentPsi is LuaStatement -> Indent.getNormalIndent()
             is LuaBlock if parentPsi is LuaChunk -> Indent.getNoneIndent()
-            is LuaStatement if isRootLevelChild(parentPsi) -> indentOf(rootIndentDepthForStatement(currentPsi))
-            is LuaStatement if isNestedLuaStatement(currentPsi) -> Indent.getNoneIndent()
-            is LuaStatement if isIndentedDescriptionStatement(currentPsi) -> Indent.getNormalIndent()
+            is LuaStatement -> statementIndent(currentPsi)
             else -> when {
-                isRootLevelChild(parentPsi) && isCommentNode(myNode) -> indentOf(scopeIndentDepthFor(currentPsi))
+                isCommentNode(myNode) -> commentIndent(currentPsi)
                 else -> Indent.getNoneIndent()
             }
         }
@@ -106,14 +104,10 @@ class XMakeLuaBlock(
 
     override fun getChildAttributes(newChildIndex: Int): ChildAttributes {
         return when (val currentPsi = node.psi) {
-            is LuaStatement if opensLuaBlock(currentPsi) ->
-                ChildAttributes(Indent.getNormalIndent(), null)
-
-            is LuaStatement if opensDescriptionStructure(currentPsi) ->
-                ChildAttributes(Indent.getNormalIndent(), null)
+            is LuaStatement -> statementChildAttributes(currentPsi, newChildIndex)
 
             is LuaFunctionBody,
-            is LuaTableConstructor -> ChildAttributes(Indent.getNormalIndent(), null)
+            is LuaTableConstructor -> ChildAttributes(enforcedNormalIndent(), null)
 
             is LuaBlock -> blockChildAttributes(currentPsi, newChildIndex)
 
@@ -138,12 +132,47 @@ class XMakeLuaBlock(
     }
 
     private fun rootBlockChildAttributes(currentBlock: LuaBlock, newChildIndex: Int): ChildAttributes {
-        val previousMeaningfulChild = nonWhitespaceChildren()
+        val previousMeaningfulChild = formattingChildren()
             .take(newChildIndex)
             .lastOrNull(::isMeaningfulNode)
 
         val indentDepth = insertionIndentDepth(currentBlock, previousMeaningfulChild)
         return ChildAttributes(indentOf(indentDepth), null)
+    }
+
+    private fun statementChildAttributes(statement: LuaStatement, newChildIndex: Int): ChildAttributes {
+        val previousMeaningfulChild = formattingChildren()
+            .take(newChildIndex)
+            .lastOrNull(::isMeaningfulNode)
+
+        return when {
+            previousMeaningfulChild?.isLuaBlockOpeningBoundary() == true ->
+                ChildAttributes(enforcedNormalIndent(), null)
+
+            opensLuaBlock(statement) || opensDescriptionStructure(statement) ->
+                ChildAttributes(enforcedNormalIndent(), null)
+
+            else -> ChildAttributes(Indent.getNoneIndent(), null)
+        }
+    }
+
+    private fun statementIndent(statement: LuaStatement): Indent {
+        val owner = statement.containingLuaBlockOwner()
+        return when {
+            owner is LuaChunk -> indentOf(rootIndentDepthForStatement(statement))
+            owner is LuaFunctionBody || owner is LuaStatement -> Indent.getNormalIndent()
+            isIndentedDescriptionStatement(statement) -> Indent.getNormalIndent()
+            else -> Indent.getNoneIndent()
+        }
+    }
+
+    private fun commentIndent(comment: PsiElement): Indent {
+        val owner = comment.containingLuaBlockOwner()
+        return when {
+            owner is LuaChunk -> indentOf(scopeIndentDepthFor(comment))
+            owner is LuaFunctionBody || owner is LuaStatement -> Indent.getNormalIndent()
+            else -> Indent.getNoneIndent()
+        }
     }
 
     private fun isIndentedDescriptionStatement(statement: LuaStatement): Boolean {
@@ -167,10 +196,23 @@ class XMakeLuaBlock(
         return functionCall.hasFunctionBodyArgument
     }
 
-    private fun nonWhitespaceChildren(): List<ASTNode> =
+    private fun formattingChildren(): List<ASTNode> =
         generateSequence(myNode.firstChildNode) { it.treeNext }
-            .filterNot(::isWhitespaceNode)
+            .flatMap(::formattingNodes)
             .toList()
+
+    private fun formattingNodes(node: ASTNode): Sequence<ASTNode> {
+        if (isWhitespaceNode(node)) {
+            return emptySequence()
+        }
+
+        if (isTransparentLuaBlockNode(node)) {
+            return generateSequence(node.firstChildNode) { it.treeNext }
+                .flatMap(::formattingNodes)
+        }
+
+        return sequenceOf(node)
+    }
 
     private fun insertionIndentDepth(currentBlock: LuaBlock, previousMeaningfulChild: ASTNode?): Int {
         if (previousMeaningfulChild == null) {
@@ -234,6 +276,9 @@ class XMakeLuaBlock(
     private fun indentSize(): Int =
         commonSettings.indentOptions?.INDENT_SIZE ?: 4
 
+    private fun enforcedNormalIndent(): Indent =
+        Indent.getIndent(Indent.Type.NORMAL, false, true)
+
     private fun scopeIndentDepthFor(element: PsiElement): Int =
         scopeIndentDepthFor(XMakeScopeQuery.stateAt(element))
 
@@ -249,12 +294,6 @@ class XMakeLuaBlock(
             is XMakeRoot.Namespace -> 1 + namespaceDepth(root.parent)
         }
 
-    private fun isRootLevelChild(parentPsi: PsiElement): Boolean =
-        parentPsi is LuaBlock && parentPsi.parent is LuaChunk
-
-    private fun isNestedLuaStatement(statement: LuaStatement): Boolean =
-        statement.parent is LuaBlock && statement.parent.parent is LuaStatement
-
     private fun isWhitespaceNode(node: ASTNode): Boolean =
         node.elementType == TokenType.WHITE_SPACE
 
@@ -262,7 +301,24 @@ class XMakeLuaBlock(
         COMMENT_TOKENS.contains(node.elementType)
 
     private fun isMeaningfulNode(node: ASTNode): Boolean =
-        !isWhitespaceNode(node) && !isCommentNode(node)
+        !isWhitespaceNode(node) && !isCommentNode(node) && !isEmptyLuaBlockNode(node)
+
+    private fun isEmptyLuaBlockNode(node: ASTNode): Boolean =
+        node.psi is LuaBlock &&
+            generateSequence(node.firstChildNode) { it.treeNext }
+                .none { !isWhitespaceNode(it) && !isCommentNode(it) }
+
+    private fun isTransparentLuaBlockNode(node: ASTNode): Boolean =
+        node.psi is LuaBlock && node.treeParent?.psi !is LuaChunk
+
+    private fun PsiElement.containingLuaBlockOwner(): PsiElement? {
+        val block = parent as? LuaBlock ?: return null
+        return block.parent
+    }
+
+    private fun ASTNode.isLuaBlockOpeningBoundary(): Boolean =
+        LUA_BLOCK_OPENING_TOKENS.contains(elementType) ||
+            (LUA_FUNCTION_HEADER_END_TOKENS.contains(elementType) && treeParent?.psi is LuaFunctionBody)
 
     private fun ASTNode.lastMeaningfulLeaf(): ASTNode? {
         var child = lastChildNode

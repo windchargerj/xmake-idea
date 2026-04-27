@@ -154,6 +154,78 @@ class XMakeTypingPairInsertionTest : XMakeTestCase() {
         )
     }
 
+    fun testEnterBetweenForDoAndEndIndentsLoopBody() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                for _, name in ipairs({"pthread", "dl"}) do <caret>end
+            target_end()
+            """.trimIndent()
+        )
+
+        myFixture.type('\n')
+
+        assertEquals(
+            """
+            target("demo")
+                for _, name in ipairs({"pthread", "dl"}) do
+                    ${""}
+                end
+            target_end()
+            """.trimIndent(),
+            myFixture.editor.document.text
+        )
+        assertEquals(
+            myFixture.editor.document.text.indexOf("        ") + 8,
+            myFixture.editor.caretModel.offset
+        )
+    }
+
+    fun testEnterBetweenIfThenAndEndIndentsThenBody() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """if is_plat("windows") then <caret>end"""
+        )
+
+        myFixture.type('\n')
+
+        assertEquals(
+            """
+            if is_plat("windows") then
+                ${""}
+            end
+            """.trimIndent(),
+            myFixture.editor.document.text
+        )
+        assertEquals(
+            myFixture.editor.document.text.indexOf("    ") + 4,
+            myFixture.editor.caretModel.offset
+        )
+    }
+
+    fun testEnterBetweenRepeatAndUntilIndentsRepeatBody() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """repeat <caret>until done"""
+        )
+
+        myFixture.type('\n')
+
+        assertEquals(
+            """
+            repeat
+                ${""}
+            until done
+            """.trimIndent(),
+            myFixture.editor.document.text
+        )
+        assertEquals(
+            myFixture.editor.document.text.indexOf("    ") + 4,
+            myFixture.editor.caretModel.offset
+        )
+    }
+
     fun testEnterAfterFunctionHeaderIndentsFunctionBody() {
         myFixture.configureByText(
             "xmake.lua",
@@ -180,6 +252,86 @@ class XMakeTypingPairInsertionTest : XMakeTestCase() {
         assertEquals(
             myFixture.editor.document.text.indexOf("        ") + 8,
             myFixture.editor.caretModel.offset
+        )
+    }
+
+    fun testEnterBeforeEmptyFunctionEndIndentsFunctionBody() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function(target)<caret>end)
+            target_end()
+            """.trimIndent()
+        )
+
+        myFixture.type('\n')
+
+        assertEquals(
+            """
+            target("demo")
+                on_load(function(target)
+                    ${""}
+                end)
+            target_end()
+            """.trimIndent(),
+            myFixture.editor.document.text
+        )
+        assertEquals(
+            myFixture.editor.document.text.indexOf("        ") + 8,
+            myFixture.editor.caretModel.offset
+        )
+    }
+
+    fun testEnterOnLineBeforeEmptyFunctionEndKeepsBodyIndent() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function(target)
+            <caret>end)
+            target_end()
+            """.trimIndent()
+        )
+
+        myFixture.type('\n')
+
+        assertEquals(
+            """
+            target("demo")
+                on_load(function(target)
+                    ${""}
+                end)
+            target_end()
+            """.trimIndent(),
+            myFixture.editor.document.text
+        )
+    }
+
+    fun testEnterBeforeCommentedFunctionEndDoesNotTreatBodyAsEmpty() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function(target)
+                    -- keep
+            <caret>end)
+            target_end()
+            """.trimIndent()
+        )
+
+        myFixture.type('\n')
+
+        assertEquals(
+            """
+            target("demo")
+                on_load(function(target)
+                    -- keep
+                    ${""}
+                end)
+            target_end()
+            """.trimIndent(),
+            myFixture.editor.document.text
         )
     }
 
