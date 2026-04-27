@@ -11,9 +11,11 @@ data class XMakeFileScopeModel(
     val scriptSearchRoots: List<ScriptSearchRoot> = emptyList(),
     val issues: List<ScopeIssue> = emptyList()
 ) {
+    private val fileEndOffset: Int = regions.maxOfOrNull { it.endOffset } ?: 0
+
     fun regionsAt(offset: Int): List<XMakeRegion> =
         regions.asSequence()
-            .filter { it.contains(offset) }
+            .filter { it.containsAt(offset) }
             .sortedWith(REGION_ORDER)
             .toList()
 
@@ -21,14 +23,16 @@ data class XMakeFileScopeModel(
         regionsAt(offset).firstOrNull(predicate)
 
     fun scriptRegionAt(offset: Int): XMakeRegion? =
-        regionsAt(offset).lastOrNull { it.domain is XMakeDomain.Script }
+        regions
+            .asSequence()
+            .filter { it.domain is XMakeDomain.Script && it.containsAt(offset) }
+            .minWithOrNull(compareBy<XMakeRegion> { it.range.length }.thenByDescending { it.range.startOffset })
 
     fun scriptSearchRootAt(offset: Int): PsiElement? =
         scriptSearchRoots
             .asSequence()
-            .filter { it.contains(offset) }
-            .sortedBy { it.range.length }
-            .lastOrNull()
+            .filter { it.containsAt(offset) }
+            .minWithOrNull(compareBy<ScriptSearchRoot> { it.range.length }.thenByDescending { it.range.startOffset })
             ?.resolve()
 
     fun regionAt(offset: Int): XMakeRegion =
@@ -49,6 +53,12 @@ data class XMakeFileScopeModel(
 
     fun issuesAt(offset: Int): List<ScopeIssue> =
         issues.filter { it.contains(offset) }
+
+    private fun XMakeRegion.containsAt(offset: Int): Boolean =
+        contains(offset) || (offset == fileEndOffset && endOffset == offset)
+
+    private fun ScriptSearchRoot.containsAt(offset: Int): Boolean =
+        contains(offset) || (offset == fileEndOffset && range.endOffset == offset)
 
     companion object {
         private val REGION_ORDER =

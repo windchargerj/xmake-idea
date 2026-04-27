@@ -6,6 +6,7 @@ import io.xmake.lang.XMakeTestCase
 import io.xmake.lang.scope.issue.ScopeIssue
 import io.xmake.lang.scope.model.XMakeDomain
 import io.xmake.lang.scope.model.XMakeConfigurationDomainType
+import io.xmake.lang.scope.model.XMakeRoot
 import io.xmake.lang.syntax.psi.XMakeLuaIdentifier
 import io.xmake.lang.syntax.psi.lua.LuaBlock
 import org.junit.Assert.assertNotEquals
@@ -81,6 +82,87 @@ class XMakeScopeQueryTest : XMakeTestCase() {
         assertTrue(issues.any { it.kind == ScopeIssue.Kind.UNCLOSED_SCOPE })
     }
 
+    fun testEofInConfigurationDomainKeepsConfigurationState() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                set_kind("binary")
+            <caret>
+            """.trimIndent()
+        )
+
+        val state = XMakeScopeQuery.stateAt(myFixture.file, myFixture.caretOffset)
+        val issues = XMakeScopeQuery.issues(myFixture.file)
+
+        assertEquals(XMakeDomain.Configuration(XMakeConfigurationDomainType.TARGET), state.domain)
+        assertTrue(issues.none { it.kind == ScopeIssue.Kind.UNCLOSED_SCOPE })
+    }
+
+    fun testEofInUnclosedNamespaceStillReportsUnclosedScope() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            namespace("test")
+                add_defines("NS")
+            <caret>
+            """.trimIndent()
+        )
+
+        val state = XMakeScopeQuery.stateAt(myFixture.file, myFixture.caretOffset)
+        val issues = XMakeScopeQuery.issues(myFixture.file)
+
+        assertTrue(state.root is XMakeRoot.Namespace)
+        assertTrue(issues.any { it.kind == ScopeIssue.Kind.UNCLOSED_SCOPE })
+    }
+
+    fun testTableOnlyStructuralEntryDoesNotOpenConfigurationDomain() {
+        val identifier = configureAndFindIdentifier(
+            """
+            target {
+                name = "demo",
+                kind = "binary"
+            }
+            set_ki<caret>nd("binary")
+            """.trimIndent()
+        )
+
+        assertEquals(XMakeDomain.Description, XMakeScopeQuery.domain(identifier))
+    }
+
+    fun testNamespaceEndRestoresConfigurationDomainFromBeforeNamespace() {
+        val identifier = configureAndFindIdentifier(
+            """
+            target("demo")
+                namespace("inner")
+                    add_defines("NS")
+                namespace_end()
+                add_fi<caret>les("src/*.c")
+            target_end()
+            """.trimIndent()
+        )
+
+        assertEquals(XMakeDomain.Configuration(XMakeConfigurationDomainType.TARGET), XMakeScopeQuery.domain(identifier))
+    }
+
+    fun testFunctionNamespaceRestoresGlobalScopeAfterStatement() {
+        val identifier = configureAndFindIdentifier(
+            """
+            namespace("test", function ()
+                target("inside")
+            end)
+            tar<caret>get("outside")
+            """.trimIndent()
+        )
+
+        val state = XMakeScopeQuery.stateAt(identifier)
+        val issues = XMakeScopeQuery.issues(myFixture.file)
+
+        assertEquals(XMakeDomain.Configuration(XMakeConfigurationDomainType.TARGET), state.domain)
+        assertEquals(XMakeRoot.Global, state.root)
+        assertTrue(issues.none { it.kind == ScopeIssue.Kind.UNCLOSED_SCOPE })
+    }
+
     fun testEnclosingConfigurationRegionTracksCurrentScopeOnly() {
         val file = configure(
             """
@@ -130,6 +212,72 @@ class XMakeScopeQueryTest : XMakeTestCase() {
         assertFalse(searchRoot.text.contains("import(\"core.base.json\")"))
     }
 
+    fun testScriptSearchRootReturnsInnermostFunctionBlock() {
+        val identifier = configureAndFindIdentifier(
+            """
+            target("demo")
+                on_load(function (target)
+                    local outer_only = true
+                    local function helper()
+                        local inner_only = true
+                        im<caret>port("core.base.json")
+                    end
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val searchRoot = XMakeScopeQuery.scriptSearchRoot(identifier)
+
+        assertTrue(searchRoot is LuaBlock)
+        assertTrue(searchRoot.text.contains("inner_only"))
+        assertFalse(searchRoot.text.contains("outer_only"))
+    }
+
+    fun testScriptSearchRootKeepsStructuralFunctionBodyInsideHookAsScript() {
+        val identifier = configureAndFindIdentifier(
+            """
+            target("demo")
+                on_load(function (target)
+                    local outer_only = true
+                    target("inner", function ()
+                        local inner_only = true
+                        set_ki<caret>nd("binary")
+                    end)
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val searchRoot = XMakeScopeQuery.scriptSearchRoot(identifier)
+
+        assertTrue(searchRoot is LuaBlock)
+        assertTrue(searchRoot.text.contains("inner_only"))
+        assertFalse(searchRoot.text.contains("outer_only"))
+    }
+
+    fun testScriptRegionAtReturnsInnermostScriptRegion() {
+        val identifier = configureAndFindIdentifier(
+            """
+            target("demo")
+                on_load(function (target)
+                    local outer_only = true
+                    local function helper()
+                        local inner_only = true
+                        im<caret>port("core.base.json")
+                    end
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val scriptRegion = requireNotNull(XMakeScopeQuery.model(myFixture.file).scriptRegionAt(identifier.textOffset))
+        val scriptText = myFixture.file.text.substring(scriptRegion.startOffset, scriptRegion.endOffset)
+
+        assertTrue(scriptText.contains("inner_only"))
+        assertFalse(scriptText.contains("outer_only"))
+    }
+
     fun testScriptSearchRootFallsBackToFileOutsideScriptScope() {
         val identifier = configureAndFindIdentifier(
             """
@@ -151,7 +299,9 @@ class XMakeScopeQueryTest : XMakeTestCase() {
         val leaf: PsiElement = myFixture.file.findElementAt(caretOffset)
             ?: myFixture.file.findElementAt((caretOffset - 1).coerceAtLeast(0))
             ?: error("No PSI element at caret")
-        return requireNotNull(PsiTreeUtil.getParentOfType(leaf, XMakeLuaIdentifier::class.java, false) ?: leaf as? XMakeLuaIdentifier)
+        return requireNotNull(
+            PsiTreeUtil.getParentOfType(leaf, XMakeLuaIdentifier::class.java, false) ?: leaf as? XMakeLuaIdentifier
+        )
     }
 
     private fun configureAndFindElement(code: String): PsiElement {

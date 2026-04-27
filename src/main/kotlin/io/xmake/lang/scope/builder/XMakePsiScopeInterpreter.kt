@@ -73,12 +73,24 @@ internal object XMakePsiScopeInterpreter {
                 return
             }
 
+            val shouldSelfCloseConfiguration =
+                openedDescriptionFrame &&
+                    XMakeDescriptionDomainRules.isConfigurationDomainEntry(functionName) &&
+                    isSelfClosingConfigurationEntry(call)
+            val shouldSelfCloseNamespace =
+                openedDescriptionFrame &&
+                    XMakeDescriptionDomainRules.isNamespaceEntry(functionName) &&
+                    isSelfClosingNamespaceEntry(call)
+
             when {
                 isDescriptionStructureEndFunction(functionName) ->
                     closeMatchingDescriptionFrame(statement, identifier, functionName)
 
-                openedDescriptionFrame && isSelfClosingWithFunction(call) ->
+                shouldSelfCloseConfiguration ->
                     closeTopDescriptionFrame(statement.textRange.endOffset)
+
+                shouldSelfCloseNamespace ->
+                    closeCurrentNamespace(statement.textRange.endOffset)
             }
         }
 
@@ -99,7 +111,7 @@ internal object XMakePsiScopeInterpreter {
 
         private fun walkFunctionBody(functionBody: LuaFunctionBody, outerPhase: Phase) {
             val block = PsiTreeUtil.getChildOfType(functionBody, LuaBlock::class.java) ?: return
-            if (isConfigurationDomainFunctionBody(functionBody)) {
+            if (outerPhase == Phase.DESCRIPTION && isConfigurationDomainFunctionBody(functionBody)) {
                 walkBlock(block, Phase.DESCRIPTION)
                 return
             }
@@ -125,17 +137,15 @@ internal object XMakePsiScopeInterpreter {
                 return false
             }
 
-            closeOpenConfiguration(statement.textRange.startOffset)
-
             if (XMakeDescriptionDomainRules.isNamespaceEntry(functionName)) {
-                val namespaceName = call?.firstStringArgument?.takeIf { it.isNotBlank() }
+                val namespaceName = call?.firstStaticStringArgument?.takeIf { it.isNotBlank() }
                 openFrames.addLast(
                     OpenDescriptionFrame.Namespace(
                         startOffset = statement.textRange.startOffset,
                         root = XMakeRoot.Namespace(
                             parent = currentRoot(),
                             name = namespaceName,
-                            identity = namespaceName ?: "@${statement.textRange.startOffset}"
+                            identity = namespaceName ?: dynamicNamespaceIdentity(statement.textRange.startOffset)
                         )
                     )
                 )
@@ -143,6 +153,10 @@ internal object XMakePsiScopeInterpreter {
             }
 
             val type = XMakeDescriptionDomainRules.configurationDomainTypeForEntry(functionName) ?: return false
+            if (!hasConfigurationDomainNameArgument(call)) {
+                return false
+            }
+            closeOpenConfiguration(statement.textRange.startOffset)
             openFrames.addLast(
                 OpenDescriptionFrame.Configuration(
                     startOffset = statement.textRange.startOffset,
@@ -199,15 +213,25 @@ internal object XMakePsiScopeInterpreter {
                 return
             }
 
-            while (openFrames.lastOrNull() is OpenDescriptionFrame.Configuration) {
-                closeTopDescriptionFrame(statement.textRange.startOffset)
-            }
-
+            closeOpenConfigurations(statement.textRange.startOffset)
             closeTopDescriptionFrame(statement.textRange.endOffset)
         }
 
         private fun closeOpenConfiguration(endOffset: Int) {
             if (openFrames.lastOrNull() is OpenDescriptionFrame.Configuration) {
+                closeTopDescriptionFrame(endOffset)
+            }
+        }
+
+        private fun closeOpenConfigurations(endOffset: Int) {
+            while (openFrames.lastOrNull() is OpenDescriptionFrame.Configuration) {
+                closeTopDescriptionFrame(endOffset)
+            }
+        }
+
+        private fun closeCurrentNamespace(endOffset: Int) {
+            closeOpenConfigurations(endOffset)
+            if (openFrames.lastOrNull() is OpenDescriptionFrame.Namespace) {
                 closeTopDescriptionFrame(endOffset)
             }
         }
@@ -253,8 +277,44 @@ internal object XMakePsiScopeInterpreter {
         private fun isDescriptionStructureEndFunction(functionName: String): Boolean =
             XMakeDescriptionDomainRules.isStructuralEnd(functionName)
 
-        private fun isSelfClosingWithFunction(functionCall: LuaFunctionCall?): Boolean =
-            functionCall?.hasFunctionBodyArgument == true
+        private fun hasConfigurationDomainNameArgument(functionCall: LuaFunctionCall?): Boolean {
+            return when (functionCall?.argumentKind(0)) {
+                LuaFunctionCall.ArgumentKind.STRING,
+                LuaFunctionCall.ArgumentKind.DYNAMIC -> true
+                LuaFunctionCall.ArgumentKind.TABLE,
+                LuaFunctionCall.ArgumentKind.FUNCTION,
+                null -> false
+            }
+        }
+
+        private fun isSelfClosingConfigurationEntry(functionCall: LuaFunctionCall?): Boolean =
+            when (configurationEntryArgumentShape(functionCall)) {
+                StructuralEntryArgumentShape.PERSISTENT -> false
+                StructuralEntryArgumentShape.TABLE,
+                StructuralEntryArgumentShape.FUNCTION,
+                StructuralEntryArgumentShape.DYNAMIC -> true
+            }
+
+        private fun isSelfClosingNamespaceEntry(functionCall: LuaFunctionCall?): Boolean =
+            functionCall?.argumentKind(1) == LuaFunctionCall.ArgumentKind.FUNCTION
+
+        private fun configurationEntryArgumentShape(functionCall: LuaFunctionCall?): StructuralEntryArgumentShape {
+            val arguments = functionCall?.arguments.orEmpty()
+            if (arguments.size < 2) {
+                return StructuralEntryArgumentShape.PERSISTENT
+            }
+            val secondArgumentKind = functionCall?.argumentKind(1) ?: LuaFunctionCall.ArgumentKind.DYNAMIC
+
+            return when (secondArgumentKind) {
+                LuaFunctionCall.ArgumentKind.TABLE -> StructuralEntryArgumentShape.TABLE
+                LuaFunctionCall.ArgumentKind.FUNCTION -> StructuralEntryArgumentShape.FUNCTION
+                LuaFunctionCall.ArgumentKind.STRING,
+                LuaFunctionCall.ArgumentKind.DYNAMIC -> StructuralEntryArgumentShape.DYNAMIC
+            }
+        }
+
+        private fun dynamicNamespaceIdentity(startOffset: Int): String =
+            "<dynamic>@$startOffset"
 
         private fun isConfigurationDomainFunctionBody(functionBody: LuaFunctionBody): Boolean {
             val functionCall = PsiTreeUtil.getParentOfType(functionBody, LuaFunctionCall::class.java) ?: return false
@@ -271,6 +331,13 @@ internal object XMakePsiScopeInterpreter {
     private enum class Phase {
         DESCRIPTION,
         SCRIPT
+    }
+
+    private enum class StructuralEntryArgumentShape {
+        PERSISTENT,
+        TABLE,
+        FUNCTION,
+        DYNAMIC
     }
 
     private sealed interface OpenDescriptionFrame {

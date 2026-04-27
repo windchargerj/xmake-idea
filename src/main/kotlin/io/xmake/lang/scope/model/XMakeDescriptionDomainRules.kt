@@ -66,7 +66,7 @@ object XMakeDescriptionDomainRules {
     fun isGlobalInterfaceVisibleInConfigurationDomain(
         functionName: String,
         @Suppress("UNUSED_PARAMETER") domainType: XMakeConfigurationDomainType
-    ): Boolean = functionName !in ROOT_ONLY_GLOBAL_INTERFACES
+    ): Boolean = functionName in BUILTIN_FUNCTION_INTERFACES
 
     fun isBuiltinFunctionInterface(functionName: String): Boolean =
         functionName in BUILTIN_FUNCTION_INTERFACES
@@ -96,19 +96,4 @@ object XMakeDescriptionDomainRules {
         "unpack"
     )
 
-    private val ROOT_ONLY_GLOBAL_INTERFACES: Set<String> = setOf(
-        "add_packagedirs",
-        "add_repositories",
-        "add_requireconfs",
-        "add_requires",
-        "set_allowedarchs",
-        "set_allowedmodes",
-        "set_allowedplats",
-        "set_config",
-        "set_defaultarchs",
-        "set_defaultmode",
-        "set_defaultplat",
-        "set_description",
-        "set_project"
-    )
 }

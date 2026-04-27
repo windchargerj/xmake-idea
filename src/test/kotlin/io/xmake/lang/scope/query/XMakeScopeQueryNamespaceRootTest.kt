@@ -115,12 +115,33 @@ class XMakeScopeQueryNamespaceRootTest : XMakeTestCase() {
             .filter { it.text == "add_defines" }
             .sortedBy { it.textOffset }
 
-        val leftRoot = XMakeScopeQuery.stateAt(identifiers.first()).root as? XMakeRoot.Namespace ?: error("Expected left namespace")
-        val rightRoot = XMakeScopeQuery.stateAt(identifiers.last()).root as? XMakeRoot.Namespace ?: error("Expected right namespace")
+        val leftRoot = XMakeScopeQuery.stateAt(identifiers.first()).root as? XMakeRoot.Namespace
+            ?: error("Expected left namespace")
+        val rightRoot = XMakeScopeQuery.stateAt(identifiers.last()).root as? XMakeRoot.Namespace
+            ?: error("Expected right namespace")
 
         assertFalse(leftRoot == rightRoot)
         assertEquals(listOf("left"), leftRoot.path)
         assertEquals(listOf("right"), rightRoot.path)
+    }
+
+    fun testDynamicNamespaceNameUsesAnonymousIdentity() {
+        val identifier = configureAndFindIdentifier(
+            """
+            local ns = "dynamic"
+            namespace(ns)
+                add_de<caret>fines("NS_ROOT")
+            namespace_end()
+            """.trimIndent()
+        )
+
+        val state = XMakeScopeQuery.stateAt(identifier)
+        val root = state.root as? XMakeRoot.Namespace ?: error("Expected namespace root")
+
+        assertNull(root.name)
+        assertTrue(root.path.isEmpty())
+        assertFalse(root.identityPath.contains("ns"))
+        assertTrue(root.identity.isNotBlank())
     }
 
     private fun configureAndFindIdentifier(code: String): XMakeLuaIdentifier {
@@ -129,6 +150,8 @@ class XMakeScopeQueryNamespaceRootTest : XMakeTestCase() {
         val leaf: PsiElement = myFixture.file.findElementAt(caretOffset)
             ?: myFixture.file.findElementAt((caretOffset - 1).coerceAtLeast(0))
             ?: error("No PSI element at caret")
-        return requireNotNull(PsiTreeUtil.getParentOfType(leaf, XMakeLuaIdentifier::class.java, false) ?: leaf as? XMakeLuaIdentifier)
+        return requireNotNull(
+            PsiTreeUtil.getParentOfType(leaf, XMakeLuaIdentifier::class.java, false) ?: leaf as? XMakeLuaIdentifier
+        )
     }
 }
