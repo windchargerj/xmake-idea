@@ -6,6 +6,7 @@ import io.xmake.lang.XMakeTestCase
 import io.xmake.lang.scope.issue.ScopeIssue
 import io.xmake.lang.scope.model.XMakeDomain
 import io.xmake.lang.scope.model.XMakeConfigurationDomainType
+import io.xmake.lang.scope.model.XMakeRegion
 import io.xmake.lang.scope.model.XMakeRoot
 import io.xmake.lang.syntax.psi.XMakeLuaIdentifier
 import io.xmake.lang.syntax.psi.lua.LuaBlock
@@ -126,8 +127,41 @@ class XMakeScopeQueryTest : XMakeTestCase() {
             set_ki<caret>nd("binary")
             """.trimIndent()
         )
+        val target = findFunctionCallIdentifier("target")
 
+        assertTrue(XMakeScopeQuery.issuesAt(target).any { it.kind == ScopeIssue.Kind.INVALID_SCOPE_ENTRY })
         assertEquals(XMakeDomain.Description, XMakeScopeQuery.domain(identifier))
+    }
+
+    fun testMissingTargetNameReportsEntryIssueAndRecoversMatchingEnd() {
+        val identifier = configureAndFindIdentifier(
+            """
+            tar<caret>get()
+                set_kind("binary")
+            target_end()
+            """.trimIndent()
+        )
+        val targetEnd = findFunctionCallIdentifier("target_end")
+
+        assertTrue(XMakeScopeQuery.issuesAt(identifier).any { it.kind == ScopeIssue.Kind.INVALID_SCOPE_ENTRY })
+        assertTrue(XMakeScopeQuery.issuesAt(targetEnd).none { it.kind == ScopeIssue.Kind.UNMATCHED_SCOPE_END })
+        assertEquals(XMakeDomain.Configuration(XMakeConfigurationDomainType.TARGET), XMakeScopeQuery.domain(targetEnd))
+    }
+
+    fun testEmptyTargetNameUsesRecoveryRegion() {
+        val identifier = configureAndFindIdentifier(
+            """
+            tar<caret>get("")
+                set_kind("binary")
+            target_end()
+            """.trimIndent()
+        )
+        val targetEnd = findFunctionCallIdentifier("target_end")
+        val region = requireNotNull(XMakeScopeQuery.enclosingConfigurationRegion(targetEnd))
+
+        assertTrue(XMakeScopeQuery.issuesAt(identifier).any { it.kind == ScopeIssue.Kind.INVALID_SCOPE_ENTRY })
+        assertEquals(XMakeRegion.Source.RECOVERY, region.source)
+        assertTrue(XMakeScopeQuery.issuesAt(targetEnd).none { it.kind == ScopeIssue.Kind.UNMATCHED_SCOPE_END })
     }
 
     fun testNamespaceEndRestoresConfigurationDomainFromBeforeNamespace() {
@@ -303,6 +337,10 @@ class XMakeScopeQueryTest : XMakeTestCase() {
             PsiTreeUtil.getParentOfType(leaf, XMakeLuaIdentifier::class.java, false) ?: leaf as? XMakeLuaIdentifier
         )
     }
+
+    private fun findFunctionCallIdentifier(name: String): XMakeLuaIdentifier =
+        PsiTreeUtil.findChildrenOfType(myFixture.file, XMakeLuaIdentifier::class.java)
+            .first { it.text == name }
 
     private fun configureAndFindElement(code: String): PsiElement {
         myFixture.configureByText("xmake.lua", code)

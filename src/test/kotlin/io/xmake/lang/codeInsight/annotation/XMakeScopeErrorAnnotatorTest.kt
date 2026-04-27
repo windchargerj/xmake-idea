@@ -52,6 +52,18 @@ class XMakeScopeErrorAnnotatorTest : XMakeAnnotatorTestCase() {
         target_end()
     """.trimIndent())
 
+    fun testMissingTargetNameReportsEntryErrorWithoutCascadingToTargetEnd() = highlight("""
+        <error descr="target() requires a name.">target</error>()
+            set_kind("binary")
+        target_end()
+    """.trimIndent())
+
+    fun testEmptyTargetNameReportsEntryErrorWithoutCascadingToTargetEnd() = highlight("""
+        <error descr="target() name must not be empty.">target</error>("")
+            set_kind("binary")
+        target_end()
+    """.trimIndent())
+
     fun testConditionalTargetScopeAllowsTargetEnd() = highlight("""
         option("a")
         option_end()
@@ -182,4 +194,3 @@ class XMakeScopeErrorAnnotatorTest : XMakeAnnotatorTestCase() {
         }
     }
 }
-
