@@ -6,16 +6,19 @@ import com.intellij.ide.util.treeView.smartTree.TreeElement
 import com.intellij.navigation.ItemPresentation
 import com.intellij.navigation.NavigationItem
 import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiNamedElement
 import com.intellij.psi.util.PsiTreeUtil
-import io.xmake.lang.scope.model.XMakeDomain
 import io.xmake.lang.scope.model.XMakeConfigurationDomainType
+import io.xmake.lang.scope.model.XMakeDescriptionDomainRules
+import io.xmake.lang.scope.model.XMakeDomain
+import io.xmake.lang.scope.model.XMakeRegion
+import io.xmake.lang.scope.model.XMakeRoot
 import io.xmake.lang.scope.query.XMakeScopeQuery
 import io.xmake.lang.syntax.psi.XMakeLuaFile
 import io.xmake.lang.syntax.psi.lua.LuaFunctionCall
 
 open class LuaStructureViewElement(
-    @JvmField protected val element: PsiElement
+    @JvmField protected val element: PsiElement,
+    private val region: XMakeRegion? = null
 ) : StructureViewTreeElement, SortableTreeElement {
 
     override fun getValue(): Any = element
@@ -28,27 +31,35 @@ open class LuaStructureViewElement(
 
     override fun canNavigateToSource(): Boolean = element is NavigationItem && element.canNavigateToSource()
 
-    override fun getAlphaSortKey(): String = (element as? PsiNamedElement)?.name ?: "unknown key"
+    override fun getAlphaSortKey(): String =
+        listOfNotNull(
+            presentation.presentableText,
+            presentation.locationString
+        ).joinToString(" ").ifBlank { element.text }
 
     override fun getPresentation(): ItemPresentation =
         when (element) {
-            is LuaFunctionCall if isDomainOpeningCall(element) ->
+            is LuaFunctionCall if isStructuralOpeningCall(element) ->
                 XMakeScopeItemPresentation(element)
 
             else -> LuaItemPresentation(element)
         }
 
     override fun getChildren(): Array<out TreeElement?> {
-        if (element !is XMakeLuaFile) {
-            return emptyArray()
+        val file = element.containingFile as? XMakeLuaFile ?: return emptyArray()
+        val parentRoot = when {
+            element is XMakeLuaFile -> XMakeRoot.Global
+            region?.root is XMakeRoot.Namespace -> region.root
+            else -> return emptyArray()
         }
 
-        return XMakeScopeQuery.regions(element)
+        return XMakeScopeQuery.regions(file)
             .asSequence()
-            .filter { it.domain is XMakeDomain.Configuration }
-            .mapNotNull { region -> findOpeningCall(element, region.startOffset) }
-            .distinctBy { it.textRange }
-            .map(::LuaStructureViewElement)
+            .filter { it.isDirectChildOf(parentRoot) }
+            .mapNotNull { childRegion ->
+                findOpeningCall(file, childRegion.startOffset)?.let { LuaStructureViewElement(it, childRegion) }
+            }
+            .distinctBy { (it.value as? PsiElement)?.textRange }
             .toList()
             .toTypedArray()
     }
@@ -58,7 +69,16 @@ open class LuaStructureViewElement(
         return PsiTreeUtil.getParentOfType(leaf, LuaFunctionCall::class.java, false)
     }
 
-    private fun isDomainOpeningCall(call: LuaFunctionCall): Boolean =
-        call.firstChild?.text?.let(XMakeConfigurationDomainType::fromKeyword) != null &&
-            PsiTreeUtil.getParentOfType(call, LuaFunctionCall::class.java, true, XMakeLuaFile::class.java) == null
+    private fun XMakeRegion.isDirectChildOf(parentRoot: XMakeRoot): Boolean =
+        when (domain) {
+            is XMakeDomain.Configuration -> root == parentRoot
+            is XMakeDomain.Description -> root is XMakeRoot.Namespace && root.parent == parentRoot
+            is XMakeDomain.Script -> false
+        }
+
+    private fun isStructuralOpeningCall(call: LuaFunctionCall): Boolean {
+        val calleeName = call.calleeName ?: return false
+        return calleeName == XMakeDescriptionDomainRules.NAMESPACE_ENTRY_KEYWORD ||
+            XMakeConfigurationDomainType.fromKeyword(calleeName) != null
+    }
 }

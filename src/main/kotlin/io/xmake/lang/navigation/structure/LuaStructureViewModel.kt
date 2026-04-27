@@ -18,7 +18,7 @@ class LuaStructureViewModel
 
     override fun isAlwaysShowsPlus(element: StructureViewTreeElement): Boolean {
         val value = element.value
-        return value is XMakeLuaFile
+        return value is XMakeLuaFile || element.children.isNotEmpty()
     }
 }
 
