@@ -13,6 +13,7 @@ plugins {
     id("org.jetbrains.kotlin.jvm") version "2.1.21"
     id("org.jetbrains.changelog") version "2.5.0"
     kotlin("plugin.serialization") version "2.1.21"
+    antlr
 }
 
 group = "io.xmake"
@@ -56,6 +57,8 @@ intellijPlatform {
 }
 
 dependencies {
+    antlr("org.antlr:antlr4:4.13.2")
+    implementation("org.antlr:antlr4-intellij-adaptor:0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     intellijPlatform {
         clion(properties("runIdeVersion"))
@@ -73,11 +76,24 @@ tasks {
         dependsOn(":clion-debug:build", ":clion-debug:copyToPluginResources")
     }
 
+    generateGrammarSource {
+        outputDirectory = outputDirectory.resolve("io/xmake/lang/antlr")
+        arguments = listOf(
+            "-package", "io.xmake.lang.antlr",
+            "-long-messages",
+        )
+    }
+
     compileKotlin {
+        dependsOn(generateGrammarSource)
         // when guards syntax is experimental in Kotlin 2.1
         compilerOptions {
             freeCompilerArgs.addAll(listOf("-Xwhen-guards"))
         }
+    }
+
+    compileTestKotlin {
+        dependsOn(generateTestGrammarSource)
     }
 
     matching { task -> task.name.contains("buildSearchableOptions") }.configureEach {
