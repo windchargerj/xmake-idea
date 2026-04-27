@@ -17,6 +17,8 @@ class XMakeDarculaColorSchemeTest : TestCase() {
         val options = loadSchemeOptions()
         val expectedKeys = setOf(
             XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL.externalName,
+            XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL.externalName,
+            XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL.externalName,
             XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL.externalName,
             XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL.externalName,
             XMakeLuaTextAttribute.XMAKE_LUA_CONFIGURATION_DOMAIN_API.externalName,
@@ -45,6 +47,8 @@ class XMakeDarculaColorSchemeTest : TestCase() {
         val options = loadSchemeOptions()
         val semanticKeys = listOf(
             XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL,
+            XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL,
+            XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL,
             XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL,
             XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL,
             XMakeLuaTextAttribute.XMAKE_LUA_CONFIGURATION_DOMAIN_API,
@@ -78,12 +82,22 @@ class XMakeDarculaColorSchemeTest : TestCase() {
         val options = loadSchemeOptions()
 
         val plainFunction = options.getValue(XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL.externalName)
+        val descriptionBuiltin = options.getValue(XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL.externalName)
+        val scriptBuiltin = options.getValue(XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL.externalName)
         val descriptionApi = options.getValue(XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL.externalName)
         val scriptApi = options.getValue(XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL.externalName)
 
         assertNull("Plain Lua function call should stay theme-aligned", plainFunction.foreground)
+        assertNotNull("Description builtin function call should use a dedicated foreground", descriptionBuiltin.foreground)
+        assertNull("Description builtin function call should not be italic", descriptionBuiltin.fontType)
+        assertNotNull("Script builtin function call should use a dedicated foreground", scriptBuiltin.foreground)
+        assertNull("Script builtin function call should not be italic", scriptBuiltin.fontType)
         assertNotNull("Description domain API call should use a dedicated DSL foreground", descriptionApi.foreground)
         assertEquals("Description domain API call should be italic", "2", descriptionApi.fontType)
+        assertFalse(
+            "Description builtin function call should differ from the description API color",
+            descriptionApi.foreground == descriptionBuiltin.foreground
+        )
         assertFalse(
             "Script API call should differ from the description API color",
             descriptionApi.foreground == scriptApi.foreground
@@ -95,7 +109,11 @@ class XMakeDarculaColorSchemeTest : TestCase() {
         val options = loadSchemeOptions()
         val instanceMethod = options.getValue(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD.externalName)
 
-        assertEquals("Instance method should inherit regular function-call styling", "FUNCTION_CALL", instanceMethod.baseAttributes)
+        assertEquals(
+            "Instance method should inherit regular function-call styling",
+            "FUNCTION_CALL",
+            instanceMethod.baseAttributes
+        )
         assertNull("Instance method should not override the theme foreground", instanceMethod.foreground)
         assertNull("Instance method should not force italics or bold", instanceMethod.fontType)
     }

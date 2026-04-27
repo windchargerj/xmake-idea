@@ -11,6 +11,8 @@ internal object IdentifierHighlightTextAttributes {
     private val mapping: Map<IdentifierHighlightKind, TextAttributesKey> = mapOf(
         IdentifierSemanticKind.FUNCTION_DECLARATION to XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_DECLARATION,
         IdentifierSemanticKind.FUNCTION_CALL to XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL,
+        IdentifierSemanticKind.DESCRIPTION_BUILTIN_FUNCTION_CALL to XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL,
+        IdentifierSemanticKind.SCRIPT_BUILTIN_FUNCTION_CALL to XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL,
         IdentifierSemanticKind.DESCRIPTION_API_CALL to XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL,
         IdentifierSemanticKind.SCRIPT_API_CALL to XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL,
         IdentifierSemanticKind.MODULE_CALL to XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL,

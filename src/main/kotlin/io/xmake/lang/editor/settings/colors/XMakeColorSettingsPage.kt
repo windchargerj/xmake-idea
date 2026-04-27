@@ -15,9 +15,11 @@ class XMakeColorSettingsPage : ColorSettingsPage {
     override fun getAdditionalHighlightingTagToDescriptorMap(): Map<String, TextAttributesKey>? {
         return mapOf(
             "luaFunction" to XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL,
+            "descriptionBuiltinFunction" to XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL,
+            "scriptBuiltinFunction" to XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL,
             "descriptionApi" to XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL,
             "scriptApi" to XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL,
-        "configurationDomain" to XMakeLuaTextAttribute.XMAKE_LUA_CONFIGURATION_DOMAIN_API,
+            "configurationDomain" to XMakeLuaTextAttribute.XMAKE_LUA_CONFIGURATION_DOMAIN_API,
             "instanceMethod" to XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD,
             "functionDecl" to XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_DECLARATION,
             "tableKey" to XMakeLuaTextAttribute.XMAKE_LUA_TABLE_KEY,
@@ -44,12 +46,16 @@ class XMakeColorSettingsPage : ColorSettingsPage {
     -- set kind
     <descriptionApi>set_kind</descriptionApi>("binary")
 
+    for _, <localVar>name</localVar> in <descriptionBuiltinFunction>ipairs</descriptionBuiltinFunction>({"src/main.c"}) do
+        <descriptionApi>add_files</descriptionApi>(<localVar>name</localVar>)
+    end
+
     -- add files
     <descriptionApi>add_files</descriptionApi>("src/*.c")
 
     -- hooks use script APIs
     <descriptionApi>after_build</descriptionApi>(function (<parameter>target</parameter>)
-        local <localVar>j</localVar> = <scriptApi>import</scriptApi>("core.base.json", {<tableKey>alias</tableKey> = "j"})
+        local <localVar>j</localVar> = <scriptBuiltinFunction>import</scriptBuiltinFunction>("core.base.json", {<tableKey>alias</tableKey> = "j"})
         local <localVar>payload</localVar> = {<tableKey>name</tableKey> = <parameter>target</parameter>:<instanceMethod>name</instanceMethod>()}
         local <localVar>home</localVar> = os.<luaFunction>getenv</luaFunction>("HOME")
         <localVar>j</localVar>.<luaFunction>encode</luaFunction>(<localVar>payload</localVar>)
@@ -92,10 +98,18 @@ end
             AttributesDescriptor("Dot", XMakeLuaTextAttribute.DOT),
             AttributesDescriptor("Bad character", XMakeLuaTextAttribute.BAD_CHARACTER),
             AttributesDescriptor("Lua function call", XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL),
+            AttributesDescriptor(
+                "Description builtin function call",
+                XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL
+            ),
+            AttributesDescriptor(
+                "Script builtin function call",
+                XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL
+            ),
             AttributesDescriptor("Description domain API call", XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL),
             AttributesDescriptor("Script domain API call", XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL),
             AttributesDescriptor("Function declaration", XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_DECLARATION),
-        AttributesDescriptor("Configuration domain API", XMakeLuaTextAttribute.XMAKE_LUA_CONFIGURATION_DOMAIN_API),
+            AttributesDescriptor("Configuration domain API", XMakeLuaTextAttribute.XMAKE_LUA_CONFIGURATION_DOMAIN_API),
             AttributesDescriptor("Instance method call", XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD),
             AttributesDescriptor("Table key", XMakeLuaTextAttribute.XMAKE_LUA_TABLE_KEY),
             AttributesDescriptor("Table field", XMakeLuaTextAttribute.XMAKE_LUA_TABLE_FIELD),

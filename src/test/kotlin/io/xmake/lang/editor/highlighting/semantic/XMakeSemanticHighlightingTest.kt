@@ -11,7 +11,7 @@ import io.xmake.lang.editor.highlighting.XMakeLuaTextAttribute
  *
  * Incomplete-input behavior is intentionally conservative in the current
  * precise-only architecture and does not live in a separate recovery suite.
- * Analysis-assisted alias/return-type/inferred receiver cases live in
+ * Analysis-assisted alias/return-type/verified receiver cases live in
  * [XMakeSemanticHighlightingAnalysisTest].
  */
 class XMakeSemanticHighlightingTest : XMakeSemanticHighlightingTestCase() {
@@ -96,8 +96,24 @@ class XMakeSemanticHighlightingTest : XMakeSemanticHighlightingTestCase() {
                 target_end()
             """.trimIndent()
         }
-            .expect(XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL)
+            .expect(XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL)
             .notExpect(XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL)
+            .notExpect(XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_API_CALL)
+    }
+
+    fun testDescriptionBuiltinFunctionHighlightingOnPlainCall() {
+        highlighting {
+            """
+                target("demo")
+                    for _, source in ip<caret>airs({"src/main.c"}) do
+                        add_files(source)
+                    end
+                target_end()
+            """.trimIndent()
+        }
+            .expect(XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL)
+            .notExpect(XMakeLuaTextAttribute.XMAKE_LUA_DESCRIPTION_API_CALL)
+            .notExpect(XMakeLuaTextAttribute.XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL)
     }
 
     fun testLocalVariableUsageHighlighting() {
@@ -181,7 +197,7 @@ class XMakeSemanticHighlightingTest : XMakeSemanticHighlightingTestCase() {
             )
     }
 
-    fun testInstanceMethodHighlightingOnMember() {
+    fun testUnknownHookReceiverHasNoInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 target("test")
@@ -190,7 +206,7 @@ class XMakeSemanticHighlightingTest : XMakeSemanticHighlightingTestCase() {
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
     fun testImportedAliasModuleFunctionHighlightingOnMember() {

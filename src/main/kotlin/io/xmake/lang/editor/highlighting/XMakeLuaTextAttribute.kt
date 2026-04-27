@@ -23,6 +23,12 @@ object XMakeLuaTextAttribute {
     val XMAKE_LUA_FUNCTION_CALL = TextAttributesKey.createTextAttributesKey(
         "XMAKE_LUA_FUNCTION_CALL", FUNCTION_CALL
     )
+    val XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL = TextAttributesKey.createTextAttributesKey(
+        "XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL", FUNCTION_CALL
+    )
+    val XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL = TextAttributesKey.createTextAttributesKey(
+        "XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL", FUNCTION_CALL
+    )
     val XMAKE_LUA_DESCRIPTION_API_CALL = TextAttributesKey.createTextAttributesKey(
         "XMAKE_LUA_DESCRIPTION_API_CALL", DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL
     )
@@ -44,14 +50,17 @@ object XMakeLuaTextAttribute {
     val XMAKE_LUA_TABLE_FIELD = TextAttributesKey.createTextAttributesKey(
         "XMAKE_LUA_TABLE_FIELD", DefaultLanguageHighlighterColors.INSTANCE_FIELD
     )
+
     // Lua: local x = 1
     val XMAKE_LUA_LOCAL_VARIABLE = TextAttributesKey.createTextAttributesKey(
         "XMAKE_LUA_LOCAL_VARIABLE", DefaultLanguageHighlighterColors.LOCAL_VARIABLE
     )
+
     // Lua: function foo(a, b, c)
     val XMAKE_LUA_PARAMETER = TextAttributesKey.createTextAttributesKey(
         "XMAKE_LUA_PARAMETER", DefaultLanguageHighlighterColors.PARAMETER
     )
+
     // Lua: ::label::
     val XMAKE_LUA_LABEL = TextAttributesKey.createTextAttributesKey(
         "XMAKE_LUA_LABEL", DefaultLanguageHighlighterColors.LABEL

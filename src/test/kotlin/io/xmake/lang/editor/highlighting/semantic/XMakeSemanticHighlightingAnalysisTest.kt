@@ -6,8 +6,8 @@ import io.xmake.lang.editor.highlighting.XMakeLuaTextAttribute
  * Analysis-assisted highlighting coverage.
  *
  * These assertions protect plugin-local type/receiver propagation, local alias
- * tracking, inherited direct APIs, and inferred return-object methods. They
- * highlighting baseline.
+ * tracking, inherited direct APIs, and verified return-object methods. They
+ * live outside the stable highlighting baseline.
  */
 class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase() {
 
@@ -37,7 +37,7 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
         }.expect(XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL)
     }
 
-    fun testAliasedInstanceMethodHighlightingOnMember() {
+    fun testUnknownAliasedHookReceiverHasNoInstanceMethodHighlighting() {
         highlighting {
             """
                 target("test")
@@ -47,7 +47,7 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
     fun testFunctionReturnedModuleHighlightingOnMember() {
@@ -66,7 +66,7 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
         }.expect(XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL)
     }
 
-    fun testFunctionReturnedInstanceMethodHighlightingOnMember() {
+    fun testUnknownFunctionReturnedHookReceiverHasNoInstanceMethodHighlighting() {
         highlighting {
             """
                 target("test")
@@ -79,10 +79,10 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
-    fun testTargetDepReturnedInstanceMethodHighlightingOnMember() {
+    fun testUnknownTargetDepReturnHasNoInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 target("demo")
@@ -92,10 +92,10 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
-    fun testTargetPkgReturnedInstanceMethodHighlightingOnMember() {
+    fun testUnknownTargetPkgReturnHasNoInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 target("demo")
@@ -105,10 +105,10 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
-    fun testOptionDepReturnedInstanceMethodHighlightingOnMember() {
+    fun testUnknownOptionDepReturnHasNoInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 option("feature")
@@ -119,10 +119,10 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 option_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
-    fun testPackageDepReturnedInstanceMethodHighlightingOnMember() {
+    fun testUnknownPackageDepReturnHasNoInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 package("demo")
@@ -132,10 +132,10 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 package_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
-    fun testTargetRuleReturnedInstanceMethodHighlightingOnMember() {
+    fun testUnknownTargetRuleReturnHasNoInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 target("demo")
@@ -145,10 +145,10 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
-    fun testTargetRuleCloneReturnedInstanceMethodHighlightingOnMember() {
+    fun testUnknownTargetRuleCloneReturnHasNoInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 target("demo")
@@ -158,6 +158,6 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 }

@@ -2,6 +2,16 @@
 <list>
     <!-- Theme-aligned Darcula palette: follow IntelliJ semantic defaults, with minimal xmake-specific emphasis. -->
     <option name="XMAKE_LUA_FUNCTION_CALL" baseAttributes="FUNCTION_CALL"/>
+    <option name="XMAKE_LUA_DESCRIPTION_BUILTIN_FUNCTION_CALL" baseAttributes="FUNCTION_CALL">
+        <value>
+            <option name="FOREGROUND" value="c39bb9"/> <!-- Description Builtin Function Mauve -->
+        </value>
+    </option>
+    <option name="XMAKE_LUA_SCRIPT_BUILTIN_FUNCTION_CALL" baseAttributes="FUNCTION_CALL">
+        <value>
+            <option name="FOREGROUND" value="c39bb9"/> <!-- Script Builtin Function Mauve -->
+        </value>
+    </option>
     <option name="XMAKE_LUA_DESCRIPTION_API_CALL" baseAttributes="PREDEFINED_SYMBOL">
         <value>
             <option name="FOREGROUND" value="d9c78f"/> <!-- DSL Pale Yellow -->
