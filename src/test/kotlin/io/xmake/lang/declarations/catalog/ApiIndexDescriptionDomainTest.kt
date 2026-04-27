@@ -29,9 +29,9 @@ class ApiIndexDescriptionDomainTest : XMakeTestCase() {
         assertTrue("add_files" in globalNames)
         assertTrue("add_files" in targetDomainNames)
         assertTrue("ipairs" in targetDomainNames)
-        assertTrue("includes" in targetDomainNames)
-        assertTrue("add_platformdirs" in targetDomainNames)
-        assertTrue("add_toolchaindirs" in targetDomainNames)
+        assertFalse("includes" in targetDomainNames)
+        assertFalse("add_platformdirs" in targetDomainNames)
+        assertFalse("add_toolchaindirs" in targetDomainNames)
         assertFalse("option_end" in globalNames)
     }
 
@@ -40,7 +40,15 @@ class ApiIndexDescriptionDomainTest : XMakeTestCase() {
 
         val globalNames = lookup.availableTopLevelCallables(ApiLookupView.DESCRIPTION_GLOBAL_ROOT).map { it.name }.toSet()
         val targetDomainNames = lookup.availableTopLevelCallables(ApiLookupView.configuration(XMakeConfigurationDomainType.TARGET)).map { it.name }.toSet()
-        val rootOnlyGlobalApis = setOf("set_project", "set_config", "add_requires", "add_repositories")
+        val rootOnlyGlobalApis = setOf(
+            "set_project",
+            "set_config",
+            "add_requires",
+            "add_repositories",
+            "includes",
+            "add_moduledirs",
+            "set_xmakever"
+        )
 
         assertTrue(globalNames.containsAll(rootOnlyGlobalApis))
         assertTrue(targetDomainNames.intersect(rootOnlyGlobalApis).isEmpty())
@@ -71,9 +79,9 @@ class ApiIndexDescriptionDomainTest : XMakeTestCase() {
         assertTrue("print" in packageDomainNames)
         assertTrue("get_config" in targetDomainNames)
         assertTrue("has_package" in targetDomainNames)
-        assertTrue("add_moduledirs" in targetDomainNames)
-        assertTrue("add_plugindirs" in targetDomainNames)
-        assertTrue("set_xmakever" in targetDomainNames)
+        assertFalse("add_moduledirs" in targetDomainNames)
+        assertFalse("add_plugindirs" in targetDomainNames)
+        assertFalse("set_xmakever" in targetDomainNames)
     }
 
     fun testAvailableTopLevelCallablesDoNotMixInBuiltinModulePaths() {

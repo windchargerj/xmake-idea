@@ -6,6 +6,8 @@ data class ImportedModuleView(
     val modulePath: String,
     val apis: List<ApiModel>,
     val declarations: List<ModuleExportDeclaration> = emptyList(),
+    val kind: ImportedObjectKind = ImportedObjectKind.MODULE,
+    val memberSurface: ModuleMemberSurface = ModuleMemberSurface.KNOWN,
     val primaryReceiverName: String?,
     val primaryBoundName: String? = primaryReceiverName,
     val boundNames: Set<String> = setOfNotNull(primaryBoundName),
@@ -18,4 +20,10 @@ data class ImportedModuleView(
 
     val receiverNames: Set<String>
         get() = setOfNotNull(primaryReceiverName) + secondaryReceiverNames
+
+    val hasUnknownMembers: Boolean
+        get() = memberSurface == ModuleMemberSurface.UNKNOWN
+
+    val isModuleLike: Boolean
+        get() = kind.isModuleLike
 }

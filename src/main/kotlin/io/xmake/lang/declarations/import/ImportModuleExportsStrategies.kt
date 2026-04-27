@@ -24,10 +24,18 @@ internal class ImportModuleExportsContext(
         lookup.findIndexedModuleExports(modulePath)
 
     fun resolveModuleFile(modulePath: String, rootDir: String?): ImportModuleFileResolver.ResolvedModuleFile? =
+        resolveModuleFile(modulePath, rootDir, noLocal = false)
+
+    fun resolveModuleFile(
+        modulePath: String,
+        rootDir: String?,
+        noLocal: Boolean
+    ): ImportModuleFileResolver.ResolvedModuleFile? =
         ImportModuleFileResolver.resolveModuleFile(
             scriptDirectory = scriptDirectory,
             modulePath = modulePath,
-            rootDir = rootDir
+            rootDir = rootDir,
+            noLocal = noLocal
         )
 
     fun extractLocalModuleExports(moduleFile: VirtualFile, modulePath: String): ModuleExports =
@@ -35,40 +43,31 @@ internal class ImportModuleExportsContext(
             moduleFile = moduleFile,
             modulePath = modulePath,
             psiExtractor = { psiFile -> LocalModuleApiExtractor.extractTopLevelPublicFunctionDeclarations(psiFile) },
-            textExtractor = { text -> LocalModuleApiExtractor.extractTopLevelPublicFunctionDeclarations(project, text) }
-        )
-
-    fun extractLocalInterfaceExports(
-        moduleFile: VirtualFile,
-        modulePath: String,
-        interfaceName: String
-    ): ModuleExports =
-        extractLocalExports(
-            moduleFile = moduleFile,
-            modulePath = modulePath,
-            psiExtractor = { psiFile ->
-                LocalModuleApiExtractor.extractPublicInterfaceFunctionDeclarations(psiFile, interfaceName)
-            },
-            textExtractor = { text ->
-                LocalModuleApiExtractor.extractPublicInterfaceFunctionDeclarations(project, text, interfaceName)
-            }
+            textExtractor = { text -> LocalModuleApiExtractor.extractTopLevelPublicFunctionDeclarations(project, text) },
+            psiHasUnknownMembers = { psiFile -> LocalModuleApiExtractor.hasUnknownTopLevelPublicFunctionExports(psiFile) },
+            textHasUnknownMembers = { text -> LocalModuleApiExtractor.hasUnknownTopLevelPublicFunctionExports(project, text) }
         )
 
     private fun extractLocalExports(
         moduleFile: VirtualFile,
         modulePath: String,
         psiExtractor: (XMakeLuaFile) -> List<ModuleExportDeclaration>,
-        textExtractor: (String) -> List<ModuleExportDeclaration>
+        textExtractor: (String) -> List<ModuleExportDeclaration>,
+        psiHasUnknownMembers: (XMakeLuaFile) -> Boolean,
+        textHasUnknownMembers: (String) -> Boolean
     ): ModuleExports = ReadAction.compute<ModuleExports, RuntimeException> {
         val psiFile = PsiManager.getInstance(project).findFile(moduleFile) as? XMakeLuaFile
         val declarations = psiFile?.let(psiExtractor)
             ?: moduleFile.inputStream.use { input -> textExtractor(input.reader().readText()) }
+        val hasUnknownMembers = psiFile?.let(psiHasUnknownMembers)
+            ?: moduleFile.inputStream.use { input -> textHasUnknownMembers(input.reader().readText()) }
         val boundDeclarations = declarations.map { it.attachSourceFile(project, moduleFile) }
 
         ModuleExports(
             identifier = modulePath,
             apis = boundDeclarations.map { declaration -> createLocalApiModel(modulePath, declaration) },
-            declarations = boundDeclarations
+            declarations = boundDeclarations,
+            memberSurface = if (hasUnknownMembers) ModuleMemberSurface.UNKNOWN else ModuleMemberSurface.KNOWN
         )
     }
 
@@ -83,7 +82,17 @@ internal class ImportModuleExportsContext(
 
 internal object ResolvedModuleFileExportsStrategy : ImportModuleExportsStrategy {
     override fun resolve(binding: ImportBinding, context: ImportModuleExportsContext): ModuleExports? {
-        val resolvedFile = context.resolveModuleFile(binding.modulePath, binding.rootDir) ?: return null
+        val resolvedFile = context.resolveModuleFile(binding.modulePath, binding.rootDir, binding.noLocal) ?: return null
+        if (resolvedFile.kind != ImportModuleFileResolver.ModuleFileKind.LUA_FILE) {
+            return context.indexedExports(binding.modulePath)
+                ?: ModuleExports(
+                    identifier = binding.modulePath,
+                    apis = emptyList(),
+                    declarations = emptyList(),
+                    kind = resolvedFile.kind.toImportedObjectKind(),
+                    memberSurface = ModuleMemberSurface.UNKNOWN
+                )
+        }
         val localExports = context.extractLocalModuleExports(resolvedFile.file, binding.modulePath)
         if (resolvedFile.source == ImportModuleFileResolver.ModuleFileSource.LOCAL) {
             return localExports
@@ -95,21 +104,45 @@ internal object ResolvedModuleFileExportsStrategy : ImportModuleExportsStrategy 
             identifier = binding.modulePath,
             apis = (context.indexedExports(binding.modulePath)?.apis.orEmpty() + localExports.apis)
                 .distinctBy { it.fullName },
-            declarations = localExports.declarations
+            declarations = localExports.declarations,
+            memberSurface = localExports.memberSurface
         )
     }
 }
 
 internal object InterfaceModuleExportsStrategy : ImportModuleExportsStrategy {
     override fun resolve(binding: ImportBinding, context: ImportModuleExportsContext): ModuleExports? {
-        val (parentModulePath, interfaceName) = binding.modulePath.splitByLastDot()
-        val resolvedParentModulePath = parentModulePath ?: return null
-        val parentFile = context.resolveModuleFile(resolvedParentModulePath, binding.rootDir)?.file ?: return null
-        val exports = context.extractLocalInterfaceExports(parentFile, binding.modulePath, interfaceName)
-        if (exports.apis.isEmpty()) {
+        if (binding.inherit) {
             return null
         }
-        return exports
+        if (context.resolveModuleFile(binding.modulePath, binding.rootDir, binding.noLocal) != null ||
+            context.indexedExports(binding.modulePath) != null
+        ) {
+            return null
+        }
+        val (parentModulePath, interfaceName) = binding.modulePath.splitByLastDot()
+        val resolvedParentModulePath = parentModulePath ?: return null
+        val resolvedParentFile = context.resolveModuleFile(
+            resolvedParentModulePath,
+            binding.rootDir,
+            binding.noLocal
+        ) ?: return null
+        if (resolvedParentFile.kind != ImportModuleFileResolver.ModuleFileKind.LUA_FILE) {
+            return null
+        }
+        val parentExports = context.extractLocalModuleExports(resolvedParentFile.file, resolvedParentModulePath)
+        val indexedParentExports = context.indexedExports(resolvedParentModulePath)
+        val hasExportedInterface = (parentExports.apis + indexedParentExports?.apis.orEmpty())
+            .any { api -> api.name == interfaceName }
+        if (!hasExportedInterface) {
+            return null
+        }
+        return ModuleExports(
+            identifier = binding.modulePath,
+            apis = emptyList(),
+            declarations = emptyList(),
+            kind = ImportedObjectKind.CALLABLE
+        )
     }
 }
 
@@ -117,3 +150,11 @@ internal object IndexedModuleExportsStrategy : ImportModuleExportsStrategy {
     override fun resolve(binding: ImportBinding, context: ImportModuleExportsContext): ModuleExports? =
         context.indexedExports(binding.modulePath)
 }
+
+private fun ImportModuleFileResolver.ModuleFileKind.toImportedObjectKind(): ImportedObjectKind =
+    when (this) {
+        ImportModuleFileResolver.ModuleFileKind.LUA_FILE -> ImportedObjectKind.MODULE
+        ImportModuleFileResolver.ModuleFileKind.LUA_DIRECTORY -> ImportedObjectKind.DIRECTORY
+        ImportModuleFileResolver.ModuleFileKind.NATIVE_BINARY -> ImportedObjectKind.NATIVE_BINARY
+        ImportModuleFileResolver.ModuleFileKind.NATIVE_SHARED -> ImportedObjectKind.NATIVE_SHARED
+    }

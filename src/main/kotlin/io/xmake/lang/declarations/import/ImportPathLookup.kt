@@ -18,10 +18,14 @@ class ImportPathLookup internal constructor(
     private fun resolveRootDirAt(position: PsiElement?): String? =
         importCallAt(position)?.let(ImportCallParser::resolveRootDir)
 
+    private fun resolveNoLocalAt(position: PsiElement?): Boolean =
+        importCallAt(position)?.let(ImportCallParser::resolveNoLocal) ?: false
+
     private fun childModulesAt(
         anchor: PsiElement?,
         parentPath: String,
         rootDir: String? = resolveRootDirAt(anchor),
+        noLocal: Boolean = resolveNoLocalAt(anchor),
         extensionChildModules: Collection<String> = emptyList()
     ): List<String> {
         val normalizedParentPath = parentPath.trim().trimEnd('.')
@@ -30,6 +34,7 @@ class ImportPathLookup internal constructor(
             currentFileStem = ImportModuleFileResolver.currentFileStemOf(anchor),
             parentPath = normalizedParentPath,
             rootDir = rootDir,
+            noLocal = noLocal,
             extensionChildModules = extensionChildModules
         )
     }

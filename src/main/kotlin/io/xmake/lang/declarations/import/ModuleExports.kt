@@ -6,8 +6,13 @@ import io.xmake.lang.declarations.model.ApiModel
 internal data class ModuleExports(
     val identifier: String,
     val apis: List<ApiModel>,
-    val declarations: List<ModuleExportDeclaration> = emptyList()
-)
+    val declarations: List<ModuleExportDeclaration> = emptyList(),
+    val kind: ImportedObjectKind = ImportedObjectKind.MODULE,
+    val memberSurface: ModuleMemberSurface = ModuleMemberSurface.KNOWN
+) {
+    val hasUnknownMembers: Boolean
+        get() = memberSurface == ModuleMemberSurface.UNKNOWN
+}
 
 internal fun ModuleExports.toImportedModuleView(
     primaryReceiverName: String?,
@@ -19,6 +24,8 @@ internal fun ModuleExports.toImportedModuleView(
         modulePath = identifier,
         apis = apis,
         declarations = declarations,
+        kind = kind,
+        memberSurface = memberSurface,
         primaryReceiverName = primaryReceiverName,
         primaryBoundName = primaryBoundName,
         boundNames = boundNames,

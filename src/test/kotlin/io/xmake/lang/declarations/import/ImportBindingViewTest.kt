@@ -134,6 +134,26 @@ class ImportBindingViewTest : XMakeTestCase() {
         assertEquals(ImportBindingOrigin.ADD_IMPORTS, binding?.origin)
     }
 
+    fun testAddImportsAppliesToHookEvenWhenDeclaredAfterHook() {
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    json.encode({})
+                end)
+                add_imports("core.base.json")
+            target_end()
+            """.trimIndent()
+        )
+
+        val jsonIdentifier = PsiTreeUtil.findChildrenOfType(file, XMakeLuaIdentifier::class.java)
+            .first { it.text == "json" }
+        val imports = project.xmakeApi.imports.viewAt(file, jsonIdentifier)
+
+        assertEquals("core.base.json", imports.resolveReceiverModule("json")?.identifier)
+        assertEquals(ImportBindingOrigin.ADD_IMPORTS, imports.resolveReceiverBindingTargets("json")?.primary?.origin)
+    }
+
     fun testTracksSupportedAddImportsArrayBindings() {
         val file = configure(
             """
@@ -370,10 +390,156 @@ class ImportBindingViewTest : XMakeTestCase() {
         assertEquals(listOf("greet"), imported?.apis?.map { it.name })
     }
 
-    fun testResolvesLocalModuleFromParentInterfaceFallback() {
+    fun testResolvesLeadingDotRelativeLocalModuleFromParentDirectory() {
+        myFixture.addFileToProject(
+            "src/sibling.lua",
+            """
+            function ping()
+            end
+            """.trimIndent()
+        )
+        val script = myFixture.addFileToProject(
+            "src/app/xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import(".sibling")
+                    sibling.ping()
+                end)
+            target_end()
+            """.trimIndent()
+        )
+        myFixture.configureFromExistingVirtualFile(script.virtualFile)
+        val file = myFixture.file as XMakeLuaFile
+
+        val imported = project.xmakeApi.imports.viewAt(file).resolveBoundModule("sibling")
+
+        assertEquals(".sibling", imported?.identifier)
+        assertEquals(listOf("ping"), imported?.apis?.map { it.name })
+    }
+
+    fun testResolvesDoubleLeadingDotRelativeLocalModule() {
+        myFixture.addFileToProject(
+            "src/parent/mod.lua",
+            """
+            function ping()
+            end
+            """.trimIndent()
+        )
+        val script = myFixture.addFileToProject(
+            "src/app/nested/xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("..parent.mod")
+                    mod.ping()
+                end)
+            target_end()
+            """.trimIndent()
+        )
+        myFixture.configureFromExistingVirtualFile(script.virtualFile)
+        val file = myFixture.file as XMakeLuaFile
+
+        val imported = project.xmakeApi.imports.viewAt(file).resolveBoundModule("mod")
+
+        assertEquals("..parent.mod", imported?.identifier)
+        assertEquals(listOf("ping"), imported?.apis?.map { it.name })
+    }
+
+    fun testResolvesDirectoryModuleAsUnknownSurface() {
+        myFixture.addFileToProject(
+            "modules/bundle/entry.lua",
+            """
+            function greet()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("modules.bundle")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val imported = project.xmakeApi.imports.viewAt(file).resolveBoundModule("bundle")
+
+        assertEquals("modules.bundle", imported?.identifier)
+        assertEquals(ImportedObjectKind.DIRECTORY, imported?.kind)
+        assertTrue(imported?.hasUnknownMembers == true)
+        assertTrue(imported?.apis.orEmpty().isEmpty())
+    }
+
+    fun testResolvesNativeModuleDirectoriesAsUnknownSurface() {
+        myFixture.addFileToProject(
+            "native/binmod/xmake.lua",
+            """
+            target("binmod")
+                add_rules("module.binary")
+            target_end()
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "native/sharedmod/xmake.lua",
+            """
+            target("sharedmod")
+                add_rules("module.shared")
+            target_end()
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("native.binmod")
+                    import("native.sharedmod")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val imports = project.xmakeApi.imports.viewAt(file)
+
+        assertEquals("native.binmod", imports.resolveBoundModule("binmod")?.identifier)
+        assertEquals("native.sharedmod", imports.resolveBoundModule("sharedmod")?.identifier)
+        assertEquals(ImportedObjectKind.NATIVE_BINARY, imports.resolveBoundModule("binmod")?.kind)
+        assertEquals(ImportedObjectKind.NATIVE_SHARED, imports.resolveBoundModule("sharedmod")?.kind)
+        assertTrue(imports.resolveBoundModule("binmod")?.hasUnknownMembers == true)
+        assertTrue(imports.resolveBoundModule("sharedmod")?.hasUnknownMembers == true)
+        assertTrue(imports.resolveBoundModule("binmod")?.apis.orEmpty().isEmpty())
+        assertTrue(imports.resolveBoundModule("sharedmod")?.apis.orEmpty().isEmpty())
+    }
+
+    fun testDoesNotTreatSingleQuotedNativeRuleAsNativeModule() {
+        myFixture.addFileToProject(
+            "native/quoted/xmake.lua",
+            """
+            target("quoted")
+                add_rules('module.binary')
+            target_end()
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("native.quoted", {try = true})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        assertNull(project.xmakeApi.imports.viewAt(file).resolveBoundModule("quoted"))
+    }
+
+    fun testDoesNotResolveParentInterfaceMemberFallbackAsModuleExports() {
         myFixture.addFileToProject(
             "modules/corepack.lua",
             """
+            json = {}
+
             function json.encode()
             end
 
@@ -394,8 +560,91 @@ class ImportBindingViewTest : XMakeTestCase() {
 
         val imported = project.xmakeApi.imports.viewAt(file).resolveBoundModule("json")
 
+        // Official source: import.lua only accepts parent fallback when module2[interface_name]
+        // exists; sandbox.lua sandbox:module() does not export `function json.encode()` as `json`.
+        assertNull(imported)
+    }
+
+    fun testParentFallbackOnlyProvesTopLevelPublicParentExport() {
+        myFixture.addFileToProject(
+            "modules/corepack.lua",
+            """
+            function json()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("modules.corepack.json")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val imported = project.xmakeApi.imports.viewAt(file).resolveBoundModule("json")
+
         assertEquals("modules.corepack.json", imported?.identifier)
-        assertEquals(listOf("decode", "encode"), imported?.apis?.map { it.name }?.sorted())
+        assertEquals(ImportedObjectKind.CALLABLE, imported?.kind)
+        assertTrue(imported?.apis.orEmpty().isEmpty())
+    }
+
+    fun testRootDirOverridesCurrentScriptDirectoryForLocalSearch() {
+        myFixture.addFileToProject(
+            "src/hello.lua",
+            """
+            function wrong()
+            end
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "src/modules/hello.lua",
+            """
+            function right()
+            end
+            """.trimIndent()
+        )
+        val script = myFixture.addFileToProject(
+            "src/xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("hello", {rootdir = "modules"})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+        myFixture.configureFromExistingVirtualFile(script.virtualFile)
+        val file = myFixture.file as XMakeLuaFile
+
+        val imported = project.xmakeApi.imports.viewAt(file).resolveBoundModule("hello")
+
+        assertEquals(listOf("right"), imported?.apis?.map { it.name })
+    }
+
+    fun testNoLocalSkipsCurrentScriptDirectoryForImportResolution() {
+        myFixture.addFileToProject(
+            "src/json.lua",
+            """
+            function local_only()
+            end
+            """.trimIndent()
+        )
+        val script = myFixture.addFileToProject(
+            "src/xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("json", {nolocal = true})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+        myFixture.configureFromExistingVirtualFile(script.virtualFile)
+        val file = myFixture.file as XMakeLuaFile
+
+        assertNull(project.xmakeApi.imports.viewAt(file).resolveBoundModule("json"))
     }
 
     fun testResolvesRootDirLocalModuleFromMemberAccessCaretPosition() {

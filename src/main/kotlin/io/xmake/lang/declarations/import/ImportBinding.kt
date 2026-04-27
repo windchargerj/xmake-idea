@@ -21,6 +21,7 @@ internal data class ImportBinding(
     val primaryBoundName: String? = null,
     val inherit: Boolean = false,
     val rootDir: String? = null,
+    val noLocal: Boolean = false,
     val declarationElement: PsiElement? = null,
     val origin: ImportBindingOrigin = ImportBindingOrigin.IMPORT,
     val kind: ImportBindingKind = ImportBindingKind.MODULE_IMPORT
@@ -31,13 +32,15 @@ private val ImportSpec.defaultBoundName: String
 
 private val ImportSpec.primaryReceiverBindingName: String?
     get() = when {
-        anonymous || inherit -> null
+        anonymous -> null
+        inherit -> null
         else -> defaultBoundName
     }
 
 private val ImportSpec.primaryBoundName: String?
     get() = when {
-        anonymous || inherit -> null
+        anonymous -> null
+        inherit -> null
         else -> defaultBoundName
     }
 
@@ -62,6 +65,7 @@ private fun ModuleImportDeclaration.toImportBindings(): List<ImportBinding> = bu
             primaryBoundName = spec.primaryBoundName,
             inherit = spec.inherit,
             rootDir = spec.rootDir,
+            noLocal = spec.noLocal,
             declarationElement = declarationElement,
             kind = ImportBindingKind.MODULE_IMPORT
         )
@@ -75,6 +79,7 @@ private fun ModuleImportDeclaration.toImportBindings(): List<ImportBinding> = bu
                 boundNames = setOf(alias),
                 primaryBoundName = alias,
                 rootDir = spec.rootDir,
+                noLocal = spec.noLocal,
                 declarationElement = declarationElement,
                 kind = ImportBindingKind.RETURN_CAPTURE
             )

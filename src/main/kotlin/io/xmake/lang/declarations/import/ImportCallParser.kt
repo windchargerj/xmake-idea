@@ -19,7 +19,6 @@ import io.xmake.lang.syntax.psi.lua.LuaVariableList
 
 object ImportCallParser {
 
-    private val MODULE_PATH_PATTERN = Regex("^[a-zA-Z_][a-zA-Z0-9_.]*$")
     private val IMPORT_FUNCTION_NAMES = setOf("import", "inherit")
 
     fun parse(call: LuaFunctionCall): Result<ImportSpec> {
@@ -29,6 +28,12 @@ object ImportCallParser {
     fun resolveRootDir(call: LuaFunctionCall): String? {
         return ReadAction.compute<String?, RuntimeException> {
             parseOptions(call).rootDir
+        }
+    }
+
+    fun resolveNoLocal(call: LuaFunctionCall): Boolean {
+        return ReadAction.compute<Boolean, RuntimeException> {
+            parseOptions(call).noLocal
         }
     }
 
@@ -106,12 +111,11 @@ object ImportCallParser {
         ApiException.ImportParseException("Parse error: $message")
 
     private fun extractModulePath(arg: PsiElement): Result<String> {
-        val stringNode = PsiTreeUtil.findChildOfType(arg, LuaString::class.java)
+        val text = extractStaticStringLiteralText(arg)
             ?: return Result.failure(
                 ApiException.ImportParseException("Module path must be a string literal")
             )
 
-        val text = stringNode.text
         if (text.length < 2) {
             return Result.failure(ApiException.ImportParseException("Invalid string literal"))
         }
@@ -126,13 +130,19 @@ object ImportCallParser {
             return Result.failure(ApiException.ImportParseException("Module path cannot be empty"))
         }
 
-        if (!unquoted.matches(MODULE_PATH_PATTERN)) {
-            return Result.failure(
-                ApiException.ImportParseException("Invalid module path format: $unquoted")
-            )
-        }
-
         return Result.success(unquoted)
+    }
+
+    private fun extractStaticStringLiteralText(arg: PsiElement): String? {
+        return when (arg) {
+            is LuaString -> arg.text
+            is LuaExpression -> {
+                val stringNode = PsiTreeUtil.getChildOfType(arg, LuaString::class.java) ?: return null
+                stringNode.text.takeIf { arg.text.trim() == it }
+            }
+
+            else -> null
+        }
     }
 
     private fun parseOptions(arg: PsiElement): ImportCallOptions {
@@ -144,6 +154,7 @@ object ImportCallParser {
         var inherit = false
         var tryImport = false
         var alwaysBuild = false
+        var noLocal = false
         var rootDir: String? = null
 
         for (child in fieldList.children) {
@@ -156,6 +167,7 @@ object ImportCallParser {
                 "inherit" -> inherit = extractBooleanValue(value)
                 "try" -> tryImport = extractBooleanValue(value)
                 "always_build" -> alwaysBuild = extractBooleanValue(value)
+                "nolocal" -> noLocal = extractBooleanValue(value)
                 "rootdir" -> rootDir = extractStringValue(value)
             }
         }
@@ -166,6 +178,7 @@ object ImportCallParser {
             inherit = inherit,
             tryImport = tryImport,
             alwaysBuild = alwaysBuild,
+            noLocal = noLocal,
             rootDir = rootDir
         )
     }
@@ -256,6 +269,7 @@ private data class ImportCallOptions(
     val inherit: Boolean = false,
     val tryImport: Boolean = false,
     val alwaysBuild: Boolean = false,
+    val noLocal: Boolean = false,
     val rootDir: String? = null
 ) {
     fun toImportSpec(modulePath: String, forceInherit: Boolean): ImportSpec =
@@ -266,6 +280,7 @@ private data class ImportCallOptions(
             inherit = inherit || forceInherit,
             tryImport = tryImport,
             alwaysBuild = alwaysBuild,
+            noLocal = noLocal,
             rootDir = rootDir
         )
 }

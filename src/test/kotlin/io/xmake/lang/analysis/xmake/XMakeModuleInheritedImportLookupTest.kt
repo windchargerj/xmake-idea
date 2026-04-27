@@ -6,8 +6,8 @@ import io.xmake.lang.declarations.XMakeApi
 import io.xmake.lang.syntax.psi.XMakeLuaFile
 
 /**
- * Inherited imports merge APIs into the script domain without exposing a synthetic
- * module receiver.
+ * Inherited imports merge APIs into the script domain without exposing internal
+ * receiver bindings such as `_super` or the module short name.
  */
 class XMakeModuleInheritedImportLookupTest : XMakeTestCase() {
 

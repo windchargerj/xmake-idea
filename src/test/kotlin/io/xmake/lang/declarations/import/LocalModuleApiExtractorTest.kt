@@ -30,9 +30,11 @@ class LocalModuleApiExtractorTest : XMakeTestCase() {
         assertEquals(listOf("public_api"), exported)
     }
 
-    fun testExtractsInterfaceFunctionsAfterIfBlockUsingPsi() {
+    fun testDoesNotExportDottedInterfaceFunctionsUsingPsi() {
         val file = configureModule(
             """
+            json = {}
+
             if cond then
                 function json.hidden()
                 end
@@ -40,11 +42,14 @@ class LocalModuleApiExtractorTest : XMakeTestCase() {
 
             function json.encode()
             end
+
+            function public_api()
+            end
             """.trimIndent()
         )
-        val exported = LocalModuleApiExtractor.extractPublicInterfaceFunctionNames(file, "json")
+        val exported = LocalModuleApiExtractor.extractTopLevelPublicFunctionNames(file)
 
-        assertEquals(listOf("encode"), exported)
+        assertEquals(listOf("public_api"), exported)
     }
 
     fun testKeepsLoopAndRepeatBlocksBalancedUsingPsi() {
@@ -98,6 +103,27 @@ class LocalModuleApiExtractorTest : XMakeTestCase() {
         assertEquals(listOf("real_api"), exported)
     }
 
+    fun testIgnoresScriptBuiltinFunctionOverrides() {
+        val file = configureModule(
+            """
+            function print()
+            end
+
+            function import()
+            end
+
+            function greet()
+            end
+            """.trimIndent()
+        )
+
+        val exported = LocalModuleApiExtractor.extractTopLevelPublicFunctionNames(file)
+
+        // `xmake show -l apis` lists `print` and `import` under script_builtin_apis; sandbox:module()
+        // also ignores names that existed in the public scope before the module script ran.
+        assertEquals(listOf("greet"), exported)
+    }
+
     fun testExtractsDeclarationBackedTopLevelExportsFromPsi() {
         val file = configureModule(
             """
@@ -113,19 +139,55 @@ class LocalModuleApiExtractorTest : XMakeTestCase() {
         assertEquals("public_api", exports.single().declarationText)
     }
 
-    fun testExtractsDeclarationBackedInterfaceExportsFromPsi() {
+    fun testDoesNotExtractDottedInterfaceDeclarationsAsModuleExports() {
         val file = configureModule(
             """
+            json = {}
+
             function json.encode()
+            end
+
+            function public_api()
             end
             """.trimIndent()
         )
 
-        val exports = LocalModuleApiExtractor.extractPublicInterfaceFunctionDeclarations(file, "json")
+        val exports = LocalModuleApiExtractor.extractTopLevelPublicFunctionDeclarations(file)
 
-        assertEquals(listOf("encode"), exports.map { it.name })
+        // Official source: xmake/core/sandbox/sandbox.lua sandbox:module() exports only new
+        // top-level public functions from the module public scope, not `iface.member` functions.
+        assertEquals(listOf("public_api"), exports.map { it.name })
         assertNotNull(exports.single().declarationOffset)
-        assertEquals("encode", exports.single().declarationText)
+        assertEquals("public_api", exports.single().declarationText)
+    }
+
+    fun testExtractsTopLevelFunctionValuedAssignmentsAsExports() {
+        val file = configureModule(
+            """
+            assigned = function()
+            end
+
+            function declared()
+            end
+            """.trimIndent()
+        )
+
+        val exports = LocalModuleApiExtractor.extractTopLevelPublicFunctionDeclarations(file)
+
+        assertEquals(listOf("assigned", "declared"), exports.map { it.name })
+    }
+
+    fun testMarksDynamicTopLevelPublicAssignmentsAsUnknownExports() {
+        val file = configureModule(
+            """
+            assigned = make_api()
+
+            function declared()
+            end
+            """.trimIndent()
+        )
+
+        assertTrue(LocalModuleApiExtractor.hasUnknownTopLevelPublicFunctionExports(file))
     }
 
     private fun configureModule(text: String): PsiFile =

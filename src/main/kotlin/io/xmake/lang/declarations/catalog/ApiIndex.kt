@@ -16,7 +16,7 @@ import io.xmake.utils.info.XMakeApis
 class ApiIndex(val project: Project) {
 
     @Volatile
-    private var cachedApis: XMakeApis? = null
+    private var cachedModificationCount: Long = -1
 
     @Volatile
     private var cachedData: ApiIndexData? = null
@@ -24,24 +24,48 @@ class ApiIndex(val project: Project) {
     private val lock = Any()
 
     private fun data(): ApiIndexData {
-        val apis = ApiService.getInstance(project).getApis()
-        val currentApis = cachedApis
+        val apiService = ApiService.getInstance(project)
+        val modificationCount = apiService.modificationTracker.modificationCount
+        val currentModificationCount = cachedModificationCount
         val currentData = cachedData
-        if (currentApis === apis && currentData != null) {
+        if (currentModificationCount == modificationCount && currentData != null) {
             return currentData
         }
 
         synchronized(lock) {
-            val recheckedApis = cachedApis
+            val recheckedModificationCount = apiService.modificationTracker.modificationCount
             val recheckedData = cachedData
-            if (recheckedApis === apis && recheckedData != null) {
+            if (cachedModificationCount == recheckedModificationCount && recheckedData != null) {
                 return recheckedData
             }
 
-            val rebuilt = buildData(apis)
-            cachedApis = apis
-            cachedData = rebuilt
-            return rebuilt
+            while (true) {
+                val snapshot = apiService.snapshot()
+                val snapshotCachedData = cachedData
+                if (cachedModificationCount == snapshot.modificationCount && snapshotCachedData != null) {
+                    return snapshotCachedData
+                }
+
+                val rebuilt = buildData(snapshot.apis)
+                if (apiService.modificationTracker.modificationCount != snapshot.modificationCount) {
+                    continue
+                }
+
+                cachedData = rebuilt
+                cachedModificationCount = snapshot.modificationCount
+                return rebuilt
+            }
+        }
+    }
+
+    private fun ApiService.snapshot(): ApiSnapshot {
+        while (true) {
+            val before = modificationTracker.modificationCount
+            val apis = getApis()
+            val after = modificationTracker.modificationCount
+            if (before == after) {
+                return ApiSnapshot(apis, after)
+            }
         }
     }
 
@@ -123,6 +147,8 @@ class ApiIndex(val project: Project) {
         return apis.filter { it.isAvailableIn(context) }
     }
 
+    fun instanceTypes(): Set<String> = data().instanceApisByType.keys
+
     fun descriptionBuiltinModuleApis(modulePath: String): List<ApiModel> =
         data().descriptionBuiltinModulesByName[modulePath].orEmpty()
 
@@ -156,8 +182,11 @@ class ApiIndex(val project: Project) {
         modulePath in visibleBuiltinModulePaths(context)
 
     fun isBuiltinModulePath(path: String, context: ApiLookupView): Boolean {
-        val rootModule = path.substringBefore('.')
-        return rootModule.isNotEmpty() && rootModule in visibleBuiltinModulePaths(context)
+        if (path.isBlank()) {
+            return false
+        }
+        val visibleModules = visibleBuiltinModulePaths(context)
+        return path in visibleModules || ModulePath.childModules(visibleModules, path).isNotEmpty()
     }
 
     fun visibleChildModules(parentPath: String, context: ApiLookupView): List<String> {
@@ -206,4 +235,9 @@ private data class ApiIndexData(
     val extensionModulesByName: Map<String, List<ApiModel>>,
     val descriptionBuiltinModulesByName: Map<String, List<ApiModel>>,
     val scriptBuiltinModulesByName: Map<String, List<ApiModel>>
+)
+
+private data class ApiSnapshot(
+    val apis: XMakeApis,
+    val modificationCount: Long
 )

@@ -13,6 +13,13 @@ object ImportModuleFileResolver {
         XMAKE
     }
 
+    enum class ModuleFileKind {
+        LUA_FILE,
+        LUA_DIRECTORY,
+        NATIVE_BINARY,
+        NATIVE_SHARED
+    }
+
     enum class ModuleSearchRootSource {
         SCRIPT_DIRECTORY,
         ROOTDIR_ABSOLUTE,
@@ -26,6 +33,7 @@ object ImportModuleFileResolver {
 
     data class ResolvedModuleFile(
         val file: VirtualFile,
+        val kind: ModuleFileKind,
         val source: ModuleFileSource,
         val searchRootSource: ModuleSearchRootSource
     )
@@ -39,6 +47,11 @@ object ImportModuleFileResolver {
             get() = virtualFile?.url ?: localPath.orEmpty()
     }
 
+    private data class ModuleFileCandidate(
+        val file: VirtualFile,
+        val kind: ModuleFileKind
+    )
+
     fun scriptDirectoryOf(anchor: PsiElement?): VirtualFile? =
         anchor?.containingFile?.virtualFile?.parent
             ?: anchor?.containingFile?.originalFile?.virtualFile?.parent
@@ -50,21 +63,22 @@ object ImportModuleFileResolver {
     fun resolveModuleFile(
         scriptDirectory: VirtualFile?,
         modulePath: String,
-        rootDir: String? = null
+        rootDir: String? = null,
+        noLocal: Boolean = false
     ): ResolvedModuleFile? {
-        val relativePath = modulePath.replace('.', '/') + ".lua"
+        val moduleSubpath = moduleSubpath(modulePath)
 
-        localSearchRoots(scriptDirectory, rootDir).forEach { root ->
-            val file = findRelativeFile(root, relativePath)
-            if (file != null && file.exists()) {
-                return ResolvedModuleFile(file, ModuleFileSource.LOCAL, root.source)
+        localSearchRoots(scriptDirectory, rootDir, noLocal).forEach { root ->
+            val candidate = findModule(root, moduleSubpath)
+            if (candidate != null) {
+                return ResolvedModuleFile(candidate.file, candidate.kind, ModuleFileSource.LOCAL, root.source)
             }
         }
 
         xmakeSearchRoots().forEach { root ->
-            val file = findFile(pathOf(root.localPath ?: return@forEach, relativePath))
-            if (file != null && file.exists()) {
-                return ResolvedModuleFile(file, ModuleFileSource.XMAKE, root.source)
+            val candidate = findModule(root, moduleSubpath)
+            if (candidate != null) {
+                return ResolvedModuleFile(candidate.file, candidate.kind, ModuleFileSource.XMAKE, root.source)
             }
         }
 
@@ -76,10 +90,11 @@ object ImportModuleFileResolver {
         currentFileStem: String?,
         parentPath: String,
         rootDir: String? = null,
+        noLocal: Boolean = false,
         extensionChildModules: Collection<String> = emptyList()
     ): List<String> {
         val localChildren =
-            localSearchRoots(scriptDirectory, rootDir)
+            localSearchRoots(scriptDirectory, rootDir, noLocal)
                 .flatMap { root -> collectChildModules(root, parentPath, currentFileStem) }
 
         return (localChildren + extensionChildModules)
@@ -89,13 +104,20 @@ object ImportModuleFileResolver {
 
     private fun localSearchRoots(
         scriptDirectory: VirtualFile?,
-        rootDir: String?
+        rootDir: String?,
+        noLocal: Boolean
     ): List<ModuleSearchRoot> {
+        if (noLocal) {
+            return emptyList()
+        }
         val roots = linkedMapOf<String, ModuleSearchRoot>()
-        addRoot(roots, scriptDirectory?.let {
-            ModuleSearchRoot(virtualFile = it, source = ModuleSearchRootSource.SCRIPT_DIRECTORY)
-        })
-        addRoot(roots, resolveRootDir(scriptDirectory, rootDir))
+        if (rootDir.isNullOrBlank()) {
+            addRoot(roots, scriptDirectory?.let {
+                ModuleSearchRoot(virtualFile = it, source = ModuleSearchRootSource.SCRIPT_DIRECTORY)
+            })
+        } else {
+            addRoot(roots, resolveRootDir(scriptDirectory, rootDir))
+        }
         return roots.values.toList()
     }
 
@@ -231,11 +253,103 @@ object ImportModuleFileResolver {
             .sorted()
     }
 
-    private fun findRelativeFile(root: ModuleSearchRoot, relativePath: String): VirtualFile? {
-        root.virtualFile?.findFileByRelativePath(relativePath)?.let { return it }
-        root.localPath?.let { path -> findFile(pathOf(path, relativePath))?.let { return it } }
+    private fun findModule(root: ModuleSearchRoot, moduleSubpath: String): ModuleFileCandidate? {
+        root.virtualFile?.let { findVirtualModule(it, moduleSubpath)?.let { candidate -> return candidate } }
+        root.localPath?.let { findLocalModule(it, moduleSubpath)?.let { candidate -> return candidate } }
         return null
     }
+
+    private fun findVirtualModule(root: VirtualFile, moduleSubpath: String): ModuleFileCandidate? {
+        findRelativeVirtualFile(root, "$moduleSubpath.lua")
+            ?.takeIf { it.exists() && !it.isDirectory }
+            ?.let { return ModuleFileCandidate(it, ModuleFileKind.LUA_FILE) }
+
+        val moduleDirectory = findRelativeVirtualFile(root, moduleSubpath)
+            ?.takeIf { it.exists() && it.isDirectory }
+            ?: return null
+        val projectFile = moduleDirectory.findChild("xmake.lua")
+            ?.takeIf { it.exists() && !it.isDirectory }
+        if (projectFile != null) {
+            return when (nativeModuleKind(projectFile)) {
+                ModuleFileKind.NATIVE_BINARY -> ModuleFileCandidate(moduleDirectory, ModuleFileKind.NATIVE_BINARY)
+                ModuleFileKind.NATIVE_SHARED -> ModuleFileCandidate(moduleDirectory, ModuleFileKind.NATIVE_SHARED)
+                else -> null
+            }
+        }
+        return ModuleFileCandidate(moduleDirectory, ModuleFileKind.LUA_DIRECTORY)
+    }
+
+    private fun findLocalModule(root: String, moduleSubpath: String): ModuleFileCandidate? {
+        val moduleFullPath = pathOf(root, moduleSubpath)
+        findFile("$moduleFullPath.lua")
+            ?.takeIf { it.exists() && !it.isDirectory }
+            ?.let { return ModuleFileCandidate(it, ModuleFileKind.LUA_FILE) }
+
+        val moduleDirectoryFile = File(moduleFullPath)
+        if (!moduleDirectoryFile.isDirectory) {
+            return null
+        }
+        val moduleDirectory = findFile(normalizePath(moduleDirectoryFile.path)) ?: return null
+        val projectFile = File(moduleDirectoryFile, "xmake.lua")
+        if (projectFile.isFile) {
+            return when (nativeModuleKind(projectFile)) {
+                ModuleFileKind.NATIVE_BINARY -> ModuleFileCandidate(moduleDirectory, ModuleFileKind.NATIVE_BINARY)
+                ModuleFileKind.NATIVE_SHARED -> ModuleFileCandidate(moduleDirectory, ModuleFileKind.NATIVE_SHARED)
+                else -> null
+            }
+        }
+        return ModuleFileCandidate(moduleDirectory, ModuleFileKind.LUA_DIRECTORY)
+    }
+
+    private fun findRelativeVirtualFile(root: VirtualFile, relativePath: String): VirtualFile? {
+        var current: VirtualFile? = root
+        relativePath.split('/', '\\').forEach { segment ->
+            current = when (segment) {
+                "", "." -> current
+                ".." -> current?.parent
+                else -> current?.findChild(segment)
+            }
+            if (current == null) {
+                return null
+            }
+        }
+        return current
+    }
+
+    private fun nativeModuleKind(projectFile: VirtualFile): ModuleFileKind? =
+        runCatching {
+            projectFile.inputStream.use { input -> nativeModuleKind(input.reader().readText()) }
+        }.getOrNull()
+
+    private fun nativeModuleKind(projectFile: File): ModuleFileKind? =
+        runCatching { nativeModuleKind(projectFile.readText()) }.getOrNull()
+
+    private fun nativeModuleKind(content: String): ModuleFileKind? {
+        val kind = Regex("""add_rules\("module\.(binary|shared)"\)""")
+            .find(content)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: return null
+        return when (kind) {
+            "binary" -> ModuleFileKind.NATIVE_BINARY
+            "shared" -> ModuleFileKind.NATIVE_SHARED
+            else -> null
+        }
+    }
+
+    private fun moduleSubpath(modulePath: String): String = buildString {
+        var startDots = true
+        modulePath.forEach { char ->
+            when {
+                char == '.' && startDots -> append("../")
+                char == '.' -> append('/')
+                else -> {
+                    startDots = false
+                    append(char)
+                }
+            }
+        }
+    }.trimEnd('/')
 
     private fun addRoot(roots: MutableMap<String, ModuleSearchRoot>, root: ModuleSearchRoot?) {
         if (root == null) {
@@ -260,6 +374,7 @@ object ImportModuleFileResolver {
     private fun findFile(path: String): VirtualFile? =
         try {
             LocalFileSystem.getInstance().findFileByPath(path)
+                ?: LocalFileSystem.getInstance().refreshAndFindFileByPath(path)
         } catch (_: Exception) {
             null
         }

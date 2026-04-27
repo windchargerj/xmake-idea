@@ -37,6 +37,29 @@ class ApiDomainAvailabilityTest : XMakeTestCase() {
         assertNotNull(api.lookup.findApiByQualifiedSelector(selector, ApiLookupView.SCRIPT_GLOBAL_ROOT))
     }
 
+    fun testBuiltinModuleAvailabilityKeepsDescriptionAndScriptBucketsSeparate() {
+        val api = project.xmakeApi
+
+        assertNotNull(
+            api.lookup.findApiByQualifiedSelector(
+                QualifiedApiSelector.ModuleFunction(modulePath = "os", functionName = "getenv"),
+                ApiLookupView.DESCRIPTION_GLOBAL_ROOT
+            )
+        )
+        assertNull(
+            api.lookup.findApiByQualifiedSelector(
+                QualifiedApiSelector.ModuleFunction(modulePath = "os", functionName = "cd"),
+                ApiLookupView.DESCRIPTION_GLOBAL_ROOT
+            )
+        )
+        assertNotNull(
+            api.lookup.findApiByQualifiedSelector(
+                QualifiedApiSelector.ModuleFunction(modulePath = "os", functionName = "cd"),
+                ApiLookupView.SCRIPT_GLOBAL_ROOT
+            )
+        )
+    }
+
     fun testTypeResolverDoesNotExposeScriptOnlyModuleInDescriptionDomain() {
         val resolver = DefaultTypeResolver(project)
 
@@ -44,7 +67,7 @@ class ApiDomainAvailabilityTest : XMakeTestCase() {
         // io is NOT in DESCRIPTION_IMPLICIT_MODULES (script-phase only), so io.read is not valid in the global description domain
         assertFalse(resolver.isModulePath("io.read", ApiLookupView.DESCRIPTION_GLOBAL_ROOT))
         assertNotNull(resolver.resolveType("io", ApiLookupView.SCRIPT_GLOBAL_ROOT))
-        assertTrue(resolver.isModulePath("io.read", ApiLookupView.SCRIPT_GLOBAL_ROOT))
+        assertFalse(resolver.isModulePath("io.read", ApiLookupView.SCRIPT_GLOBAL_ROOT))
     }
 
     fun testTypeResolverDoesNotInferBareXMakeInstanceWithoutLuaBinding() {
@@ -76,12 +99,16 @@ class ApiDomainAvailabilityTest : XMakeTestCase() {
     }
 
     fun testAvailabilityPolicyKeepsRootOnlyGlobalInterfaceAtDescriptionRoot() {
-        val api = project.xmakeApi.lookup.findByName("add_requires").first()
+        listOf("add_requires", "includes", "add_moduledirs", "set_xmakever").forEach { name ->
+            val api = project.xmakeApi.lookup.findByName(name).first()
 
-        assertEquals(
-            listOf("description domain (global root)"),
-            ApiAvailabilityPolicy.describeAvailabilities(listOf(api))
-        )
+            assertTrue(api.isAvailableIn(ApiLookupView.DESCRIPTION_GLOBAL_ROOT))
+            assertFalse(api.isAvailableIn(ApiLookupView.configuration(XMakeConfigurationDomainType.TARGET)))
+            assertEquals(
+                listOf("description domain (global root)"),
+                ApiAvailabilityPolicy.describeAvailabilities(listOf(api))
+            )
+        }
     }
 
     fun testAvailabilityPolicyExposesDescriptionBuiltinHelpersInConfigurationDomains() {
@@ -185,6 +212,24 @@ class ApiDomainAvailabilityTest : XMakeTestCase() {
         assertNotNull(project.xmakeApi.findUnqualifiedApi("fresh_global", ApiLookupView.DESCRIPTION_GLOBAL_ROOT))
     }
 
+    fun testLookupRefreshesAfterSameApisInstanceIsMutatedAndReloaded() {
+        val service = ApiService.getInstance(project)
+        val mutableDescriptionApis = mutableListOf("mutable_old_global")
+        val apis = XMakeApis(descriptionBuiltinApis = mutableDescriptionApis)
+        XMakeInfoManager.getInstance(project).xmakeInfo.apis = apis
+        service.reload()
+
+        val lookup = project.xmakeApi.lookup
+        assertTrue(lookup.findByName("mutable_old_global").isNotEmpty())
+
+        mutableDescriptionApis.clear()
+        mutableDescriptionApis.add("mutable_fresh_global")
+        service.reload()
+
+        assertTrue(lookup.findByName("mutable_fresh_global").isNotEmpty())
+        assertTrue(lookup.findByName("mutable_old_global").isEmpty())
+    }
+
     fun testTypeResolverRefreshesAfterApiReload() {
         val resolver = DefaultTypeResolver(project)
         assertNotNull(resolver.resolveType("os", ApiLookupView.SCRIPT_GLOBAL_ROOT))
@@ -198,7 +243,7 @@ class ApiDomainAvailabilityTest : XMakeTestCase() {
         val refreshedType = resolver.resolveType("freshmod", ApiLookupView.SCRIPT_GLOBAL_ROOT) as? XMakeType.Module
         assertNotNull(refreshedType)
         assertEquals("freshmod", refreshedType?.path)
-        assertTrue(resolver.isModulePath("freshmod.call", ApiLookupView.SCRIPT_GLOBAL_ROOT))
+        assertFalse(resolver.isModulePath("freshmod.call", ApiLookupView.SCRIPT_GLOBAL_ROOT))
     }
 
     fun testTypeResolverKeepsImportedRootModulePathPlaceSensitive() {

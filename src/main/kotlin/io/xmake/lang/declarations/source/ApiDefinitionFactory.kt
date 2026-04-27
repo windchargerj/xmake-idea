@@ -28,7 +28,7 @@ object ApiDefinitionFactory {
     fun classifyModule(api: ApiModel): ModuleType {
         val modulePath = api.modulePath ?: return ModuleType.NONE
         return when {
-            modulePath.startsWith("core.") -> ModuleType.EXTENSION
+            api.type is ApiType.ScriptApi.ExtensionModuleApi -> ModuleType.EXTENSION
             api.type is ApiType.DescriptionApi.BuiltinModuleApi -> ModuleType.DESCRIPTION_BUILTIN
             api.type is ApiType.ScriptApi.BuiltinModuleApi -> ModuleType.SCRIPT_BUILTIN
             else -> ModuleType.NONE
@@ -36,7 +36,7 @@ object ApiDefinitionFactory {
     }
 
     fun isExtensionModule(api: ApiModel): Boolean =
-        api.modulePath?.startsWith("core.") == true
+        api.type is ApiType.ScriptApi.ExtensionModuleApi
 
     fun isBuiltinModule(api: ApiModel): Boolean =
         api.type is ApiType.DescriptionApi.BuiltinModuleApi ||
@@ -94,9 +94,7 @@ object ApiDefinitionFactory {
             .forEach { fullName ->
                 val (scopeName, name) = fullName.splitByDot()
                 val scopeKeyword = scopeName ?: fullName
-                val domainType = requireNotNull(XMakeConfigurationDomainType.fromKeyword(scopeKeyword)) {
-                    "Unexpected configuration-domain API '$fullName'"
-                }
+                val domainType = XMakeConfigurationDomainType.fromKeyword(scopeKeyword) ?: return@forEach
                 add(ApiModel(
                     fullName = fullName,
                     name = name,

@@ -170,7 +170,7 @@ class ImportCallParserTest : XMakeTestCase() {
         assertTrue(importBinding.boundNames.isEmpty())
     }
 
-    fun testResolvesInheritShorthandAsReceiverlessInheritedImport() {
+    fun testResolvesInheritShorthandAsReceiverlessBinding() {
         myFixture.configureByText(
             "xmake.lua",
             """
@@ -215,6 +215,130 @@ class ImportCallParserTest : XMakeTestCase() {
         val spec = ImportCallParser.parse(call).getOrThrow()
         assertEquals("hello3", spec.modulePath)
         assertEquals("modules", spec.rootDir)
+    }
+
+    fun testResolvesNoLocalConfiguration() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("core.base.json", {nolocal = true})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val call = PsiTreeUtil.findChildrenOfType(myFixture.file, LuaFunctionCall::class.java)
+            .first { ImportCallParser.isImportCall(it) && it.text.contains("core.base.json") }
+
+        val spec = ImportCallParser.parse(call).getOrThrow()
+        assertTrue(spec.noLocal)
+    }
+
+    fun testAcceptsHyphenatedModulePathSegments() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("package.manager.kotlin-native.configurations")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val call = PsiTreeUtil.findChildrenOfType(myFixture.file, LuaFunctionCall::class.java)
+            .first(ImportCallParser::isImportCall)
+
+        assertEquals(
+            "package.manager.kotlin-native.configurations",
+            ImportCallParser.parse(call).getOrThrow().modulePath
+        )
+    }
+
+    fun testAcceptsLeadingDotRelativeModulePaths() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import(".sibling")
+                    inherit("..parent.mod")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val modulePaths = PsiTreeUtil.findChildrenOfType(myFixture.file, LuaFunctionCall::class.java)
+            .asSequence()
+            .filter(ImportCallParser::isImportCall)
+            .map { ImportCallParser.parse(it).getOrThrow().modulePath }
+            .toList()
+
+        assertEquals(listOf(".sibling", "..parent.mod"), modulePaths)
+    }
+
+    fun testAcceptsPlainStringModulePathArgument() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("x")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val call = PsiTreeUtil.findChildrenOfType(myFixture.file, LuaFunctionCall::class.java)
+            .first(ImportCallParser::isImportCall)
+
+        assertEquals("x", ImportCallParser.parse(call).getOrThrow().modulePath)
+    }
+
+    fun testRejectsDynamicAndNestedModulePathArguments() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    local prefix = "core."
+                    local variable = "core.base.json"
+                    import(prefix .. "x")
+                    import({"x"})
+                    import(variable)
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val results = PsiTreeUtil.findChildrenOfType(myFixture.file, LuaFunctionCall::class.java)
+            .asSequence()
+            .filter(ImportCallParser::isImportCall)
+            .map { ImportCallParser.parse(it) }
+            .toList()
+
+        assertEquals(3, results.size)
+        assertTrue(results.all { it.isFailure })
+    }
+
+    fun testRejectsEmptyModulePath() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val call = PsiTreeUtil.findChildrenOfType(myFixture.file, LuaFunctionCall::class.java)
+            .first(ImportCallParser::isImportCall)
+
+        assertTrue(ImportCallParser.parse(call).isFailure)
     }
 
     private fun elementAtCaret(): PsiElement {

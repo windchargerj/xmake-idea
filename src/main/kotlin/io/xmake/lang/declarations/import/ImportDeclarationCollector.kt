@@ -44,7 +44,7 @@ object ImportDeclarationCollector {
         }
         return declarations.filter { declaration ->
             val declarationElement = declaration.declarationElement ?: return@filter false
-            if (declarationElement.textRange.endOffset > lookupOffset) {
+            if (declaration is ModuleImportDeclaration && declarationElement.textRange.endOffset > lookupOffset) {
                 return@filter false
             }
             declarationElement.isVisibleFrom(place)

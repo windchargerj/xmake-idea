@@ -7,5 +7,6 @@ data class ImportSpec(
     val inherit: Boolean = false,
     val tryImport: Boolean = false,
     val alwaysBuild: Boolean = false,
+    val noLocal: Boolean = false,
     val rootDir: String? = null
 )

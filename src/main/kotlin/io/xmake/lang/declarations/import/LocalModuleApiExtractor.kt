@@ -6,6 +6,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiFileFactory
 import com.intellij.psi.util.PsiTreeUtil
+import io.xmake.lang.declarations.source.ApiService
 import io.xmake.lang.syntax.XMakeLuaLanguage
 import io.xmake.lang.syntax.psi.LuaPsiVisibleLeaves
 import io.xmake.lang.syntax.psi.XMakeLuaIdentifier
@@ -55,120 +56,67 @@ object LocalModuleApiExtractor {
     fun extractTopLevelPublicFunctionDeclarations(file: PsiFile): List<ModuleExportDeclaration> =
         extractTopLevelPublicFunctionDeclarationsFromPsiOrNull(file).orEmpty()
 
-    /**
-     * Extracts top-level public interface members declared as `function iface.name(...)`.
-     */
-    @Suppress("unused")
-    fun extractPublicInterfaceFunctionNames(text: String, interfaceName: String): List<String> =
-        parseTextAsPsi(text, project = null)
-            ?.let { psi -> extractPublicInterfaceFunctionNamesFromPsi(psi, interfaceName) }
-            .orEmpty()
-
-    /**
-     * Project-aware overload used when import resolution starts from source text.
-     */
-    @Suppress("unused")
-    fun extractPublicInterfaceFunctionNames(project: Project, text: String, interfaceName: String): List<String> =
+    fun hasUnknownTopLevelPublicFunctionExports(project: Project, text: String): Boolean =
         parseTextAsPsi(text, project)
-            ?.let { psi -> extractPublicInterfaceFunctionNamesFromPsi(psi, interfaceName) }
-            .orEmpty()
+            ?.let(::hasUnknownTopLevelPublicFunctionExportsFromPsi)
+            ?: false
 
-    /**
-     * Extracts top-level public interface members declared as `function iface.name(...)`
-     * from a parsed Lua PSI file.
-     */
-    fun extractPublicInterfaceFunctionNames(file: PsiFile, interfaceName: String): List<String> =
-        extractPublicInterfaceFunctionNamesFromPsi(file, interfaceName).orEmpty()
-
-    fun extractPublicInterfaceFunctionDeclarations(
-        project: Project,
-        text: String,
-        interfaceName: String
-    ): List<ModuleExportDeclaration> =
-        parseTextAsPsi(text, project)
-            ?.let { psi -> extractPublicInterfaceFunctionDeclarationsFromPsiOrNull(psi, interfaceName) }
-            ?.map(::toDetachedDeclaration)
-            .orEmpty()
-
-    fun extractPublicInterfaceFunctionDeclarations(
-        file: PsiFile,
-        interfaceName: String
-    ): List<ModuleExportDeclaration> =
-        extractPublicInterfaceFunctionDeclarationsFromPsiOrNull(file, interfaceName).orEmpty()
+    fun hasUnknownTopLevelPublicFunctionExports(file: PsiFile): Boolean =
+        hasUnknownTopLevelPublicFunctionExportsFromPsi(file)
 
     /**
      * Checks if a function name is public (not starting with underscore).
      */
-    private fun isPublicModuleFunctionName(name: String): Boolean =
-        SIMPLE_FUNCTION_NAME.matches(name) && !name.startsWith("_")
+    private fun isPublicModuleFunctionName(name: String, project: Project): Boolean =
+        SIMPLE_FUNCTION_NAME.matches(name) &&
+            !name.startsWith("_") &&
+            name !in scriptBuiltinApiNames(project)
+
+    private fun scriptBuiltinApiNames(project: Project): Set<String> =
+        ApiService.getInstance(project).getApis().scriptBuiltinApis.toSet()
 
     private data class FunctionDeclaration(
         val name: String,
         val path: List<String>,
-        val separators: List<String>,
         val isTopLevelScope: Boolean,
         val isLocalFunction: Boolean,
         val declarationElement: PsiElement?
     )
 
     private data class ParsedFunctionName(
-        val path: List<String>,
-        val separators: List<String>
+        val path: List<String>
     )
 
     private fun extractTopLevelPublicFunctionNamesFromPsi(file: PsiFile): List<String>? =
-        extractPublicFunctionNamesFromPsi(file, interfaceName = null)
-
-    private fun extractPublicInterfaceFunctionNamesFromPsi(file: PsiFile, interfaceName: String): List<String>? =
-        extractPublicFunctionNamesFromPsi(file, interfaceName)
+        extractPublicFunctionNamesFromPsi(file)
 
     private fun extractTopLevelPublicFunctionDeclarationsFromPsiOrNull(file: PsiFile): List<ModuleExportDeclaration>? =
         collectFunctionDeclarations(file)?.let { declarations ->
-            extractPublicFunctionDeclarations(declarations, interfaceName = null)
+            extractPublicFunctionDeclarations(declarations)
         }
 
-    private fun extractPublicInterfaceFunctionDeclarationsFromPsiOrNull(
-        file: PsiFile,
-        interfaceName: String
-    ): List<ModuleExportDeclaration>? =
-        collectFunctionDeclarations(file)?.let { declarations ->
-            extractPublicFunctionDeclarations(declarations, interfaceName)
-        }
-
-    private fun extractPublicFunctionNamesFromPsi(file: PsiFile, interfaceName: String?): List<String>? {
+    private fun extractPublicFunctionNamesFromPsi(file: PsiFile): List<String>? {
         val declarations = collectFunctionDeclarations(file) ?: return null
         return declarations
             .asSequence()
             .filter { it.isTopLevelScope }
             .filterNot { it.isLocalFunction }
-            .let { sequence ->
-                if (interfaceName == null) {
-                    sequence
-                        .filter { it.path.size == 1 }
-                        .map { it.name }
-                } else {
-                    sequence
-                        .filter { it.path.size == 2 }
-                        .filter { it.path[0] == interfaceName }
-                        .filter { it.separators.singleOrNull() == "." }
-                        .map { it.name }
-                }
-            }
-            .filter(::isPublicModuleFunctionName)
+            .filter { it.path.size == 1 }
+            .map { it.name }
+            .filter { name -> isPublicModuleFunctionName(name, file.project) }
             .distinct()
             .toList()
     }
 
     private fun extractPublicFunctionDeclarations(
-        declarations: List<FunctionDeclaration>,
-        interfaceName: String?
+        declarations: List<FunctionDeclaration>
     ): List<ModuleExportDeclaration> =
         declarations
             .asSequence()
             .filter { it.isTopLevelScope }
             .filterNot { it.isLocalFunction }
-            .filter(matchesInterfaceFilter(interfaceName))
-            .filter { declaration -> isPublicModuleFunctionName(declaration.name) }
+            .filter { it.path.size == 1 }
+            .filter { declaration -> isPublicModuleFunctionName(declaration.name, declarationsProject(declaration)) }
             .map { declaration ->
                 declaration.declarationElement?.let { element ->
                     ModuleExportDeclaration.fromPsi(declaration.name, element)
@@ -184,6 +132,9 @@ object LocalModuleApiExtractor {
             declarationText = declaration.declarationText
         )
 
+    private fun declarationsProject(declaration: FunctionDeclaration): Project =
+        declaration.declarationElement?.project ?: ProjectManager.getInstance().defaultProject
+
     private fun collectFunctionDeclarations(root: PsiElement): List<FunctionDeclaration>? {
         val statements = PsiTreeUtil.findChildrenOfType(root, LuaStatement::class.java).toList()
         val hasLuaStructure = PsiTreeUtil.findChildOfType(root, LuaChunk::class.java) != null ||
@@ -195,18 +146,18 @@ object LocalModuleApiExtractor {
     }
 
     private fun toFunctionDeclaration(statement: LuaStatement): FunctionDeclaration? {
-        if (!isFunctionDeclarationStatement(statement)) {
-            return null
-        }
         val declarationScope = statement.parent
         val isTopLevelScope = declarationScope is LuaChunk ||
                 (declarationScope is LuaBlock && declarationScope.parent is LuaChunk)
         val isLocalFunction = isLocalFunctionDeclaration(statement)
-        val parsedName = parseFunctionName(statement) ?: return null
+        val parsedName = when {
+            isFunctionDeclarationStatement(statement) -> parseFunctionName(statement)
+            isTopLevelScope && !isLocalFunction -> parseFunctionAssignmentName(statement)
+            else -> null
+        } ?: return null
         return FunctionDeclaration(
             name = parsedName.path.last(),
             path = parsedName.path,
-            separators = parsedName.separators,
             isTopLevelScope = isTopLevelScope,
             isLocalFunction = isLocalFunction,
             declarationElement = resolveDeclarationElement(statement, parsedName.path.last())
@@ -219,6 +170,35 @@ object LocalModuleApiExtractor {
             return true
         }
         return first.text == "local" && LuaPsiVisibleLeaves.nextWithin(first, statement)?.text == "function"
+    }
+
+    private fun hasUnknownTopLevelPublicFunctionExportsFromPsi(file: PsiFile): Boolean {
+        val declarations = collectFunctionDeclarations(file) ?: return false
+        val knownFunctionAssignmentStatements = declarations
+            .mapNotNull { it.declarationElement }
+            .mapNotNull { PsiTreeUtil.getParentOfType(it, LuaStatement::class.java) }
+            .toSet()
+        val statements = PsiTreeUtil.findChildrenOfType(file, LuaStatement::class.java)
+        return statements.any { statement ->
+            statement !in knownFunctionAssignmentStatements &&
+                isUnknownTopLevelPublicAssignment(statement, file.project)
+        }
+    }
+
+    private fun isUnknownTopLevelPublicAssignment(statement: LuaStatement, project: Project): Boolean {
+        val declarationScope = statement.parent
+        val isTopLevelScope = declarationScope is LuaChunk ||
+                (declarationScope is LuaBlock && declarationScope.parent is LuaChunk)
+        if (!isTopLevelScope || isLocalStatement(statement) || isFunctionDeclarationStatement(statement)) {
+            return false
+        }
+        val tokens = statementTokens(statement)
+        val assignmentIndex = tokens.indexOf("=")
+        if (assignmentIndex != 1 || tokens.getOrNull(assignmentIndex + 1) == "function") {
+            return false
+        }
+        val name = tokens.firstOrNull()?.takeIf(::isIdentifierToken) ?: return false
+        return isPublicModuleFunctionName(name, project)
     }
 
     private fun resolveDeclarationElement(
@@ -245,23 +225,12 @@ object LocalModuleApiExtractor {
         return identifiers.lastOrNull()
     }
 
-    private fun matchesInterfaceFilter(interfaceName: String?): (FunctionDeclaration) -> Boolean = { declaration ->
-        if (interfaceName == null) {
-            declaration.path.size == 1
-        } else {
-            declaration.path.size == 2 &&
-                    declaration.path[0] == interfaceName &&
-                    declaration.separators.singleOrNull() == "."
-        }
-    }
-
     private fun parseFunctionName(statement: LuaStatement): ParsedFunctionName? {
         val tokens = statementTokens(statement)
         val functionIndex = tokens.indexOf("function")
         if (functionIndex < 0) return null
 
         val path = mutableListOf<String>()
-        val separators = mutableListOf<String>()
         var index = functionIndex + 1
         var expectIdentifier = true
 
@@ -274,7 +243,6 @@ object LocalModuleApiExtractor {
                 expectIdentifier = false
             } else {
                 if (token != "." && token != ":") return null
-                separators += token
                 expectIdentifier = true
             }
             index++
@@ -282,7 +250,7 @@ object LocalModuleApiExtractor {
 
         if (path.isEmpty() || expectIdentifier) return null
         if (tokens.getOrNull(index) != "(") return null
-        return ParsedFunctionName(path = path, separators = separators)
+        return ParsedFunctionName(path = path)
     }
 
     private fun isLocalFunctionDeclaration(statement: LuaStatement): Boolean {
@@ -290,6 +258,9 @@ object LocalModuleApiExtractor {
         if (first.text != "local") return false
         return LuaPsiVisibleLeaves.nextWithin(first, statement)?.text == "function"
     }
+
+    private fun isLocalStatement(statement: LuaStatement): Boolean =
+        LuaPsiVisibleLeaves.firstWithin(statement)?.text == "local"
 
     private fun statementTokens(statement: LuaStatement): List<String> = buildList {
         var leaf = LuaPsiVisibleLeaves.firstWithin(statement)
@@ -300,6 +271,21 @@ object LocalModuleApiExtractor {
     }
 
     private fun isIdentifierToken(token: String): Boolean = SIMPLE_FUNCTION_NAME.matches(token)
+
+    private fun parseFunctionAssignmentName(statement: LuaStatement): ParsedFunctionName? {
+        val tokens = statementTokens(statement)
+        if (tokens.size < 4 || tokens.getOrNull(1) != "=" || tokens.getOrNull(2) != "function") {
+            return null
+        }
+        val name = tokens.first()
+        if (!isIdentifierToken(name)) {
+            return null
+        }
+        if (tokens.getOrNull(3) != "(") {
+            return null
+        }
+        return ParsedFunctionName(path = listOf(name))
+    }
 
     private fun parseTextAsPsi(text: String, project: Project? = null): PsiFile? =
         runCatching {

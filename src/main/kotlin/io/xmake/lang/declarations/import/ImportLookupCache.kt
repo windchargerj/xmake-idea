@@ -53,9 +53,15 @@ internal class ImportLookupCache private constructor(
         place: PsiElement?,
         lookupOffset: Int
     ): ImportLookupView {
-        val moduleCollection = moduleCollectionsByRoot[importScanRootKey]
-            ?: ImportDeclarationCollector.CollectionResult(emptyList())
-        val declarations = moduleCollection.declarations + addImportCollection.declarations
+        val moduleCollections = moduleCollectionsFor(importScanRootKey, place, lookupOffset)
+        val declarations = (moduleCollections.flatMap { it.declarations } + addImportCollection.declarations)
+            .distinctBy { declaration ->
+                listOf(
+                    declaration::class.qualifiedName.orEmpty(),
+                    declaration.modulePath,
+                    declaration.declarationElement?.textRange?.startOffset ?: -1
+                )
+            }
         val reachableDeclarations = ImportDeclarationCollector.filterReachableDeclarations(
             declarations = declarations,
             place = place,
@@ -67,9 +73,24 @@ internal class ImportLookupCache private constructor(
             project = project,
             api = project.xmakeApi,
             declarations = reachableDeclarations,
-            initialIssues = moduleCollection.issues + addImportCollection.issues,
+            initialIssues = moduleCollections.flatMap { it.issues } + addImportCollection.issues,
             scriptDirectory = scriptDirectory
         )
+    }
+
+    private fun moduleCollectionsFor(
+        importScanRootKey: ImportScanRootKey,
+        place: PsiElement?,
+        lookupOffset: Int
+    ): List<ImportDeclarationCollector.CollectionResult> {
+        if (place == null || place is XMakeLuaFile) {
+            return listOf(moduleCollectionsByRoot[importScanRootKey] ?: ImportDeclarationCollector.CollectionResult(emptyList()))
+        }
+        return moduleCollectionsByRoot
+            .filterKeys { key -> key.contains(lookupOffset) }
+            .values
+            .toList()
+            .ifEmpty { listOf(ImportDeclarationCollector.CollectionResult(emptyList())) }
     }
 
     private data class ImportScanRootKey(
@@ -77,6 +98,9 @@ internal class ImportLookupCache private constructor(
         val endOffset: Int,
         val isFileRoot: Boolean
     ) {
+        fun contains(offset: Int): Boolean =
+            offset in startOffset..endOffset
+
         companion object {
             fun from(root: PsiElement): ImportScanRootKey =
                 ImportScanRootKey(

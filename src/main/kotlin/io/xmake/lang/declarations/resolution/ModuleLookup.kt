@@ -35,6 +35,9 @@ internal class ModuleLookup(
         val resolution = resolveVisibleModule(modulePath, context, file, place) ?: return emptyList()
         resolution.importedModule?.let { importedModule ->
             if (importedModule.identifier == resolution.visiblePath) {
+                if (!importedModule.isModuleLike) {
+                    return emptyList()
+                }
                 return importedModule.apis
             }
         }
@@ -84,7 +87,8 @@ internal class ModuleLookup(
         lookup.isBuiltinModulePath(resolution.visiblePath, context) ||
             (context.domain is XMakeDomain.Script && lookup.isExtensionModulePath(resolution.visiblePath)) ||
             (context.domain is XMakeDomain.Script &&
-                resolution.importedModule?.identifier == resolution.visiblePath)
+                resolution.importedModule?.identifier == resolution.visiblePath &&
+                resolution.importedModule?.isModuleLike == true)
 
     private fun resolveVisibleModule(
         modulePath: String,
@@ -114,6 +118,9 @@ internal class ModuleLookup(
             receiverName = firstSegment,
             place = place
         ) ?: return null
+        if (!importedModule.isModuleLike) {
+            return null
+        }
 
         val visiblePath = (listOf(importedModule.identifier) + pathSegments.drop(1)).joinToString(".")
         return VisibleModuleResolution(

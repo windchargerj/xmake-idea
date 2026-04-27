@@ -76,6 +76,9 @@ class XMakeApi(val project: Project) {
     fun instanceApis(instanceType: String, context: ApiLookupView): List<ApiModel> =
         lookup.instanceApis(instanceType, context)
 
+    fun instanceTypes(): Set<String> =
+        lookup.instanceTypes()
+
     fun extensionChildModules(modulePath: String): List<String> =
         lookup.extensionChildModules(modulePath)
 

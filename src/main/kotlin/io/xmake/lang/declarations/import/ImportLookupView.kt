@@ -224,9 +224,8 @@ class ImportLookupView internal constructor(
 
     private fun toInheritedApiExposures(candidates: List<InheritedApiExposure>): InheritedApiExposures? {
         if (candidates.isEmpty()) return null
-        val primary = candidates.last()
-        val (shadowed, conflicts) = candidates.dropLast(1)
-            .asReversed()
+        val primary = candidates.first()
+        val (shadowed, conflicts) = candidates.drop(1)
             .partition { it.api.fullName == primary.api.fullName }
         return InheritedApiExposures(
             primary = primary,

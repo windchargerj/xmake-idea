@@ -7,8 +7,8 @@ import io.xmake.lang.syntax.psi.XMakeLuaFile
 /**
  * Inherited import exposure coverage for the central import lookup view.
  *
- * Inherited modules stay receiver-less and only contribute merged inherited
- * APIs to the script domain.
+ * Inherited modules contribute merged inherited APIs to the script domain without
+ * exposing internal receiver bindings.
  */
 class ImportInheritedExposureTest : XMakeTestCase() {
 
@@ -27,14 +27,14 @@ class ImportInheritedExposureTest : XMakeTestCase() {
 
         assertNull(imports.resolveBoundModule("json"))
         assertNull(imports.resolveBoundModule("_super"))
+        assertNull(imports.resolveReceiverModule("_super"))
         assertEquals(listOf("core.base.json"), imports.importedModules.map { it.identifier })
         assertTrue(imports.importedModules.single().boundNames.isEmpty())
         assertTrue(imports.importedModules.single().receiverNames.isEmpty())
-        assertNull(imports.resolveBoundModule("_super"))
         assertNull(project.xmakeApi.imports.findReceiverModule(file, "_super"))
     }
 
-    fun testAnonymousInheritedImportAlsoStaysReceiverless() {
+    fun testAnonymousInheritedImportStaysReceiverless() {
         val file = configure(
             """
             target("demo")
@@ -119,9 +119,9 @@ class ImportInheritedExposureTest : XMakeTestCase() {
 
         val exposures = requireNotNull(project.xmakeApi.imports.findInheritedApiExposures(file, "shared"))
 
-        assertEquals("beta.shared", exposures.primary.api.fullName)
+        assertEquals("alpha.shared", exposures.primary.api.fullName)
         assertTrue(exposures.shadowed.isEmpty())
-        assertEquals(listOf("alpha.shared"), exposures.conflicts.map { it.api.fullName })
+        assertEquals(listOf("beta.shared"), exposures.conflicts.map { it.api.fullName })
     }
 
     fun testInheritShorthandFeedsCentralInheritedModuleExposure() {
@@ -138,12 +138,15 @@ class ImportInheritedExposureTest : XMakeTestCase() {
         val inheritedModules = project.xmakeApi.imports.listInheritedModules(file)
 
         assertEquals(listOf("core.base.json"), inheritedModules.map { it.identifier })
+        assertNull(project.xmakeApi.imports.viewAt(file).resolveBoundModule("_super"))
     }
 
-    fun testInheritedImportResolvesInterfaceStyleParentFileExports() {
+    fun testInheritedImportDoesNotUseParentInterfaceFallback() {
         myFixture.addFileToProject(
             "modules/corepack.lua",
             """
+            json = {}
+
             function json.encode()
             end
             """.trimIndent()
@@ -161,13 +164,16 @@ class ImportInheritedExposureTest : XMakeTestCase() {
 
         val exposures = project.xmakeApi.imports.viewAt(file).resolveInheritedApiExposures("encode")
 
-        assertEquals("modules.corepack.json.encode", exposures?.primary?.api?.fullName)
+        // Official source: import.lua skips module.interface fallback when opt.inherit is true.
+        assertNull(exposures)
     }
 
-    fun testInheritShorthandResolvesInterfaceStyleParentFileExports() {
+    fun testInheritShorthandDoesNotUseParentInterfaceFallback() {
         myFixture.addFileToProject(
             "modules/corepack.lua",
             """
+            json = {}
+
             function json.encode()
             end
             """.trimIndent()
@@ -185,7 +191,8 @@ class ImportInheritedExposureTest : XMakeTestCase() {
 
         val exposures = project.xmakeApi.imports.viewAt(file).resolveInheritedApiExposures("encode")
 
-        assertEquals("modules.corepack.json.encode", exposures?.primary?.api?.fullName)
+        // Official source: inherit(name) sets opt.inherit before delegating to import(name, opt).
+        assertNull(exposures)
     }
 
     private fun configure(code: String): XMakeLuaFile {

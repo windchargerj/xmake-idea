@@ -1,18 +1,19 @@
 package io.xmake.lang.declarations
 
 import io.xmake.lang.XMakeTestCase
-import io.xmake.lang.scope.model.XMakeConfigurationDomainType
 
 class KnownInstanceTypesTest : XMakeTestCase() {
 
-    fun testExposesAllCurrentConfigurationDomainReceiversAndComponent() {
-        val expected = XMakeConfigurationDomainType.keywords.toSet() + "component"
+    fun testDerivesReceiversFromScriptInstanceApiSurface() {
+        val expected = setOf("target", "option", "rule", "package", "toolchain")
+        val api = project.xmakeApi
 
-        assertEquals(7, KnownInstanceTypes.all.size)
-        assertEquals(expected, KnownInstanceTypes.all)
+        assertEquals(expected, KnownInstanceTypes.all(api))
         expected.forEach { name ->
-            assertTrue(KnownInstanceTypes.contains(name))
+            assertTrue(KnownInstanceTypes.contains(name, api))
         }
-        assertFalse(KnownInstanceTypes.contains("path"))
+        assertFalse(KnownInstanceTypes.contains("task", api))
+        assertFalse(KnownInstanceTypes.contains("component", api))
+        assertFalse(KnownInstanceTypes.contains("path", api))
     }
 }

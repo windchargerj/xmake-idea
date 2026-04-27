@@ -3,6 +3,7 @@ package io.xmake.lang.declarations.synthetic
 import com.intellij.psi.PsiElement
 import io.xmake.lang.declarations.ApiLookupView
 import io.xmake.lang.declarations.model.ApiModel
+import io.xmake.lang.declarations.import.ImportedObjectKind
 import io.xmake.lang.declarations.import.ImportedModuleView
 import io.xmake.lang.declarations.model.XMakeType
 
@@ -25,7 +26,15 @@ sealed interface XMakeSyntheticSymbol {
         override val origin: Origin
     ) : XMakeSyntheticSymbol {
         override val inferredType: XMakeType =
-            XMakeType.Module(module.identifier, ApiLookupView.SCRIPT_GLOBAL_ROOT)
+            if (module.hasUnknownMembers) {
+                XMakeType.Unknown
+            } else when (module.kind) {
+                ImportedObjectKind.MODULE -> XMakeType.Module(module.identifier, ApiLookupView.SCRIPT_GLOBAL_ROOT)
+                ImportedObjectKind.CALLABLE -> XMakeType.Function()
+                ImportedObjectKind.DIRECTORY,
+                ImportedObjectKind.NATIVE_BINARY,
+                ImportedObjectKind.NATIVE_SHARED -> XMakeType.Unknown
+            }
     }
 
     data class InheritedApiSymbol(

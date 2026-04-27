@@ -1,16 +1,14 @@
 package io.xmake.lang.declarations
 
-import io.xmake.lang.scope.model.XMakeConfigurationDomainType
-
 /**
  * Known xmake instance type names used for type inference.
  *
- * In xmake, configuration-domain keywords such as `target` and `package`
- * also act as receiver type names for xmake instance APIs in Script domain.
+ * This set is derived from `xmake show -l apis` script instance API prefixes.
+ * Domain keywords that do not appear in that surface are not treated as proven
+ * receiver types here.
  */
 object KnownInstanceTypes {
-    val all: Set<String> =
-        XMakeConfigurationDomainType.keywords.toSet() + "component"
+    fun all(api: XMakeApi): Set<String> = api.instanceTypes()
 
-    fun contains(name: String): Boolean = name in all
+    fun contains(name: String, api: XMakeApi): Boolean = name in all(api)
 }
