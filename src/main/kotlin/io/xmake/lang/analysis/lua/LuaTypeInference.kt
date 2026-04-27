@@ -1,6 +1,7 @@
 package io.xmake.lang.analysis.lua
 
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.psi.PsiElement
 import com.intellij.psi.util.PsiTreeUtil
 import io.xmake.lang.analysis.model.VisibleSymbol
@@ -9,18 +10,20 @@ import io.xmake.lang.analysis.xmake.XMakeVerifiedHookParameterTypes
 import io.xmake.lang.declarations.ApiLookupContext
 import io.xmake.lang.declarations.ApiLookupView
 import io.xmake.lang.declarations.XMakeApi
+import io.xmake.lang.declarations.import.ImportBinding
 import io.xmake.lang.declarations.import.ImportCallParser
+import io.xmake.lang.declarations.import.ImportModuleExportsResolver
+import io.xmake.lang.declarations.import.ImportModuleFileResolver
+import io.xmake.lang.declarations.import.ImportedObjectKind
 import io.xmake.lang.declarations.model.XMakeType
 import io.xmake.lang.declarations.resolver.TypeResolver
-import io.xmake.lang.scope.model.XMakeDomain
 import io.xmake.lang.syntax.psi.LuaPsiVisibleLeaves
 import io.xmake.lang.syntax.psi.PsiPredicates
 import io.xmake.lang.syntax.psi.XMakeLuaIdentifier
+import io.xmake.lang.syntax.psi.lua.LuaAttributeNameList
 import io.xmake.lang.syntax.psi.lua.LuaExpression
 import io.xmake.lang.syntax.psi.lua.LuaExpressionList
 import io.xmake.lang.syntax.psi.lua.LuaFunctionCall
-import io.xmake.lang.syntax.psi.lua.LuaFunctionDefinition
-import io.xmake.lang.syntax.psi.lua.LuaReturnStatement
 import io.xmake.lang.syntax.psi.lua.LuaStatement
 import io.xmake.lang.syntax.psi.lua.LuaVariableList
 
@@ -69,11 +72,6 @@ object LuaTypeInference {
 
         inferCallChainTargetType(identifier, context, visited, typeResolver)?.let { return it }
 
-        if (PsiPredicates.isBindableFunctionDeclarationName(identifier)) {
-            val returnedExpression = findReturnedExpression(identifier) ?: return null
-            return inferExpressionType(returnedExpression, context, visited, typeResolver)
-        }
-
         if (PsiPredicates.isLocalVariable(identifier) || PsiPredicates.isAssignmentTarget(identifier)) {
             val initializer = findInitializerExpression(identifier) ?: return null
             return inferExpressionType(initializer, context, visited, typeResolver)
@@ -93,85 +91,151 @@ object LuaTypeInference {
         } else {
             XMakeVerifiedHookParameterTypes.resolveVerifiedParameterType(identifier)?.let { return it }
         }
-        VisibleSymbolResolver.resolve(identifier, context)
+        val visible = VisibleSymbolResolver.resolve(identifier, context)
+        visible
             ?.inferredType
             ?.let { return it }
+        if (visible is VisibleSymbol.Local) {
+            return null
+        }
         typeResolver.resolveType(identifier.text, context)?.let { return it }
         return null
     }
 
     private fun inferExpressionType(
-        expression: com.intellij.psi.PsiElement,
+        expression: PsiElement,
         context: ApiLookupView,
         visited: MutableSet<XMakeLuaIdentifier>,
         typeResolver: TypeResolver
     ): XMakeType? {
         inferImportExpressionType(expression)?.let { return it }
-        inferChainedExpressionType(expression, context, visited, typeResolver)?.let { return it }
+        directFunctionCallExpression(expression)
+            ?.let { inferDirectCallExpressionType(it, context, visited, typeResolver) }
+            ?.let { return it }
 
-        val calledIdentifier = PsiTreeUtil.findChildrenOfType(expression, XMakeLuaIdentifier::class.java)
-            .asSequence()
-            .filter { PsiPredicates.isFunctionCall(it) }
-            .sortedBy { it.textOffset }
-            .lastOrNull()
-        if (calledIdentifier != null) {
-            val functionCall = PsiTreeUtil.getParentOfType(calledIdentifier, LuaFunctionCall::class.java)
-            if (functionCall != null) {
-                val memberAccess = LuaMemberAccessResolver.findDirectMemberAccess(calledIdentifier)
-                if (memberAccess != null) {
-                    val receiverType = inferFromDeclaration(memberAccess.receiver, context, visited)
-                    if (receiverType != null) {
-                        typeResolver.resolveMemberReturnType(receiverType, calledIdentifier.text, memberAccess.separator)
-                            ?.let { return it }
-                    }
-                }
-
-                resolveIdentifierType(calledIdentifier, context, typeResolver)?.let { return it }
-
-                val visibleCall = VisibleSymbolResolver.resolve(calledIdentifier, context)
-                if (visibleCall != null) {
-                    return inferFromVisibleSymbol(visibleCall, context, visited)
-                }
-            }
-        }
-
-        val initializer = PsiTreeUtil.findChildOfType(expression, XMakeLuaIdentifier::class.java) ?: return null
+        val initializer = directIdentifierExpression(expression) ?: return null
         resolveIdentifierType(initializer, context, typeResolver)?.let { return it }
 
         val visibleInitializer = VisibleSymbolResolver.resolve(initializer, context) ?: return null
         return inferFromVisibleSymbol(visibleInitializer, context, visited)
     }
 
-    private fun inferImportExpressionType(expression: com.intellij.psi.PsiElement): XMakeType? {
-        val functionCall = when (expression) {
-            is LuaFunctionCall -> expression
-            else -> PsiTreeUtil.findChildOfType(expression, LuaFunctionCall::class.java)
-        } ?: return null
+    private fun inferImportExpressionType(expression: PsiElement): XMakeType? {
+        val functionCall = directFunctionCallExpression(expression) ?: return null
         if (!ImportCallParser.isImportCall(functionCall)) {
             return null
         }
         val importSpec = ImportCallParser.parse(functionCall).getOrNull() ?: return null
-        return XMakeType.Module(importSpec.modulePath, ApiLookupView.SCRIPT_GLOBAL_ROOT)
+        if (importSpec.tryImport) {
+            return null
+        }
+        val api = safeApi(functionCall) ?: return null
+        val exports = ImportModuleExportsResolver(
+            project = functionCall.project,
+            lookup = api.lookup,
+            scriptDirectory = ImportModuleFileResolver.scriptDirectoryOf(functionCall)
+        ).resolve(
+            ImportBinding(
+                modulePath = importSpec.modulePath,
+                rootDir = importSpec.rootDir,
+                noLocal = importSpec.noLocal
+            )
+        ) ?: return null
+        if (exports.hasUnknownMembers) {
+            return XMakeType.Unknown
+        }
+        return when (exports.kind) {
+            ImportedObjectKind.MODULE -> XMakeType.Module(exports.identifier, ApiLookupView.SCRIPT_GLOBAL_ROOT)
+            ImportedObjectKind.CALLABLE -> XMakeType.Function()
+            ImportedObjectKind.DIRECTORY,
+            ImportedObjectKind.NATIVE_BINARY,
+            ImportedObjectKind.NATIVE_SHARED -> XMakeType.Unknown
+        }
     }
 
-    private fun inferChainedExpressionType(
-        expression: com.intellij.psi.PsiElement,
+    private fun inferDirectCallExpressionType(
+        functionCall: LuaFunctionCall,
         context: ApiLookupView,
         visited: MutableSet<XMakeLuaIdentifier>,
         typeResolver: TypeResolver
     ): XMakeType? {
-        val targetIdentifier = PsiTreeUtil.findChildrenOfType(expression, XMakeLuaIdentifier::class.java)
-            .asSequence()
-            .filter { PsiPredicates.isFunctionCall(it) }
-            .sortedBy { it.textOffset }
-            .lastOrNull()
-            ?: return null
+        val calledIdentifier = directCallTargetIdentifier(functionCall) ?: return null
+        inferCallChainTargetType(calledIdentifier, context, visited, typeResolver)?.let { return it }
 
-        return inferCallChainTargetType(targetIdentifier, context, visited, typeResolver)
+        val memberAccess = LuaMemberAccessResolver.findDirectMemberAccess(calledIdentifier)
+        if (memberAccess != null) {
+            val receiverType = inferFromDeclaration(memberAccess.receiver, context, visited)
+            if (receiverType != null) {
+                typeResolver.resolveMemberReturnType(receiverType, calledIdentifier.text, memberAccess.separator)
+                    ?.let { return it }
+            }
+        }
+
+        resolveIdentifierType(calledIdentifier, context, typeResolver)?.let { return it }
+
+        val visibleCall = VisibleSymbolResolver.resolve(calledIdentifier, context)
+        if (visibleCall != null) {
+            return inferFromVisibleSymbol(visibleCall, context, visited)
+        }
+        return null
     }
 
-    private fun inferCallChainTargetType(identifier: XMakeLuaIdentifier): XMakeType? {
-        return inferCallChainTargetType(identifier, defaultContext(identifier))
+    private fun directFunctionCallExpression(expression: PsiElement): LuaFunctionCall? {
+        return when (expression) {
+            is LuaFunctionCall -> expression
+            is LuaExpression -> PsiTreeUtil.findChildrenOfType(expression, LuaFunctionCall::class.java)
+                .singleOrNull { call -> hasSameVisibleLeafRange(expression, call) }
+
+            else -> null
+        }
+    }
+
+    private fun directCallTargetIdentifier(functionCall: LuaFunctionCall): XMakeLuaIdentifier? {
+        return PsiTreeUtil.findChildrenOfType(functionCall, XMakeLuaIdentifier::class.java)
+            .asSequence()
+            .filter { PsiTreeUtil.getParentOfType(it, LuaFunctionCall::class.java) == functionCall }
+            .sortedBy { it.textOffset }
+            .lastOrNull()
+    }
+
+    private fun directIdentifierExpression(expression: PsiElement): XMakeLuaIdentifier? {
+        if (expression is XMakeLuaIdentifier) {
+            return expression
+        }
+        if (expression !is LuaExpression) {
+            return null
+        }
+        if (PsiTreeUtil.findChildOfType(expression, LuaFunctionCall::class.java) != null) {
+            return null
+        }
+        val identifiers = PsiTreeUtil.findChildrenOfType(expression, XMakeLuaIdentifier::class.java).toList()
+        val identifier = identifiers.singleOrNull() ?: return null
+        return identifier.takeIf { isOnlyVisibleLeaf(expression, it) }
+    }
+
+    private fun isOnlyVisibleLeaf(scope: PsiElement, leaf: PsiElement): Boolean {
+        return LuaPsiVisibleLeaves.firstWithin(scope) == leaf &&
+            LuaPsiVisibleLeaves.nextWithin(leaf, scope) == null
+    }
+
+    private fun hasSameVisibleLeafRange(outer: PsiElement, inner: PsiElement): Boolean {
+        val outerFirst = LuaPsiVisibleLeaves.firstWithin(outer) ?: return false
+        val innerFirst = LuaPsiVisibleLeaves.firstWithin(inner) ?: return false
+        if (outerFirst != innerFirst) {
+            return false
+        }
+
+        return lastVisibleLeafWithin(outerFirst, outer) == lastVisibleLeafWithin(innerFirst, inner)
+    }
+
+    private fun lastVisibleLeafWithin(first: PsiElement, scope: PsiElement): PsiElement {
+        var last = first
+        var current = LuaPsiVisibleLeaves.nextWithin(first, scope)
+        while (current != null) {
+            last = current
+            current = LuaPsiVisibleLeaves.nextWithin(current, scope)
+        }
+        return last
     }
 
     private fun inferCallChainTargetType(
@@ -212,80 +276,62 @@ object LuaTypeInference {
         visited: MutableSet<XMakeLuaIdentifier>,
         typeResolver: TypeResolver
     ): XMakeType? {
+        val visible = VisibleSymbolResolver.resolve(identifier, context)
+        if (visible is VisibleSymbol.Local) {
+            return inferFromVisibleSymbol(visible, context, visited)
+        }
+
         resolveIdentifierType(identifier, context, typeResolver)?.let { return it }
 
-        val visible = VisibleSymbolResolver.resolve(identifier, context) ?: return null
-        return inferFromVisibleSymbol(visible, context, visited)
+        return visible?.let { inferFromVisibleSymbol(it, context, visited) }
     }
 
     private fun safeTypeResolver(element: PsiElement): TypeResolver? = try {
         element.project.getService(XMakeApi::class.java)?.typeResolver
-    } catch (e: com.intellij.serviceContainer.AlreadyDisposedException) {
-        LOG.debug("Type inference skipped (disposed): ${e.message}", e)
+    } catch (e: ProcessCanceledException) {
+        throw e
+    } catch (e: Exception) {
+        LOG.debug("Type inference skipped: ${e.message}", e)
         null
     }
 
     private fun safeApi(element: PsiElement): XMakeApi? = try {
         element.project.getService(XMakeApi::class.java)
-    } catch (e: com.intellij.serviceContainer.AlreadyDisposedException) {
-        LOG.debug("Type inference skipped (disposed): ${e.message}", e)
+    } catch (e: ProcessCanceledException) {
+        throw e
+    } catch (e: Exception) {
+        LOG.debug("Type inference skipped: ${e.message}", e)
         null
     }
 
-    private fun findInitializerExpression(identifier: XMakeLuaIdentifier): com.intellij.psi.PsiElement? {
+    private fun findInitializerExpression(identifier: XMakeLuaIdentifier): PsiElement? {
         val statement = PsiTreeUtil.getParentOfType(identifier, LuaStatement::class.java) ?: return null
         val eqLeaf = LuaPsiVisibleLeaves.findWithin(statement, "=") ?: return null
 
-        val variableList = PsiTreeUtil.findChildOfType(statement, LuaVariableList::class.java)
-        val expressionList = PsiTreeUtil.findChildOfType(statement, LuaExpressionList::class.java)
+        val expressionList = PsiTreeUtil.getChildOfType(statement, LuaExpressionList::class.java)
+        if (expressionList == null || expressionList.textRange.startOffset < eqLeaf.textRange.endOffset) return null
 
-        if (variableList == null || expressionList == null) {
-            return findInitializerByOffsets(identifier, statement, eqLeaf.textRange.startOffset)
-        }
-
-        val variables = PsiTreeUtil.findChildrenOfType(variableList, XMakeLuaIdentifier::class.java).toList()
+        val variables = findInitializerVariables(identifier, statement) ?: return null
         val variableIndex = variables.indexOf(identifier)
         if (variableIndex < 0) return null
 
         return expressionList.getExpressions().getOrNull(variableIndex)
     }
 
-    private fun findInitializerByOffsets(
+    private fun findInitializerVariables(
         identifier: XMakeLuaIdentifier,
-        statement: LuaStatement,
-        eqOffset: Int
-    ): com.intellij.psi.PsiElement? {
-        val identifiers = PsiTreeUtil.findChildrenOfType(statement, XMakeLuaIdentifier::class.java)
-            .asSequence()
-            .sortedBy { it.textOffset }
-            .toList()
-        val lhsIdentifiers = identifiers.filter { it.textOffset < eqOffset }
-        val variableIndex = lhsIdentifiers.indexOf(identifier)
-        if (variableIndex < 0) return null
-
-        val rhsIdentifiers = identifiers.filter { it.textOffset > eqOffset }
-        val rhsIdentifier = rhsIdentifiers.getOrNull(variableIndex) ?: return null
-        return PsiTreeUtil.getParentOfType(rhsIdentifier, LuaExpression::class.java, false, LuaStatement::class.java)
-            ?: rhsIdentifier
-    }
-
-    private fun findReturnedExpression(identifier: XMakeLuaIdentifier): com.intellij.psi.PsiElement? {
-        val functionDefinition = PsiTreeUtil.getParentOfType(identifier, LuaFunctionDefinition::class.java) ?: return null
-        val returnStatements = PsiTreeUtil.findChildrenOfType(functionDefinition, LuaReturnStatement::class.java)
-            .asSequence()
-            .filter { PsiTreeUtil.getParentOfType(it, LuaFunctionDefinition::class.java) == functionDefinition }
-            .sortedBy { it.textOffset }
-            .toList()
-
-        val returnStatement = returnStatements.firstOrNull() ?: return null
-        val expressionList = PsiTreeUtil.findChildOfType(returnStatement, LuaExpressionList::class.java)
-        if (expressionList != null) {
-            return expressionList.getExpressions().firstOrNull()
+        statement: LuaStatement
+    ): List<XMakeLuaIdentifier>? {
+        if (PsiPredicates.isLocalVariable(identifier)) {
+            val attributeNameList = PsiTreeUtil.getChildOfType(statement, LuaAttributeNameList::class.java)
+                ?: return null
+            return PsiTreeUtil.findChildrenOfType(attributeNameList, XMakeLuaIdentifier::class.java)
+                .filter { it.parent == attributeNameList }
         }
 
-        val returnedIdentifier = PsiTreeUtil.findChildOfType(returnStatement, XMakeLuaIdentifier::class.java) ?: return null
-        return PsiTreeUtil.getParentOfType(returnedIdentifier, LuaExpression::class.java, false, LuaReturnStatement::class.java)
-            ?: returnedIdentifier
+        val variableList = PsiTreeUtil.getChildOfType(statement, LuaVariableList::class.java)
+            ?: return null
+        return PsiTreeUtil.findChildrenOfType(variableList, XMakeLuaIdentifier::class.java).toList()
     }
 
     // Use the shared API context boundary so structural entry calls are typed

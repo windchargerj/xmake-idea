@@ -27,6 +27,15 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isModule("path")
     }
 
+    fun testDoesNotInferShadowedBuiltinModuleType() {
+        inferType {
+            """
+            local path = {}
+            local copy = <caret>path
+            """.trimIndent()
+        }.isUnknown()
+    }
+
     fun testInfersImportReturnAliasModuleType() {
         inferType {
             """
@@ -53,7 +62,27 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isModule("core.base.json")
     }
 
-    fun testDoesNotInferAliasedHookParameterType() {
+    fun testDoesNotInferDirectImportTypeForUnknownLocalModuleSurface() {
+        myFixture.addFileToProject(
+            "modules/dynamic.lua",
+            """
+            greet = make_greet()
+            """.trimIndent()
+        )
+
+        inferType {
+            """
+            target("test")
+                on_load(function (target)
+                    local dynamic = import("modules.dynamic")
+                    local copy = <caret>dynamic
+                end)
+            target_end()
+            """.trimIndent()
+        }.isUnknownType()
+    }
+
+    fun testInfersAliasedVerifiedHookParameterType() {
         inferType {
             """
             target("test")
@@ -64,7 +93,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             target_end()
             """.trimIndent()
-        }.isUnknown()
+        }.isInstance("target")
     }
 
     fun testInfersChainedAliasType() {
@@ -95,7 +124,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isModule("path")
     }
 
-    fun testInfersFunctionReturnedModuleType() {
+    fun testDoesNotInferFunctionReturnedModuleType() {
         inferType {
             """
             target("test")
@@ -108,10 +137,67 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             target_end()
             """.trimIndent()
-        }.isModule("path")
+        }.isUnknown()
     }
 
-    fun testDoesNotInferFunctionReturnedHookParameterType() {
+    fun testDoesNotInferFunctionReturnWhenBranchesReturnDifferentTypes() {
+        inferType {
+            """
+            target("test")
+                on_load(function (target)
+                    local json = import("core.base.json")
+                    local function pick(flag)
+                        if flag then
+                            return path
+                        end
+                        return json
+                    end
+                    local p = pick(true)
+                    local copy = <caret>p
+                end)
+            target_end()
+            """.trimIndent()
+        }.isUnknown()
+    }
+
+    fun testDoesNotInferFunctionReturnAfterNilEarlyReturn() {
+        inferType {
+            """
+            target("test")
+                on_load(function (target)
+                    local function get_path(flag)
+                        if flag then
+                            return nil
+                        end
+                        return path
+                    end
+                    local p = get_path(true)
+                    local copy = <caret>p
+                end)
+            target_end()
+            """.trimIndent()
+        }.isUnknown()
+    }
+
+    fun testDoesNotInferOuterFunctionReturnFromNestedFunction() {
+        inferType {
+            """
+            target("test")
+                on_load(function (target)
+                    local function get_path()
+                        local function nested()
+                            return path
+                        end
+                    end
+                    local p = get_path()
+                    local copy = <caret>p
+                end)
+            target_end()
+            """.trimIndent()
+        }.isUnknown()
+    }
+
+    fun testDoesNotInferFunctionReturnedVerifiedHookParameterType() {
         inferType {
             """
             target("test")
@@ -127,7 +213,34 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferOptionHookParameterType() {
+    fun testDoesNotInferComplexInitializerExpressionType() {
+        inferType {
+            """
+            target("test")
+                on_load(function (target)
+                    local json = import("core.base.json")
+                    local p = path or json
+                    local copy = <caret>p
+                end)
+            target_end()
+            """.trimIndent()
+        }.isUnknown()
+    }
+
+    fun testDoesNotInferIncompleteInitializerType() {
+        inferType {
+            """
+            target("test")
+                on_load(function (target)
+                    local p =
+                    local copy = <caret>p
+                end)
+            target_end()
+            """.trimIndent()
+        }.isUnknown()
+    }
+
+    fun testInfersOptionHookParameterType() {
         inferType {
             """
             option("feature")
@@ -136,10 +249,10 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             option_end()
             """.trimIndent()
-        }.isUnknown()
+        }.isInstance("option")
     }
 
-    fun testDoesNotInferPackageHookParameterType() {
+    fun testInfersPackageHookParameterType() {
         inferType {
             """
             package("zlib")
@@ -148,10 +261,10 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             package_end()
             """.trimIndent()
-        }.isUnknown()
+        }.isInstance("package")
     }
 
-    fun testDoesNotInferToolchainHookParameterType() {
+    fun testInfersToolchainHookParameterType() {
         inferType {
             """
             toolchain("myclang")
@@ -160,10 +273,10 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             toolchain_end()
             """.trimIndent()
-        }.isUnknown()
+        }.isInstance("toolchain")
     }
 
-    fun testDoesNotInferTargetFileHookParameterType() {
+    fun testInfersTargetFileHookParameterType() {
         inferType {
             """
             target("demo")
@@ -172,10 +285,10 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             target_end()
             """.trimIndent()
-        }.isUnknown()
+        }.isInstance("target")
     }
 
-    fun testDoesNotInferPackageSourceHookParameterType() {
+    fun testInfersPackageSourceHookParameterType() {
         inferType {
             """
             package("zlib")
@@ -184,7 +297,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             package_end()
             """.trimIndent()
-        }.isUnknown()
+        }.isInstance("package")
     }
 
     fun testDoesNotInferNonPrimaryTargetHookParameterType() {
@@ -235,7 +348,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferTargetDepReturnTypeFromUnknownHookParameter() {
+    fun testDoesNotInferTargetDepReturnTypeWithoutVerifiedMemberReturn() {
         inferType {
             """
             target("demo")
@@ -248,7 +361,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferTargetPkgReturnTypeFromUnknownHookParameter() {
+    fun testDoesNotInferTargetPkgReturnTypeWithoutVerifiedMemberReturn() {
         inferType {
             """
             target("demo")
@@ -261,7 +374,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferOptionDepReturnTypeFromUnknownHookParameter() {
+    fun testDoesNotInferOptionDepReturnTypeWithoutVerifiedMemberReturn() {
         inferType {
             """
             option("feature")
@@ -274,7 +387,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferPackageDepReturnTypeFromUnknownHookParameter() {
+    fun testDoesNotInferPackageDepReturnTypeWithoutVerifiedMemberReturn() {
         inferType {
             """
             package("demo")
@@ -287,7 +400,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferTargetRuleReturnTypeFromUnknownHookParameter() {
+    fun testDoesNotInferTargetRuleReturnTypeWithoutVerifiedMemberReturn() {
         inferType {
             """
             target("demo")
@@ -300,7 +413,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferTargetRuleCloneReturnTypeFromUnknownHookParameter() {
+    fun testDoesNotInferTargetRuleCloneReturnTypeWithoutVerifiedMemberReturn() {
         inferType {
             """
             target("demo")
@@ -313,7 +426,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
-    fun testDoesNotInferNameGetterReturnTypeFromUnknownHookParameter() {
+    fun testDoesNotInferNameGetterReturnTypeWithoutVerifiedMemberReturn() {
         inferType {
             """
             target("demo")
@@ -378,19 +491,62 @@ class LocalTypeInferenceTest : XMakeTestCase() {
         }.isUnknown()
     }
 
+    fun testDoesNotInferImplicitGlobalAssignmentInsideNestedFunction() {
+        inferType {
+            """
+            local function assign()
+                leaked = path
+            end
+            local copy = <caret>leaked
+            """.trimIndent()
+        }.isUnknown()
+    }
+
+    fun testDoesNotInferImplicitGlobalAssignmentInsideCondition() {
+        inferType {
+            """
+            if true then
+                leaked = path
+            end
+            local copy = <caret>leaked
+            """.trimIndent()
+        }.isUnknown()
+    }
+
+    fun testInfersTopLevelImplicitGlobalAssignmentType() {
+        inferType {
+            """
+            leaked = path
+            local copy = <caret>leaked
+            """.trimIndent()
+        }.isModule("path", ApiLookupView.DESCRIPTION_GLOBAL_ROOT)
+    }
+
     private fun inferType(code: () -> String): InferredTypeResult {
         val declaration = identifierAtCaret(code())
         return InferredTypeResult(LuaTypeInference.inferType(declaration))
     }
 
     private class InferredTypeResult(private val inferred: XMakeType?) {
-        fun isModule(expectedModule: String): InferredTypeResult {
-            assertEquals(XMakeType.Module(expectedModule, ApiLookupView.SCRIPT_GLOBAL_ROOT), inferred)
+        fun isModule(
+            expectedModule: String,
+            context: ApiLookupView = ApiLookupView.SCRIPT_GLOBAL_ROOT
+        ): InferredTypeResult {
+            assertEquals(XMakeType.Module(expectedModule, context), inferred)
+            return this
+        }
+
+        fun isInstance(expectedTypeName: String): InferredTypeResult {
+            assertEquals(XMakeType.Instance(expectedTypeName), inferred)
             return this
         }
 
         fun isUnknown() {
             assertNull(inferred)
+        }
+
+        fun isUnknownType() {
+            assertEquals(XMakeType.Unknown, inferred)
         }
     }
 

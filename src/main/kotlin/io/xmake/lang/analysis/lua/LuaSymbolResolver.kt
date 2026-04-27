@@ -17,6 +17,7 @@ import io.xmake.lang.syntax.psi.lua.LuaBlock
 import io.xmake.lang.syntax.psi.lua.LuaChunk
 import io.xmake.lang.syntax.psi.lua.LuaFunctionBody
 import io.xmake.lang.syntax.psi.lua.LuaParameterList
+import io.xmake.lang.syntax.psi.lua.LuaStatement
 import org.antlr.intellij.adaptor.lexer.TokenIElementType
 
 object LuaSymbolResolver {
@@ -256,13 +257,20 @@ object LuaSymbolResolver {
         return implicitGlobalAssignments(chunk, beforeOffset)
     }
 
-    private fun implicitGlobalAssignments(chunk: LuaChunk, beforeOffset: Int): List<XMakeLuaIdentifier> =
-        PsiTreeUtil.findChildrenOfType(chunk, XMakeLuaIdentifier::class.java)
+    private fun implicitGlobalAssignments(chunk: LuaChunk, beforeOffset: Int): List<XMakeLuaIdentifier> {
+        val block = PsiTreeUtil.findChildOfType(chunk, LuaBlock::class.java) ?: return emptyList()
+        return PsiTreeUtil.getChildrenOfTypeAsList(block, LuaStatement::class.java)
             .asSequence()
+            .flatMap { statement ->
+                PsiTreeUtil.findChildrenOfType(statement, XMakeLuaIdentifier::class.java)
+                    .asSequence()
+                    .filter { PsiTreeUtil.getParentOfType(it, LuaStatement::class.java) == statement }
+            }
             .filter { PsiPredicates.isAssignmentTarget(it) }
             .filter { it.textOffset < beforeOffset }
             .sortedByDescending { it.textOffset }
             .toList()
+    }
 
     private fun enclosingFunctionBody(scope: PsiElement): LuaFunctionBody? {
         return PsiTreeUtil.getParentOfType(scope, LuaFunctionBody::class.java)

@@ -1,71 +1,42 @@
 package io.xmake.lang.analysis.xmake
 
-import io.xmake.lang.declarations.VerifiedMemberReturnTypes
+import io.xmake.lang.XMakeTestCase
+import io.xmake.lang.declarations.ApiLookupView
+import io.xmake.lang.declarations.xmakeApi
 import io.xmake.lang.declarations.model.XMakeType
-import junit.framework.TestCase
 
 /**
- * Validates evidence-backed object return-type facts used by analysis features.
+ * Validates the conservative object typing boundary.
  *
- * Individual entries are grounded in xmake docs/runtime examples, but the [XMakeType] lattice
- * and unknown-member behavior are plugin-local typing rather than direct xmake-spec output.
+ * `xmake show -l apis` proves instance method names. It does not expose return-type
+ * metadata, so member calls must not synthesize return types locally.
  */
-class XMakeObjectTypingTest : TestCase() {
+class XMakeObjectTypingTest : XMakeTestCase() {
 
-    fun testResolvesTargetDependentObjects() {
-        assertEquals(
-            XMakeType.Instance("target"),
-            VerifiedMemberReturnTypes.resolve("target", "dep")
-        )
-        assertEquals(
-            XMakeType.Instance("package"),
-            VerifiedMemberReturnTypes.resolve("target", "pkg")
-        )
-        assertEquals(
-            XMakeType.Instance("rule"),
-            VerifiedMemberReturnTypes.resolve("target", "rule")
-        )
+    fun testShowApiSurfaceContainsInstanceMethodsWithoutReturnTypes() {
+        val targetMethods = project.xmakeApi.instanceApis("target", ApiLookupView.SCRIPT_GLOBAL_ROOT)
+
+        assertTrue(targetMethods.any { it.fullName == "target:dep" })
+        assertTrue(targetMethods.any { it.fullName == "target:name" })
+        assertNull(project.xmakeApi.typeResolver.resolveMemberReturnType(XMakeType.Instance("target"), "dep"))
+        assertNull(project.xmakeApi.typeResolver.resolveMemberReturnType(XMakeType.Instance("target"), "name"))
     }
 
-    fun testResolvesPackageDepReturnType() {
-        assertEquals(
-            XMakeType.Instance("package"),
-            VerifiedMemberReturnTypes.resolve("package", "dep")
-        )
-    }
+    fun testShowApiSurfaceContainsOtherInstanceMethodsWithoutReturnTypes() {
+        assertTrue(project.xmakeApi.instanceApis("package", ApiLookupView.SCRIPT_GLOBAL_ROOT)
+            .any { it.fullName == "package:dep" })
+        assertTrue(project.xmakeApi.instanceApis("option", ApiLookupView.SCRIPT_GLOBAL_ROOT)
+            .any { it.fullName == "option:dep" })
+        assertTrue(project.xmakeApi.instanceApis("rule", ApiLookupView.SCRIPT_GLOBAL_ROOT)
+            .any { it.fullName == "rule:clone" })
 
-    fun testResolvesDocumentedOptionDepReturnType() {
-        assertEquals(
-            XMakeType.Instance("option"),
-            VerifiedMemberReturnTypes.resolve("option", "dep")
-        )
-    }
-
-    fun testResolvesRuleCloneReturnType() {
-        assertEquals(
-            XMakeType.Instance("rule"),
-            VerifiedMemberReturnTypes.resolve("rule", "clone")
-        )
-    }
-
-    fun testReturnsStringForDocumentedNameGetter() {
-        assertEquals(
-            XMakeType.Primitive.STRING,
-            VerifiedMemberReturnTypes.resolve("target", "name")
-        )
-    }
-
-    fun testVerifiedReturnTypeFactsCarryEvidence() {
-        val fact = requireNotNull(VerifiedMemberReturnTypes.resolveFact("target", "dep"))
-
-        assertEquals(XMakeType.Instance("target"), fact.returnType)
-        assertEquals("https://xmake.io/llms-full.txt", fact.evidence.sourceUrl)
-        assertTrue(fact.evidence.confirmedOn.isNotBlank())
-        assertTrue(fact.evidence.invalidatesWhen.isNotBlank())
+        assertNull(project.xmakeApi.typeResolver.resolveMemberReturnType(XMakeType.Instance("package"), "dep"))
+        assertNull(project.xmakeApi.typeResolver.resolveMemberReturnType(XMakeType.Instance("option"), "dep"))
+        assertNull(project.xmakeApi.typeResolver.resolveMemberReturnType(XMakeType.Instance("rule"), "clone"))
     }
 
     fun testUnknownMembersReturnNull() {
-        assertNull(VerifiedMemberReturnTypes.resolve("target", "enabled"))
-        assertNull(VerifiedMemberReturnTypes.resolve("path", "join"))
+        assertNull(project.xmakeApi.typeResolver.resolveMemberReturnType(XMakeType.Instance("target"), "enabled"))
+        assertNull(project.xmakeApi.typeResolver.resolveMemberReturnType(XMakeType.Module("path", ApiLookupView.SCRIPT_GLOBAL_ROOT), "join", "."))
     }
 }

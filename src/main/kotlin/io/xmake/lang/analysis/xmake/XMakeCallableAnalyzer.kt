@@ -134,6 +134,15 @@ internal object XMakeCallableAnalyzer {
             )
         }
 
+        val visibleSymbol = VisibleSymbolResolver.resolve(element, apiContext)
+        if (visibleSymbol?.inferredType is XMakeType.Function) {
+            return CallAnalysis.semantic(
+                kind = IdentifierSemanticKind.FUNCTION_CALL,
+                intent = CallableIntentState.DIRECT_CALL,
+                resolvedElement = visibleSymbol.declarationElement
+            )
+        }
+
         val file = element.containingFile as? XMakeLuaFile
         val unqualifiedApi = api.findUnqualifiedApi(name, apiContext, file, element)
         return when {

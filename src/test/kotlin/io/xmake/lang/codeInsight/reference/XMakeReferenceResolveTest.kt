@@ -169,7 +169,7 @@ class XMakeReferenceResolveTest : XMakeTestCase() {
         assertTrue(resolved?.containingFile?.text?.contains("function path.join() end") == true)
     }
 
-    fun testUnknownHookReceiverInstanceMethodDoesNotResolveToSyntheticApiDeclaration() {
+    fun testVerifiedHookReceiverInstanceMethodResolvesToSyntheticApiDeclaration() {
         val reference = configureAndFindReference(
             """
             target("test")
@@ -181,7 +181,11 @@ class XMakeReferenceResolveTest : XMakeTestCase() {
             expectedName = "add"
         )
 
-        assertNull(reference.resolve())
+        val resolved = reference.resolve() as? XMakeLuaIdentifier
+        assertNotNull(resolved)
+        assertEquals("add", resolved?.name)
+        assertEquals(XMakeApiDeclarationService.SYNTHETIC_FILE_NAME, resolved?.containingFile?.name)
+        assertTrue(resolved?.containingFile?.text?.contains("function target:add() end") == true)
     }
 
     fun testImportedExtensionModuleMemberOwnsReference() {

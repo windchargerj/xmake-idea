@@ -5,6 +5,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
 import com.intellij.psi.util.CachedValue
 import com.intellij.psi.util.PsiTreeUtil
+import io.xmake.lang.analysis.lua.LuaMemberAccessResolver
 import io.xmake.lang.analysis.lua.LuaSymbolResolver
 import io.xmake.lang.analysis.model.CallAnalysis
 import io.xmake.lang.analysis.model.Severity
@@ -104,6 +105,10 @@ internal class CachedIdentifierValidator : CachedAnalyzer<ValidationError?>() {
             return null
         }
 
+        if (LuaMemberAccessResolver.findDirectMemberAccess(element) != null) {
+            return null
+        }
+
         val name = element.name
         val project = element.project
         val api = project.xmakeApi
@@ -127,7 +132,7 @@ internal class CachedIdentifierValidator : CachedAnalyzer<ValidationError?>() {
 
         val file = element.containingFile as? XMakeLuaFile
         val importedModule = file?.let { api.imports.findReceiverModule(it, name, element) }
-        if (importedModule != null && importedModule.apis.isNotEmpty()) {
+        if (importedModule != null && (importedModule.apis.isNotEmpty() || importedModule.hasUnknownMembers)) {
             return null
         }
 

@@ -5,6 +5,7 @@ import io.xmake.lang.declarations.ApiLookupView
 import io.xmake.lang.declarations.XMakeApi
 import io.xmake.lang.declarations.model.ApiModel
 import io.xmake.lang.declarations.model.ApiType
+import io.xmake.lang.declarations.model.XMakeType
 import io.xmake.lang.declarations.resolution.ApiResolution
 import io.xmake.lang.declarations.resolution.ApiResolutionResult
 import io.xmake.lang.declarations.resolution.QualifiedApiSelector
@@ -70,8 +71,11 @@ object XMakeIdentifierResolver {
             is ApiResolutionResult.Resolved -> false
             is ApiResolutionResult.NotFound -> {
                 val memberAccess = LuaMemberAccessResolver.findDirectMemberAccess(identifier)
-                if (memberAccess != null && LuaTypeInference.inferType(memberAccess.receiver, context) == null) {
-                    return false
+                if (memberAccess != null) {
+                    val receiverType = LuaTypeInference.inferType(memberAccess.receiver, context)
+                    if (receiverType == null || receiverType == XMakeType.Unknown) {
+                        return false
+                    }
                 }
                 true
             }
@@ -116,7 +120,11 @@ object XMakeIdentifierResolver {
             return null
         }
         val importedModule = api.imports.findReceiverModule(file, receiverPath.substringBefore('.'), identifier)
-        val visibleModulePath = resolveSyntheticModulePath(chain.identifiers.firstOrNull(), receiverPath)
+        val syntheticModulePath = resolveSyntheticModulePath(chain.identifiers.firstOrNull(), receiverPath)
+        if (syntheticModulePath == null && chain.identifiers.firstOrNull()?.isLocalShadow(context) == true) {
+            return null
+        }
+        val visibleModulePath = syntheticModulePath
             ?: api.resolveVisibleModulePath(receiverPath, context, file, identifier)
             ?: return null
 
@@ -163,4 +171,7 @@ object XMakeIdentifierResolver {
             "${moduleSymbol.module.identifier}.$suffix"
         }
     }
+
+    private fun XMakeLuaIdentifier.isLocalShadow(context: ApiLookupView): Boolean =
+        VisibleSymbolResolver.resolve(this, context) is VisibleSymbol.Local
 }

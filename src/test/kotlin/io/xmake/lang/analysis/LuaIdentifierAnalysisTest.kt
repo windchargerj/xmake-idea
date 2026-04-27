@@ -7,6 +7,7 @@ import io.xmake.lang.analysis.lua.LuaTypeInference
 import io.xmake.lang.analysis.model.CallableIntentState
 import io.xmake.lang.analysis.model.IdentifierSemanticKind
 import io.xmake.lang.analysis.model.IdentifierStructuralKind
+import io.xmake.lang.declarations.model.XMakeType
 
 /**
  * Tests the repository's identifier analysis model through the real type-inference
@@ -17,7 +18,7 @@ import io.xmake.lang.analysis.model.IdentifierStructuralKind
  */
 class LuaIdentifierAnalysisTest : XMakeTestCase() {
 
-    fun testDoesNotInferAliasedHookParameterType() {
+    fun testInfersAliasedVerifiedHookParameterType() {
         val identifier = identifierAtCaret(
             """
                 target("demo")
@@ -29,10 +30,10 @@ class LuaIdentifierAnalysisTest : XMakeTestCase() {
             """.trimIndent()
         )
 
-        assertNull(LuaTypeInference.inferType(identifier))
+        assertEquals(XMakeType.Instance("target"), LuaTypeInference.inferType(identifier))
     }
 
-    fun testDoesNotClassifyAliasedUnknownReceiverAsInstanceMethod() {
+    fun testClassifiesAliasedVerifiedHookReceiverAsInstanceMethod() {
         val identifier = identifierAtCaret(
             """
                 target("demo")
@@ -45,8 +46,8 @@ class LuaIdentifierAnalysisTest : XMakeTestCase() {
         )
 
         val analysis = LuaSymbolAnalyzer.classify(identifier)
-        assertNull(analysis.semanticKind)
-        assertNull(analysis.highlightKind)
+        assertEquals(IdentifierSemanticKind.INSTANCE_METHOD, analysis.semanticKind)
+        assertEquals(IdentifierSemanticKind.INSTANCE_METHOD, analysis.highlightKind)
     }
 
     fun testDoesNotInferHiddenModuleTypeForInheritedImportQualifier() {

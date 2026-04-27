@@ -4,6 +4,8 @@ import com.intellij.openapi.application.ReadAction
 import io.xmake.lang.analysis.lua.LuaCallChainResolver
 import io.xmake.lang.analysis.lua.LuaMemberAccessResolver
 import io.xmake.lang.analysis.lua.LuaTypeInference
+import io.xmake.lang.analysis.model.VisibleSymbol
+import io.xmake.lang.analysis.service.VisibleSymbolResolver
 import io.xmake.lang.declarations.ApiLookupView
 import io.xmake.lang.declarations.model.XMakeType
 import io.xmake.lang.declarations.resolution.QualifiedApiSelector
@@ -43,6 +45,7 @@ internal fun XMakeLuaIdentifier.qualifiedApiSelector(context: ApiLookupView): Qu
 
         val pathSegments = chain.pathSegments
         if (pathSegments.size < 2) return@compute null
+        if (chain.identifiers.firstOrNull()?.isLocalShadow(context) == true) return@compute null
 
         val file = this.containingFile as? XMakeLuaFile
         val typeResolver = project.typeResolver
@@ -70,3 +73,6 @@ private val com.intellij.openapi.project.Project.typeResolver: TypeResolver?
     } catch (e: Exception) {
         null
     }
+
+private fun XMakeLuaIdentifier.isLocalShadow(context: ApiLookupView): Boolean =
+    VisibleSymbolResolver.resolve(this, context) is VisibleSymbol.Local

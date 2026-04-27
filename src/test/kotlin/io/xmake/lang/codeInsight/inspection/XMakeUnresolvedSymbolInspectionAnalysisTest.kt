@@ -3,8 +3,8 @@ package io.xmake.lang.codeInsight.inspection
 /**
  * Analysis-assisted unresolved-symbol coverage.
  *
- * These checks protect plugin-local analysis lifting such as unknown-receiver
- * isolation, alias propagation, verified return-value propagation, import
+ * These checks protect plugin-local analysis lifting such as verified receiver
+ * typing, alias propagation, conservative return-value handling, import
  * inheritance, hidden inherited module bindings, and add_imports reachability.
  *
  * They are kept separate from the spec-sensitive baseline suite so
@@ -29,6 +29,45 @@ class XMakeUnresolvedSymbolInspectionAnalysisTest : XMakeInspectionTestCase() {
             end)
         target_end()
     """.trimIndent())
+
+    fun testKnownModuleMemberTypoIsUnresolvedFunction() = highlight("""
+        target("test")
+            on_load(function (target)
+                local p = path
+                local joined = p.<error descr="Unresolved function 'join_typo'">join_typo</error>("src", "main.c")
+            end)
+        target_end()
+    """.trimIndent())
+
+    fun testUnknownReceiverMemberTypoIsNotUnresolved() = highlight("""
+        target("test")
+            on_load(function (target)
+                local function get_path()
+                    return path
+                end
+                local p = get_path()
+                local joined = p.join_typo("src", "main.c")
+            end)
+        target_end()
+    """.trimIndent())
+
+    fun testDirectImportUnknownModuleMemberTypoIsNotUnresolved() {
+        myFixture.addFileToProject(
+            "modules/dynamic.lua",
+            """
+            greet = make_greet()
+            """.trimIndent()
+        )
+
+        highlight("""
+            target("test")
+                on_load(function (target)
+                    local dynamic = import("modules.dynamic")
+                    dynamic.any_member()
+                end)
+            target_end()
+        """.trimIndent())
+    }
 
     fun testAliasedInstanceMethodIsNotUnresolved() = highlight("""
         target("test")

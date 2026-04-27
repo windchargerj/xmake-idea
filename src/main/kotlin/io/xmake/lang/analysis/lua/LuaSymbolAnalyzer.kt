@@ -55,6 +55,10 @@ internal object LuaSymbolAnalyzer {
             callable != null ->
                 LuaSymbolAnalysis.neutral(callable.resolvedElement)
 
+            PsiPredicates.isFunctionCall(element) &&
+                XMakeIdentifierResolver.isUnresolvedApiCall(api, element, apiContext) ->
+                LuaSymbolAnalysis.unresolved(IdentifierResolutionStatus.UNRESOLVED_FUNCTION)
+
             PsiPredicates.isTableKey(element) ->
                 LuaSymbolAnalysis.semantic(IdentifierSemanticKind.TABLE_KEY, element)
 

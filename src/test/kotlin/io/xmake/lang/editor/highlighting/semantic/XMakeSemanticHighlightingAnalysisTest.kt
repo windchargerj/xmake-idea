@@ -37,7 +37,7 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
         }.expect(XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL)
     }
 
-    fun testUnknownAliasedHookReceiverHasNoInstanceMethodHighlighting() {
+    fun testAliasedVerifiedHookReceiverHasInstanceMethodHighlighting() {
         highlighting {
             """
                 target("test")
@@ -47,10 +47,10 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
-    fun testFunctionReturnedModuleHighlightingOnMember() {
+    fun testFunctionReturnedModuleMemberStaysConservative() {
         highlighting {
             """
                 target("test")
@@ -63,7 +63,9 @@ class XMakeSemanticHighlightingAnalysisTest : XMakeSemanticHighlightingTestCase(
                     end)
                 target_end()
             """.trimIndent()
-        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL)
+        }
+            .expect(XMakeLuaTextAttribute.XMAKE_LUA_TABLE_FIELD)
+            .notExpect(XMakeLuaTextAttribute.XMAKE_LUA_FUNCTION_CALL)
     }
 
     fun testUnknownFunctionReturnedHookReceiverHasNoInstanceMethodHighlighting() {

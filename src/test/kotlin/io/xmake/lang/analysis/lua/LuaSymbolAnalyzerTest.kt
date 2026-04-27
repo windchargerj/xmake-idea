@@ -128,7 +128,25 @@ class LuaSymbolAnalyzerTest : XMakeTestCase() {
         assertEquals(IdentifierSemanticKind.MODULE_CALL, LuaSymbolAnalyzer.classify(identifier).semanticKind)
     }
 
-    fun testDoesNotClassifyAliasedUnknownReceiverAsInstanceMethodCall() {
+    fun testKnownModuleMemberCallTypoIsUnresolvedFunction() {
+        val identifier = identifierAtCaret(
+            """
+            target("demo")
+                on_load(function (target)
+                    local p = path
+                    p.joi<caret>n_typo("src", "main.c")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        assertEquals(
+            IdentifierResolutionStatus.UNRESOLVED_FUNCTION,
+            LuaSymbolAnalyzer.classify(identifier).resolutionStatus
+        )
+    }
+
+    fun testClassifiesAliasedVerifiedHookReceiverAsInstanceMethodCall() {
         val identifier = identifierAtCaret(
             """
             target("demo")
@@ -140,10 +158,10 @@ class LuaSymbolAnalyzerTest : XMakeTestCase() {
             """.trimIndent()
         )
 
-        assertNull(LuaSymbolAnalyzer.classify(identifier).semanticKind)
+        assertEquals(IdentifierSemanticKind.INSTANCE_METHOD, LuaSymbolAnalyzer.classify(identifier).semanticKind)
     }
 
-    fun testClassifiesFunctionReturnedModuleCall() {
+    fun testKeepsFunctionReturnedModuleCallConservative() {
         val identifier = identifierAtCaret(
             """
             target("demo")
@@ -158,7 +176,7 @@ class LuaSymbolAnalyzerTest : XMakeTestCase() {
             """.trimIndent()
         )
 
-        assertEquals(IdentifierSemanticKind.MODULE_CALL, LuaSymbolAnalyzer.classify(identifier).semanticKind)
+        assertEquals(IdentifierSemanticKind.TABLE_FIELD, LuaSymbolAnalyzer.classify(identifier).semanticKind)
     }
 
     fun testDoesNotClassifyFunctionReturnedUnknownReceiverAsInstanceMethodCall() {
@@ -177,6 +195,24 @@ class LuaSymbolAnalyzerTest : XMakeTestCase() {
         )
 
         assertNull(LuaSymbolAnalyzer.classify(identifier).semanticKind)
+    }
+
+    fun testUnknownReceiverMemberCallTypoIsNotUnresolvedFunction() {
+        val identifier = identifierAtCaret(
+            """
+            target("demo")
+                on_load(function (target)
+                    local function get_path()
+                        return path
+                    end
+                    local p = get_path()
+                    p.joi<caret>n_typo("src", "main.c")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        assertEquals(IdentifierResolutionStatus.RESOLVED, LuaSymbolAnalyzer.classify(identifier).resolutionStatus)
     }
 
     fun testDoesNotClassifyMemberReferenceAssignmentAsEditorRecoveryCallHead() {

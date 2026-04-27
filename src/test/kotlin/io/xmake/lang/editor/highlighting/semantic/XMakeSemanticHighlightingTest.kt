@@ -197,7 +197,7 @@ class XMakeSemanticHighlightingTest : XMakeSemanticHighlightingTestCase() {
             )
     }
 
-    fun testUnknownHookReceiverHasNoInstanceMethodHighlightingOnMember() {
+    fun testVerifiedHookReceiverHasInstanceMethodHighlightingOnMember() {
         highlighting {
             """
                 target("test")
@@ -206,7 +206,7 @@ class XMakeSemanticHighlightingTest : XMakeSemanticHighlightingTestCase() {
                     end)
                 target_end()
             """.trimIndent()
-        }.notExpect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
+        }.expect(XMakeLuaTextAttribute.XMAKE_LUA_INSTANCE_METHOD)
     }
 
     fun testImportedAliasModuleFunctionHighlightingOnMember() {

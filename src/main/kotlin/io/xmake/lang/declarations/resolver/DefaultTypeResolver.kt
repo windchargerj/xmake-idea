@@ -6,7 +6,6 @@ import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import io.xmake.lang.declarations.ApiLookupView
-import io.xmake.lang.declarations.VerifiedMemberReturnTypes
 import io.xmake.lang.declarations.XMakeApi
 import io.xmake.lang.declarations.model.XMakeType
 import io.xmake.lang.syntax.psi.XMakeLuaFile
@@ -36,9 +35,11 @@ class DefaultTypeResolver(private val project: Project) : TypeResolver {
     }
 
     override fun resolveMemberReturnType(receiverType: XMakeType, memberName: String, separator: String): XMakeType? {
-        val instanceType = receiverType as? XMakeType.Instance ?: return null
-        if (separator != ":") return null
-        return VerifiedMemberReturnTypes.resolve(instanceType.typeName, memberName)
+        if (receiverType !is XMakeType.Instance || separator != ":") return null
+
+        // `xmake show -l apis` proves instance method names, but not their return types.
+        // Keep object-method result inference disabled until xmake exposes typed metadata.
+        return null
     }
 
     override fun isModulePath(path: String, context: ApiLookupView): Boolean {
