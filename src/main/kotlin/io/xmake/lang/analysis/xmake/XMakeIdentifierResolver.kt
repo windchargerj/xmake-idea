@@ -1,5 +1,6 @@
 package io.xmake.lang.analysis.xmake
 
+import com.intellij.psi.util.PsiTreeUtil
 import io.xmake.lang.declarations.ApiLookupContext
 import io.xmake.lang.declarations.ApiLookupView
 import io.xmake.lang.declarations.XMakeApi
@@ -21,6 +22,8 @@ import io.xmake.lang.analysis.lua.LuaCallChainResolver
 import io.xmake.lang.analysis.lua.LuaMemberAccessResolver
 import io.xmake.lang.analysis.lua.LuaSymbolResolver
 import io.xmake.lang.analysis.lua.LuaTypeInference
+import io.xmake.lang.declarations.import.ImportedModuleView
+import io.xmake.lang.syntax.psi.lua.LuaStatement
 
 object XMakeIdentifierResolver {
 
@@ -76,6 +79,9 @@ object XMakeIdentifierResolver {
                     if (receiverType == null || receiverType == XMakeType.Unknown) {
                         return false
                     }
+                    if (receiverType is XMakeType.Module && receiverType.hasUnknownMembers) {
+                        return false
+                    }
                 }
                 true
             }
@@ -119,12 +125,30 @@ object XMakeIdentifierResolver {
         if (context.domain !is XMakeDomain.Script) {
             return null
         }
-        val importedModule = api.imports.findReceiverModule(file, receiverPath.substringBefore('.'), identifier)
+        val receiver = chain.identifiers.firstOrNull()
+        val receiverIsLocal = receiver?.isLocalShadow(context) == true
+        val importedModule = if (receiverIsLocal) {
+            resolveLocalImportCaptureModule(api, file, receiver, identifier, context)
+                ?: return null
+        } else {
+            api.imports.findReceiverModule(file, receiverPath.substringBefore('.'), identifier)
+        }
         val syntheticModulePath = resolveSyntheticModulePath(chain.identifiers.firstOrNull(), receiverPath)
-        if (syntheticModulePath == null && chain.identifiers.firstOrNull()?.isLocalShadow(context) == true) {
+        if (importedModule == null && syntheticModulePath == null && receiverIsLocal) {
+            return null
+        }
+        if (importedModule != null && !importedModule.isModuleLike) {
             return null
         }
         val visibleModulePath = syntheticModulePath
+            ?: importedModule?.let { module ->
+                val suffix = receiverPath.substringAfter('.', "")
+                if (suffix.isEmpty()) {
+                    module.identifier
+                } else {
+                    "${module.identifier}.$suffix"
+                }
+            }
             ?: api.resolveVisibleModulePath(receiverPath, context, file, identifier)
             ?: return null
 
@@ -155,6 +179,28 @@ object XMakeIdentifierResolver {
             ),
             context
         )
+    }
+
+    private fun resolveLocalImportCaptureModule(
+        api: XMakeApi,
+        file: XMakeLuaFile,
+        receiver: XMakeLuaIdentifier?,
+        place: XMakeLuaIdentifier,
+        context: ApiLookupView
+    ): ImportedModuleView? {
+        val local = receiver
+            ?.let { VisibleSymbolResolver.resolve(it, context) as? VisibleSymbol.Local }
+            ?: return null
+        val declarationStatement = PsiTreeUtil.getParentOfType(local.declaration, LuaStatement::class.java) ?: return null
+        val targets = api.imports.viewAt(file, place)
+            .resolveBindingTargets(local.declaration.text)
+            ?: return null
+        return (sequenceOf(targets.primary) + targets.shadowed.asSequence() + targets.conflicts.asSequence())
+            .filter { target -> target.isReturnCapture }
+            .firstNotNullOfOrNull { target ->
+                val importCall = target.declarationElement ?: return@firstNotNullOfOrNull null
+                target.module.takeIf { PsiTreeUtil.isAncestor(declarationStatement, importCall, false) }
+            }
     }
 
     private fun resolveSyntheticModulePath(receiver: XMakeLuaIdentifier?, receiverPath: String): String? {

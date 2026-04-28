@@ -10,6 +10,7 @@ import io.xmake.lang.syntax.psi.LuaPsiVisibleLeaves
 import io.xmake.lang.syntax.psi.XMakeLuaIdentifier
 import io.xmake.lang.syntax.psi.lua.LuaExpression
 import io.xmake.lang.syntax.psi.lua.LuaExpressionList
+import io.xmake.lang.syntax.psi.lua.LuaAttributeNameList
 import io.xmake.lang.syntax.psi.lua.LuaFieldList
 import io.xmake.lang.syntax.psi.lua.LuaFunctionCall
 import io.xmake.lang.syntax.psi.lua.LuaStatement
@@ -211,10 +212,10 @@ object ImportCallParser {
         variableList: LuaVariableList,
         expressionList: LuaExpressionList
     ): String? {
-        val variables = PsiTreeUtil.findChildrenOfType(variableList, XMakeLuaIdentifier::class.java)
-            .asSequence()
-            .sortedBy { it.textOffset }
-            .toList()
+        val variables = variableAliases(
+            statement = PsiTreeUtil.getParentOfType(variableList, LuaStatement::class.java),
+            variableList = variableList
+        )
         if (variables.isEmpty()) {
             return null
         }
@@ -237,12 +238,8 @@ object ImportCallParser {
             return null
         }
 
-        val identifiers = PsiTreeUtil.findChildrenOfType(statement, XMakeLuaIdentifier::class.java)
-            .asSequence()
-            .sortedBy { it.textOffset }
-            .toList()
-
-        val lhsIdentifiers = identifiers.filter { it.textOffset < eqOffset }
+        val lhsIdentifiers = variableAliases(statement = statement)
+            .filter { it.textOffset < eqOffset }
         if (lhsIdentifiers.isEmpty()) {
             return null
         }
@@ -260,6 +257,25 @@ object ImportCallParser {
         }
 
         return lhsIdentifiers.getOrNull(expressionIndex)?.text
+    }
+
+    private fun variableAliases(
+        statement: LuaStatement?,
+        variableList: LuaVariableList? = null
+    ): List<XMakeLuaIdentifier> {
+        val attributeNameList = statement
+            ?.let { PsiTreeUtil.getChildOfType(it, LuaAttributeNameList::class.java) }
+        if (attributeNameList != null) {
+            return PsiTreeUtil.findChildrenOfType(attributeNameList, XMakeLuaIdentifier::class.java)
+                .filter { it.parent == attributeNameList }
+                .sortedBy { it.textOffset }
+        }
+
+        val root = variableList ?: statement ?: return emptyList()
+        return PsiTreeUtil.findChildrenOfType(root, XMakeLuaIdentifier::class.java)
+            .asSequence()
+            .sortedBy { it.textOffset }
+            .toList()
     }
 }
 

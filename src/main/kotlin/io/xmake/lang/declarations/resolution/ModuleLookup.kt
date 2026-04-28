@@ -32,7 +32,8 @@ internal class ModuleLookup(
         file: XMakeLuaFile? = null,
         place: PsiElement? = null
     ): List<ApiModel> {
-        val resolution = resolveVisibleModule(modulePath, context, file, place) ?: return emptyList()
+        val resolution = resolveVisibleModule(modulePath, context, file, place)
+            ?: return findImportedModuleData(modulePath, context, file, place)?.apis.orEmpty()
         resolution.importedModule?.let { importedModule ->
             if (importedModule.identifier == resolution.visiblePath) {
                 if (!importedModule.isModuleLike) {
@@ -50,7 +51,10 @@ internal class ModuleLookup(
         file: XMakeLuaFile? = null,
         place: PsiElement? = null
     ): List<String> {
-        val resolution = resolveVisibleModule(modulePath, context, file, place) ?: return emptyList()
+        val resolution = resolveVisibleModule(modulePath, context, file, place)
+            ?: return findImportedModuleData(modulePath, context, file, place)
+                ?.let { lookup.visibleChildModules(modulePath, context) }
+                .orEmpty()
         resolution.importedModule?.let { importedModule ->
             if (importedModule.identifier == resolution.visiblePath) {
                 return emptyList()
@@ -111,13 +115,10 @@ internal class ModuleLookup(
             return null
         }
 
+        val importView = imports.viewAt(file, place)
         val pathSegments = ModulePath.parse(modulePath)
         val firstSegment = pathSegments.firstOrNull() ?: return null
-        val importedModule = imports.findReceiverModule(
-            file = file,
-            receiverName = firstSegment,
-            place = place
-        ) ?: return null
+        val importedModule = importView.resolveReceiverModule(firstSegment) ?: return null
         if (!importedModule.isModuleLike) {
             return null
         }
@@ -127,5 +128,23 @@ internal class ModuleLookup(
             visiblePath = visiblePath,
             importedModule = importedModule
         )
+    }
+
+    private fun findImportedModuleData(
+        modulePath: String,
+        context: ApiLookupView,
+        file: XMakeLuaFile?,
+        place: PsiElement?
+    ): ImportedModuleView? {
+        if (modulePath.isBlank() || context.domain !is XMakeDomain.Script || file == null) {
+            return null
+        }
+        return imports.viewAt(file, place).importedModules
+            .asReversed()
+            .firstOrNull { importedModule ->
+                importedModule.identifier == modulePath &&
+                    importedModule.isModuleLike &&
+                    importedModule.hasReturnCaptureBinding
+            }
     }
 }

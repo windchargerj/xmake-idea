@@ -79,7 +79,7 @@ class LocalTypeInferenceTest : XMakeTestCase() {
                 end)
             target_end()
             """.trimIndent()
-        }.isUnknownType()
+        }.isModule("modules.dynamic", hasUnknownMembers = true)
     }
 
     fun testInfersAliasedVerifiedHookParameterType() {
@@ -530,9 +530,10 @@ class LocalTypeInferenceTest : XMakeTestCase() {
     private class InferredTypeResult(private val inferred: XMakeType?) {
         fun isModule(
             expectedModule: String,
-            context: ApiLookupView = ApiLookupView.SCRIPT_GLOBAL_ROOT
+            context: ApiLookupView = ApiLookupView.SCRIPT_GLOBAL_ROOT,
+            hasUnknownMembers: Boolean = false
         ): InferredTypeResult {
-            assertEquals(XMakeType.Module(expectedModule, context), inferred)
+            assertEquals(XMakeType.Module(expectedModule, context, hasUnknownMembers), inferred)
             return this
         }
 

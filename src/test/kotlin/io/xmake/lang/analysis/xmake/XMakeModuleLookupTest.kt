@@ -134,6 +134,31 @@ class XMakeModuleLookupTest : XMakeTestCase() {
         assertTrue(api.isVisibleModule("hello3", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
     }
 
+    fun testAliasRootDirImportDoesNotExposeOriginalModulePathAsVisible() {
+        myFixture.addFileToProject(
+            "modules/hello4.lua",
+            """
+            function greet()
+            end
+            """.trimIndent()
+        )
+        val api = XMakeApi.getInstance(project)
+        val file = configure("""
+            target("demo")
+                on_load(function (target)
+                    import("hello4", {rootdir = "modules", alias = "h"})
+                    h.greet()
+                end)
+            target_end()
+        """.trimIndent())
+
+        assertEquals("hello4", api.resolveVisibleModulePath("h", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
+        assertNull(api.resolveVisibleModulePath("hello4", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
+        assertFalse(api.isVisibleModule("hello4", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
+        assertTrue(api.visibleModuleFunctions("hello4", ApiLookupView.SCRIPT_GLOBAL_ROOT, file).isEmpty())
+        assertTrue(api.visibleChildModulesForReceiver("hello4", ApiLookupView.SCRIPT_GLOBAL_ROOT, file).isEmpty())
+    }
+
     private fun configure(code: String): XMakeLuaFile {
         myFixture.configureByText("xmake.lua", code)
         return myFixture.file as XMakeLuaFile

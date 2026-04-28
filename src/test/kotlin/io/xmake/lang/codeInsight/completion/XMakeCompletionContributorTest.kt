@@ -470,6 +470,51 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
             .notExpect("decode", "encode", "join")
     }
 
+    fun testScriptDomainAliasRootDirDoesNotCompleteHiddenOriginalModule() {
+        myFixture.addFileToProject(
+            "modules/hello4.lua",
+            """
+            function greet()
+            end
+            """.trimIndent()
+        )
+
+        complete {
+            """
+            target("test")
+                on_load(function (target)
+                    import("hello4", {rootdir = "modules", alias = "h"})
+                    hello4.<caret>
+                end)
+            """.trimIndent()
+        }
+            .notExpect("greet")
+    }
+
+    fun testScriptDomainLocalImportCaptureDynamicLocalModule() {
+        myFixture.addFileToProject(
+            "modules/dynamic.lua",
+            """
+            function known()
+            end
+
+            missing = make_missing()
+            """.trimIndent()
+        )
+
+        complete {
+            """
+            target("test")
+                on_load(function (target)
+                    local d = import("modules.dynamic")
+                    d.<caret>
+                end)
+            """.trimIndent()
+        }
+            .expect("known")
+            .notExpect("decode", "encode", "join")
+    }
+
     fun testScriptDomainCompletesVerifiedHookReceiverObjects() {
         complete {
             """
@@ -663,4 +708,3 @@ class XMakeCompletionContributorTest : XMakeCompletionTestCase() {
     }
 
 }
-

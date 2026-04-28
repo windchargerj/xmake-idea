@@ -66,7 +66,7 @@ object ImportModuleFileResolver {
         rootDir: String? = null,
         noLocal: Boolean = false
     ): ResolvedModuleFile? {
-        val moduleSubpath = moduleSubpath(modulePath)
+        val moduleSubpath = moduleSubpath(modulePath) ?: return null
 
         localSearchRoots(scriptDirectory, rootDir, noLocal).forEach { root ->
             val candidate = findModule(root, moduleSubpath)
@@ -93,6 +93,9 @@ object ImportModuleFileResolver {
         noLocal: Boolean = false,
         extensionChildModules: Collection<String> = emptyList()
     ): List<String> {
+        if (moduleSubpath(parentPath) == null) {
+            return emptyList()
+        }
         val localChildren =
             localSearchRoots(scriptDirectory, rootDir, noLocal)
                 .flatMap { root -> collectChildModules(root, parentPath, currentFileStem) }
@@ -142,6 +145,9 @@ object ImportModuleFileResolver {
         rootDir: String?
     ): ModuleSearchRoot? {
         if (rootDir.isNullOrBlank()) {
+            return null
+        }
+        if (rootDir.hasParentTraversal()) {
             return null
         }
         if (File(rootDir).isAbsolute) {
@@ -337,7 +343,11 @@ object ImportModuleFileResolver {
         }
     }
 
-    private fun moduleSubpath(modulePath: String): String = buildString {
+    private fun moduleSubpath(modulePath: String): String? {
+        if (modulePath.takeWhile { it == '.' }.length > MAX_LEADING_RELATIVE_DOTS) {
+            return null
+        }
+        return buildString {
         var startDots = true
         modulePath.forEach { char ->
             when {
@@ -349,7 +359,11 @@ object ImportModuleFileResolver {
                 }
             }
         }
-    }.trimEnd('/')
+        }.trimEnd('/')
+    }
+
+    private fun String.hasParentTraversal(): Boolean =
+        split('/', '\\').any { segment -> segment == ".." }
 
     private fun addRoot(roots: MutableMap<String, ModuleSearchRoot>, root: ModuleSearchRoot?) {
         if (root == null) {
@@ -416,4 +430,6 @@ object ImportModuleFileResolver {
             if (candidate.exists()) normalizePath(dir) else null
         }
     }
+
+    private const val MAX_LEADING_RELATIVE_DOTS = 2
 }

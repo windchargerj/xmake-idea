@@ -26,10 +26,12 @@ sealed interface XMakeSyntheticSymbol {
         override val origin: Origin
     ) : XMakeSyntheticSymbol {
         override val inferredType: XMakeType =
-            if (module.hasUnknownMembers) {
-                XMakeType.Unknown
-            } else when (module.kind) {
-                ImportedObjectKind.MODULE -> XMakeType.Module(module.identifier, ApiLookupView.SCRIPT_GLOBAL_ROOT)
+            when (module.kind) {
+                ImportedObjectKind.MODULE -> XMakeType.Module(
+                    module.identifier,
+                    ApiLookupView.SCRIPT_GLOBAL_ROOT,
+                    hasUnknownMembers = module.hasUnknownMembers
+                )
                 ImportedObjectKind.CALLABLE -> XMakeType.Function()
                 ImportedObjectKind.DIRECTORY,
                 ImportedObjectKind.NATIVE_BINARY,

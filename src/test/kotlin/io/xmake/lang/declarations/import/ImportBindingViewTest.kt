@@ -1,10 +1,13 @@
 package io.xmake.lang.declarations.import
 
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.util.PsiTreeUtil
 import io.xmake.lang.XMakeTestCase
 import io.xmake.lang.declarations.xmakeApi
 import io.xmake.lang.syntax.psi.XMakeLuaFile
 import io.xmake.lang.syntax.psi.XMakeLuaIdentifier
+import org.junit.Assert.assertNotEquals
 
 /**
  * Plugin-local import binding extraction coverage.
@@ -645,6 +648,212 @@ class ImportBindingViewTest : XMakeTestCase() {
         val file = myFixture.file as XMakeLuaFile
 
         assertNull(project.xmakeApi.imports.viewAt(file).resolveBoundModule("json"))
+    }
+
+    fun testImportedModuleFileEditInvalidatesExports() {
+        val moduleFile = myFixture.addFileToProject(
+            "modules/live.lua",
+            """
+            function greet()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("modules.live")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("greet"), project.xmakeApi.imports.viewAt(file).resolveBoundModule("live")?.apis?.map { it.name })
+
+        val document = requireNotNull(PsiDocumentManager.getInstance(project).getDocument(moduleFile))
+        WriteCommandAction.runWriteCommandAction(project) {
+            document.setText(
+                """
+                function wave()
+                end
+                """.trimIndent()
+            )
+        }
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+
+        assertEquals(listOf("wave"), project.xmakeApi.imports.viewAt(file).resolveBoundModule("live")?.apis?.map { it.name })
+    }
+
+    fun testSameModulePathWithDifferentRootDirsKeepsSeparateIdentities() {
+        myFixture.addFileToProject(
+            "mods/a/hello.lua",
+            """
+            function from_a()
+            end
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "mods/b/hello.lua",
+            """
+            function from_b()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("hello", {rootdir = "mods/a", alias = "ha"})
+                    import("hello", {rootdir = "mods/b", alias = "hb"})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val imports = project.xmakeApi.imports.viewAt(file)
+
+        assertEquals(listOf("from_a"), imports.resolveBoundModule("ha")?.apis?.map { it.name })
+        assertEquals(listOf("from_b"), imports.resolveBoundModule("hb")?.apis?.map { it.name })
+        assertNotEquals(imports.resolveBoundModule("ha")?.identity, imports.resolveBoundModule("hb")?.identity)
+    }
+
+    fun testAliasRootDirDoesNotExposeOriginalModulePathAsBinding() {
+        myFixture.addFileToProject(
+            "mods/a/hello.lua",
+            """
+            function greet()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("hello", {rootdir = "mods/a", alias = "h"})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val imports = project.xmakeApi.imports.viewAt(file)
+        assertEquals(listOf("greet"), imports.resolveBoundModule("h")?.apis?.map { it.name })
+        assertNull(imports.resolveBoundModule("hello"))
+        assertNull(imports.resolveReceiverModule("hello"))
+    }
+
+    fun testLocalImportCaptureSkipsLuaAttributesWhenMappingReturnSlots() {
+        myFixture.addFileToProject(
+            "modules/a.lua",
+            """
+            function from_a()
+            end
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "modules/b.lua",
+            """
+            function from_b()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    local a <const>, b = import("modules.a"), import("modules.b")
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val imports = project.xmakeApi.imports.viewAt(file)
+        assertEquals(listOf("from_a"), imports.resolveBoundModule("a")?.apis?.map { it.name })
+        assertEquals(listOf("from_b"), imports.resolveBoundModule("b")?.apis?.map { it.name })
+        assertNull(imports.resolveBoundModule("const"))
+    }
+
+    fun testSameAliasWithDifferentRootDirsIsConflictNotShadow() {
+        myFixture.addFileToProject(
+            "mods/a/hello.lua",
+            """
+            function from_a()
+            end
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "mods/b/hello.lua",
+            """
+            function from_b()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("hello", {rootdir = "mods/a", alias = "h"})
+                    import("hello", {rootdir = "mods/b", alias = "h"})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val targets = requireNotNull(project.xmakeApi.imports.viewAt(file).resolveBindingTargets("h"))
+
+        assertEquals(listOf("from_b"), targets.primary.module.apis.map { it.name })
+        assertTrue(targets.shadowed.isEmpty())
+        assertEquals(listOf("from_a"), targets.conflicts.single().module.apis.map { it.name })
+    }
+
+    fun testEquivalentRootDirSpellingsShareIdentity() {
+        myFixture.addFileToProject(
+            "mods/a/hello.lua",
+            """
+            function from_a()
+            end
+            """.trimIndent()
+        )
+        val file = configure(
+            """
+            target("demo")
+                on_load(function (target)
+                    import("hello", {rootdir = "mods/a", alias = "h"})
+                    import("hello", {rootdir = "./mods/a", alias = "h"})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+
+        val targets = requireNotNull(project.xmakeApi.imports.viewAt(file).resolveBindingTargets("h"))
+
+        assertEquals(listOf("from_a"), targets.primary.module.apis.map { it.name })
+        assertEquals(1, targets.shadowed.size)
+        assertTrue(targets.conflicts.isEmpty())
+        assertEquals(targets.primary.module.identity, targets.shadowed.single().module.identity)
+    }
+
+    fun testRelativeRootDirParentTraversalIsRejected() {
+        myFixture.addFileToProject(
+            "outside/hello.lua",
+            """
+            function outside()
+            end
+            """.trimIndent()
+        )
+        val script = myFixture.addFileToProject(
+            "src/xmake.lua",
+            """
+            target("demo")
+                on_load(function (target)
+                    import("hello", {rootdir = "../outside"})
+                end)
+            target_end()
+            """.trimIndent()
+        )
+        myFixture.configureFromExistingVirtualFile(script.virtualFile)
+        val file = myFixture.file as XMakeLuaFile
+
+        assertNull(project.xmakeApi.imports.viewAt(file).resolveBoundModule("hello"))
     }
 
     fun testResolvesRootDirLocalModuleFromMemberAccessCaretPosition() {

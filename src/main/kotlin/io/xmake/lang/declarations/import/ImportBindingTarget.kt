@@ -8,5 +8,6 @@ import com.intellij.psi.PsiElement
 data class ImportBindingTarget(
     val module: ImportedModuleView,
     val declarationElement: PsiElement?,
-    val origin: ImportBindingOrigin
+    val origin: ImportBindingOrigin,
+    val isReturnCapture: Boolean = false
 )

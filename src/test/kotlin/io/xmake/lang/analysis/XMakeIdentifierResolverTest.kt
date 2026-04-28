@@ -81,6 +81,96 @@ class XMakeIdentifierResolverTest : XMakeTestCase() {
         assertTrue(result is ApiResolutionResult.NotFound)
     }
 
+    fun testResolvesLocalImportCaptureModuleDeclaration() {
+        myFixture.addFileToProject(
+            "modules/dynamic.lua",
+            """
+            function known()
+            end
+
+            missing = make_missing()
+            """.trimIndent()
+        )
+        val identifier = identifierAtCaret(
+            """
+                target("demo")
+                    on_load(function ()
+                        local d = import("modules.dynamic")
+                        d.kno<caret>wn()
+                    end)
+                target_end()
+            """.trimIndent()
+        )
+
+        val context = ApiLookupView.fromState(XMakeScopeQuery.stateAt(identifier))
+        val result = XMakeIdentifierResolver.resolveIdentifier(XMakeApi.getInstance(project), identifier, context)
+        val resolved = requireNotNull(result as? ApiResolutionResult.Resolved)
+
+        assertEquals("known", resolved.resolution.api.name)
+        assertEquals("modules.dynamic", resolved.resolution.api.modulePath)
+    }
+
+    fun testUnknownSurfaceLocalImportCaptureMissingMemberIsConservative() {
+        myFixture.addFileToProject(
+            "modules/dynamic.lua",
+            """
+            function known()
+            end
+
+            missing = make_missing()
+            """.trimIndent()
+        )
+        val identifier = identifierAtCaret(
+            """
+                target("demo")
+                    on_load(function ()
+                        local d = import("modules.dynamic")
+                        d.no_su<caret>ch()
+                    end)
+                target_end()
+            """.trimIndent()
+        )
+
+        val context = ApiLookupView.fromState(XMakeScopeQuery.stateAt(identifier))
+
+        assertFalse(XMakeIdentifierResolver.isUnresolvedApiCall(XMakeApi.getInstance(project), identifier, context))
+    }
+
+    fun testLocalImportCaptureKeepsLocalModuleWhenLaterImportUsesSameName() {
+        myFixture.addFileToProject(
+            "modules/a.lua",
+            """
+            function known_a()
+            end
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "modules/b.lua",
+            """
+            function known_b()
+            end
+            """.trimIndent()
+        )
+        val identifier = identifierAtCaret(
+            """
+                target("demo")
+                    on_load(function ()
+                        local d = import("modules.a")
+                        import("modules.b", {alias = "d"})
+                        d.known<caret>_a()
+                    end)
+                target_end()
+            """.trimIndent()
+        )
+
+        val context = ApiLookupView.fromState(XMakeScopeQuery.stateAt(identifier))
+        val result = XMakeIdentifierResolver.resolveIdentifier(XMakeApi.getInstance(project), identifier, context)
+        val resolved = requireNotNull(result as? ApiResolutionResult.Resolved)
+
+        assertEquals("known_a", resolved.resolution.api.name)
+        assertEquals("modules.a", resolved.resolution.api.modulePath)
+    }
+
     fun testDetectsUnresolvedApiCall() {
         val identifier = identifierAtCaret(
             """

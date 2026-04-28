@@ -28,6 +28,8 @@ class XMakeModuleInheritedImportLookupTest : XMakeTestCase() {
         assertFalse(api.isVisibleModule("_super", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
         assertNull(api.resolveVisibleModulePath("json", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
         assertFalse(api.isVisibleModule("json", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
+        assertNull(api.resolveVisibleModulePath("core.base.json", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
+        assertFalse(api.isVisibleModule("core.base.json", ApiLookupView.SCRIPT_GLOBAL_ROOT, file))
     }
 
     fun testInheritedImportDoesNotEnumerateModuleFunctionsThroughReceiverBindings() {

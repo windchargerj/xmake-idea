@@ -6,10 +6,11 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
+import com.intellij.psi.util.PsiModificationTracker
 import io.xmake.lang.declarations.xmakeApi
+import io.xmake.lang.declarations.source.ApiService
 import io.xmake.lang.scope.query.XMakeScopeQuery
 import io.xmake.lang.syntax.psi.XMakeLuaFile
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * File-level cache for import declaration collections and position-aware views.
@@ -25,27 +26,17 @@ internal class ImportLookupCache private constructor(
     private val addImportCollection: ImportDeclarationCollector.CollectionResult,
     private val scriptDirectoryByRoot: Map<ImportScanRootKey, VirtualFile?>
 ) {
-    private val lookupViewCache = ConcurrentHashMap<LookupKey, ImportLookupView>()
-
     fun viewAt(place: PsiElement? = null): ImportLookupView {
         val mappedPlace = ImportLookupAnchorResolver.mapToFile(file, place)
         val anchor = mappedPlace?.let(ImportLookupAnchorResolver::anchor) ?: file
         val importScanRoot = ImportCallParser.resolveImportScanRoot(anchor)
         val importScanRootKey = ImportScanRootKey.from(importScanRoot)
         val lookupOffset = mappedPlace?.textOffset
-        val lookupKey = LookupKey(
+        return computeViewAt(
             importScanRootKey = importScanRootKey,
-            lookupOffset = lookupOffset,
-            unfiltered = mappedPlace == null || mappedPlace is XMakeLuaFile
+            place = mappedPlace,
+            lookupOffset = lookupOffset ?: anchor.textOffset
         )
-
-        return lookupViewCache.computeIfAbsent(lookupKey) {
-            computeViewAt(
-                importScanRootKey = importScanRootKey,
-                place = mappedPlace,
-                lookupOffset = lookupOffset ?: anchor.textOffset
-            )
-        }
     }
 
     private fun computeViewAt(
@@ -111,19 +102,15 @@ internal class ImportLookupCache private constructor(
         }
     }
 
-    private data class LookupKey(
-        val importScanRootKey: ImportScanRootKey,
-        val lookupOffset: Int?,
-        val unfiltered: Boolean
-    )
-
     companion object {
         fun forFile(project: Project, file: XMakeLuaFile): ImportLookupCache =
             ReadAction.compute<ImportLookupCache, RuntimeException> {
                 CachedValuesManager.getCachedValue(file) {
                     CachedValueProvider.Result.create(
                         collectForFile(project, file),
-                        file
+                        file,
+                        PsiModificationTracker.MODIFICATION_COUNT,
+                        ApiService.getInstance(project).modificationTracker
                     )
                 }
             }

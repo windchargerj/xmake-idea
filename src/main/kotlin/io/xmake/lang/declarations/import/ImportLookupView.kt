@@ -70,18 +70,18 @@ class ImportLookupView internal constructor(
         visibleBindings.filter { it.binding.kind != ImportBindingKind.RETURN_CAPTURE }
     }
 
-    private val importedModulesByPath: Map<String, ImportedModuleView> by lazy {
+    private val importedModulesByIdentity: Map<String, ImportedModuleView> by lazy {
         mergeImportedModules(visibleBindings)
     }
 
-    private val receiverModulesByPath: Map<String, ImportedModuleView> by lazy {
+    private val receiverModulesByIdentity: Map<String, ImportedModuleView> by lazy {
         mergeImportedModules(receiverVisibleBindings)
     }
 
     private val boundBindingTargetsByName: Map<String, ImportBindingTargets> by lazy {
         bindingTargetsByName(
             bindings = visibleBindings,
-            importedModulesByPath = importedModulesByPath,
+            importedModulesByIdentity = importedModulesByIdentity,
             names = ImportBinding::boundNames
         )
     }
@@ -89,7 +89,7 @@ class ImportLookupView internal constructor(
     private val receiverBindingTargetsByName: Map<String, ImportBindingTargets> by lazy {
         bindingTargetsByName(
             bindings = receiverVisibleBindings,
-            importedModulesByPath = receiverModulesByPath,
+            importedModulesByIdentity = receiverModulesByIdentity,
             names = ImportBinding::receiverNames
         )
     }
@@ -121,28 +121,23 @@ class ImportLookupView internal constructor(
         get() = issues.isNotEmpty()
 
     val importedModules: List<ImportedModuleView>
-        get() = importedModulesByPath.values.toList()
+        get() = importedModulesByIdentity.values.toList()
+
+    val receiverModules: List<ImportedModuleView>
+        get() = receiverModulesByIdentity.values.toList()
 
     val inheritedModules: List<ImportedModuleView>
         get() = receiverVisibleBindings.asSequence()
             .filter { it.binding.inherit }
-            .mapNotNull { bound -> receiverModulesByPath[bound.exports.identifier] }
-            .distinctBy { it.identifier }
+            .mapNotNull { bound -> receiverModulesByIdentity[bound.exports.identity] }
+            .distinctBy { it.identity }
             .toList()
 
     fun resolveBoundModule(identifier: String): ImportedModuleView? =
-        resolveModule(
-            identifier = identifier,
-            importedModulesByPath = importedModulesByPath,
-            bindingTargetsByName = boundBindingTargetsByName
-        )
+        boundBindingTargetsByName[identifier]?.primary?.module
 
     fun resolveReceiverModule(identifier: String): ImportedModuleView? =
-        resolveModule(
-            identifier = identifier,
-            importedModulesByPath = receiverModulesByPath,
-            bindingTargetsByName = receiverBindingTargetsByName
-        )
+        receiverBindingTargetsByName[identifier]?.primary?.module
 
     fun resolveBindingTargets(identifier: String): ImportBindingTargets? =
         boundBindingTargetsByName[identifier]
@@ -155,7 +150,7 @@ class ImportLookupView internal constructor(
 
     private fun mergeImportedModules(bindings: List<BoundImportBinding>): Map<String, ImportedModuleView> {
         return bindings
-            .groupBy { it.exports.identifier }
+            .groupBy { it.exports.identity }
             .mapValues { (_, entries) ->
                 mergeImportedModule(
                     exports = entries.first().exports,
@@ -175,22 +170,24 @@ class ImportLookupView internal constructor(
             primaryReceiverName = primaryReceiverName,
             primaryBoundName = primaryBoundName,
             boundNames = boundNames,
-            secondaryReceiverNames = receiverNames - setOfNotNull(primaryReceiverName)
+            secondaryReceiverNames = receiverNames - setOfNotNull(primaryReceiverName),
+            hasReturnCaptureBinding = bindings.any { it.kind == ImportBindingKind.RETURN_CAPTURE }
         )
     }
 
     private fun bindingTargetsByName(
         bindings: List<BoundImportBinding>,
-        importedModulesByPath: Map<String, ImportedModuleView>,
+        importedModulesByIdentity: Map<String, ImportedModuleView>,
         names: (ImportBinding) -> Collection<String>
     ): Map<String, ImportBindingTargets> {
         val targetsByName = linkedMapOf<String, MutableList<ImportBindingTarget>>()
         bindings.forEach { bound ->
-            val module = importedModulesByPath[bound.exports.identifier] ?: return@forEach
+            val module = importedModulesByIdentity[bound.exports.identity] ?: return@forEach
             val target = ImportBindingTarget(
                 module = module,
                 declarationElement = bound.binding.declarationElement,
-                origin = bound.binding.origin
+                origin = bound.binding.origin,
+                isReturnCapture = bound.binding.kind == ImportBindingKind.RETURN_CAPTURE
             )
             names(bound.binding).forEach { bindingName ->
                 targetsByName.getOrPut(bindingName) { mutableListOf() }.add(target)
@@ -201,20 +198,12 @@ class ImportLookupView internal constructor(
         }
     }
 
-    private fun resolveModule(
-        identifier: String,
-        importedModulesByPath: Map<String, ImportedModuleView>,
-        bindingTargetsByName: Map<String, ImportBindingTargets>
-    ): ImportedModuleView? =
-        importedModulesByPath[identifier]
-            ?: bindingTargetsByName[identifier]?.primary?.module
-
     private fun toImportBindingTargets(candidates: List<ImportBindingTarget>): ImportBindingTargets? {
         if (candidates.isEmpty()) return null
         val primary = candidates.last()
         val (shadowed, conflicts) = candidates.dropLast(1)
             .asReversed()
-            .partition { it.module.identifier == primary.module.identifier }
+            .partition { it.module.identity == primary.module.identity }
         return ImportBindingTargets(
             primary = primary,
             shadowed = shadowed,

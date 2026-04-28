@@ -10,7 +10,8 @@ sealed interface XMakeType {
 
     data class Module(
         val path: String,
-        val context: ApiLookupView
+        val context: ApiLookupView,
+        val hasUnknownMembers: Boolean = false
     ) : XMakeType {
         val topLevelModule: String get() = path.substringBefore(".")
 

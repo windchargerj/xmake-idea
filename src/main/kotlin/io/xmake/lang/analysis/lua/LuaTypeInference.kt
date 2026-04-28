@@ -141,11 +141,12 @@ object LuaTypeInference {
                 noLocal = importSpec.noLocal
             )
         ) ?: return null
-        if (exports.hasUnknownMembers) {
-            return XMakeType.Unknown
-        }
         return when (exports.kind) {
-            ImportedObjectKind.MODULE -> XMakeType.Module(exports.identifier, ApiLookupView.SCRIPT_GLOBAL_ROOT)
+            ImportedObjectKind.MODULE -> XMakeType.Module(
+                exports.identifier,
+                ApiLookupView.SCRIPT_GLOBAL_ROOT,
+                hasUnknownMembers = exports.hasUnknownMembers
+            )
             ImportedObjectKind.CALLABLE -> XMakeType.Function()
             ImportedObjectKind.DIRECTORY,
             ImportedObjectKind.NATIVE_BINARY,

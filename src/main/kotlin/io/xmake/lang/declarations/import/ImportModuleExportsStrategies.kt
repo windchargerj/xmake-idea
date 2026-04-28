@@ -1,6 +1,7 @@
 package io.xmake.lang.declarations.import
 
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiManager
@@ -57,10 +58,14 @@ internal class ImportModuleExportsContext(
         textHasUnknownMembers: (String) -> Boolean
     ): ModuleExports = ReadAction.compute<ModuleExports, RuntimeException> {
         val psiFile = PsiManager.getInstance(project).findFile(moduleFile) as? XMakeLuaFile
+        val moduleText by lazy {
+            FileDocumentManager.getInstance().getDocument(moduleFile)?.text
+                ?: moduleFile.inputStream.use { input -> input.reader().readText() }
+        }
         val declarations = psiFile?.let(psiExtractor)
-            ?: moduleFile.inputStream.use { input -> textExtractor(input.reader().readText()) }
+            ?: textExtractor(moduleText)
         val hasUnknownMembers = psiFile?.let(psiHasUnknownMembers)
-            ?: moduleFile.inputStream.use { input -> textHasUnknownMembers(input.reader().readText()) }
+            ?: textHasUnknownMembers(moduleText)
         val boundDeclarations = declarations.map { it.attachSourceFile(project, moduleFile) }
 
         ModuleExports(
@@ -83,10 +88,13 @@ internal class ImportModuleExportsContext(
 internal object ResolvedModuleFileExportsStrategy : ImportModuleExportsStrategy {
     override fun resolve(binding: ImportBinding, context: ImportModuleExportsContext): ModuleExports? {
         val resolvedFile = context.resolveModuleFile(binding.modulePath, binding.rootDir, binding.noLocal) ?: return null
+        val identity = binding.identityFor(resolvedFile)
         if (resolvedFile.kind != ImportModuleFileResolver.ModuleFileKind.LUA_FILE) {
             return context.indexedExports(binding.modulePath)
+                ?.copy(identity = identity)
                 ?: ModuleExports(
                     identifier = binding.modulePath,
+                    identity = identity,
                     apis = emptyList(),
                     declarations = emptyList(),
                     kind = resolvedFile.kind.toImportedObjectKind(),
@@ -95,13 +103,14 @@ internal object ResolvedModuleFileExportsStrategy : ImportModuleExportsStrategy 
         }
         val localExports = context.extractLocalModuleExports(resolvedFile.file, binding.modulePath)
         if (resolvedFile.source == ImportModuleFileResolver.ModuleFileSource.LOCAL) {
-            return localExports
+            return localExports.copy(identity = identity)
         }
         if (localExports.apis.isEmpty()) {
             return null
         }
         return ModuleExports(
             identifier = binding.modulePath,
+            identity = identity,
             apis = (context.indexedExports(binding.modulePath)?.apis.orEmpty() + localExports.apis)
                 .distinctBy { it.fullName },
             declarations = localExports.declarations,
@@ -139,6 +148,7 @@ internal object InterfaceModuleExportsStrategy : ImportModuleExportsStrategy {
         }
         return ModuleExports(
             identifier = binding.modulePath,
+            identity = binding.identityFor(resolvedParentFile, interfaceName),
             apis = emptyList(),
             declarations = emptyList(),
             kind = ImportedObjectKind.CALLABLE
@@ -148,7 +158,7 @@ internal object InterfaceModuleExportsStrategy : ImportModuleExportsStrategy {
 
 internal object IndexedModuleExportsStrategy : ImportModuleExportsStrategy {
     override fun resolve(binding: ImportBinding, context: ImportModuleExportsContext): ModuleExports? =
-        context.indexedExports(binding.modulePath)
+        context.indexedExports(binding.modulePath)?.copy(identity = binding.indexedIdentity())
 }
 
 private fun ImportModuleFileResolver.ModuleFileKind.toImportedObjectKind(): ImportedObjectKind =
@@ -158,3 +168,28 @@ private fun ImportModuleFileResolver.ModuleFileKind.toImportedObjectKind(): Impo
         ImportModuleFileResolver.ModuleFileKind.NATIVE_BINARY -> ImportedObjectKind.NATIVE_BINARY
         ImportModuleFileResolver.ModuleFileKind.NATIVE_SHARED -> ImportedObjectKind.NATIVE_SHARED
     }
+
+private fun ImportBinding.identityFor(
+    resolvedFile: ImportModuleFileResolver.ResolvedModuleFile,
+    suffix: String? = null
+): String = buildString {
+    append("resolved|")
+    append(modulePath)
+    append("|")
+    append(resolvedFile.file.url)
+    append("|")
+    append(resolvedFile.kind.name)
+    append("|")
+    append(resolvedFile.source.name)
+    append("|")
+    append(resolvedFile.searchRootSource.name)
+    append("|nolocal=")
+    append(noLocal)
+    if (suffix != null) {
+        append("|")
+        append(suffix)
+    }
+}
+
+private fun ImportBinding.indexedIdentity(): String =
+    "indexed|$modulePath"

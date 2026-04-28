@@ -5,6 +5,7 @@ import io.xmake.lang.declarations.model.ApiModel
 
 internal data class ModuleExports(
     val identifier: String,
+    val identity: String = identifier,
     val apis: List<ApiModel>,
     val declarations: List<ModuleExportDeclaration> = emptyList(),
     val kind: ImportedObjectKind = ImportedObjectKind.MODULE,
@@ -18,10 +19,12 @@ internal fun ModuleExports.toImportedModuleView(
     primaryReceiverName: String?,
     primaryBoundName: String?,
     boundNames: Set<String> = emptySet(),
-    secondaryReceiverNames: Set<String> = emptySet()
+    secondaryReceiverNames: Set<String> = emptySet(),
+    hasReturnCaptureBinding: Boolean = false
 ): ImportedModuleView {
     return ImportedModuleView(
         modulePath = identifier,
+        identity = identity,
         apis = apis,
         declarations = declarations,
         kind = kind,
@@ -29,7 +32,8 @@ internal fun ModuleExports.toImportedModuleView(
         primaryReceiverName = primaryReceiverName,
         primaryBoundName = primaryBoundName,
         boundNames = boundNames,
-        secondaryReceiverNames = secondaryReceiverNames
+        secondaryReceiverNames = secondaryReceiverNames,
+        hasReturnCaptureBinding = hasReturnCaptureBinding
     )
 }
 
@@ -38,5 +42,5 @@ internal fun ApiIndex.findIndexedModuleExports(modulePath: String): ModuleExport
     if (apis.isEmpty() && !hasExtensionModuleOrChildren(modulePath)) {
         return null
     }
-    return ModuleExports(modulePath, apis)
+    return ModuleExports(identifier = modulePath, apis = apis)
 }
