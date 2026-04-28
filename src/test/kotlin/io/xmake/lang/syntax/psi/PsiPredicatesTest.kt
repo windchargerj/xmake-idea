@@ -28,6 +28,33 @@ class PsiPredicatesTest : XMakeTestCase() {
         assertTrue(PsiPredicates.isLocalVariable(identifier))
     }
 
+    fun testDoesNotTreatLocalAttributesAsLocalVariables() {
+        myFixture.configureByText(
+            "xmake.lua",
+            """
+            local x <const>, y <close> = path, io
+            print(x, y, const, close)
+            """.trimIndent()
+        )
+
+        val identifiers = PsiTreeUtil.findChildrenOfType(myFixture.file, XMakeLuaIdentifier::class.java)
+            .groupBy { it.text }
+
+        val x = identifiers.getValue("x").first()
+        val y = identifiers.getValue("y").first()
+        val const = identifiers.getValue("const").first()
+        val close = identifiers.getValue("close").first()
+
+        assertTrue(PsiPredicates.isLocalVariable(x))
+        assertTrue(PsiPredicates.isLocalVariable(y))
+        assertFalse(PsiPredicates.isLocalVariable(const))
+        assertFalse(PsiPredicates.isLocalVariable(close))
+        assertFalse(PsiPredicates.isDeclaration(const))
+        assertFalse(PsiPredicates.isDeclaration(close))
+        assertFalse(PsiPredicates.isUnresolvedVariableCandidate(const))
+        assertFalse(PsiPredicates.isUnresolvedVariableCandidate(close))
+    }
+
     fun testRecognizesAssignmentTarget() {
         val identifier = configureAndFindIdentifier(
             """

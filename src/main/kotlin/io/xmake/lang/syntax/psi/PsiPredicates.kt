@@ -7,6 +7,7 @@ import io.xmake.lang.syntax.psi.lua.LuaFunctionCall
 import io.xmake.lang.syntax.psi.lua.LuaFunctionName
 import io.xmake.lang.syntax.psi.lua.LuaFunctionDefinition
 import io.xmake.lang.syntax.psi.lua.LuaFunctionBody
+import io.xmake.lang.syntax.psi.lua.LuaAttributeNameList
 import io.xmake.lang.syntax.psi.lua.LuaBlock
 import io.xmake.lang.syntax.psi.lua.LuaParameterList
 import io.xmake.lang.syntax.psi.lua.LuaStatement
@@ -28,6 +29,7 @@ object PsiPredicates {
         ::isFunctionDefinition,
         ::isFunctionDeclarationName,
         ::isAssignmentTarget,
+        ::isLocalAttributeName,
         ::isLocalVariable,
         ::isParameter,
         ::isLabel,
@@ -72,6 +74,7 @@ object PsiPredicates {
         element.parent is LuaFunctionCall
 
     fun isLocalVariable(element: XMakeLuaIdentifier): Boolean {
+        if (isLocalAttributeName(element)) return false
         if (isForLoopVariable(element)) return true
 
         val statement = PsiTreeUtil.getParentOfType(element, LuaStatement::class.java) ?: return false
@@ -86,6 +89,16 @@ object PsiPredicates {
             if (token.text == "=") return false
         }
         return false
+    }
+
+    fun isLocalAttributeName(element: XMakeLuaIdentifier): Boolean {
+        val attributeNameList = PsiTreeUtil.getParentOfType(element, LuaAttributeNameList::class.java)
+            ?: return false
+        if (element.parent != attributeNameList) {
+            return true
+        }
+        return LuaPsiVisibleLeaves.previousWithin(element, attributeNameList)?.text == "<" &&
+            LuaPsiVisibleLeaves.nextWithin(element, attributeNameList)?.text == ">"
     }
 
     fun isForLoopVariable(element: XMakeLuaIdentifier): Boolean {
