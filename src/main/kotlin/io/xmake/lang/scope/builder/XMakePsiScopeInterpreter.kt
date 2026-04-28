@@ -112,7 +112,7 @@ internal object XMakePsiScopeInterpreter {
 
         private fun walkFunctionBody(functionBody: LuaFunctionBody, outerPhase: Phase) {
             val block = PsiTreeUtil.getChildOfType(functionBody, LuaBlock::class.java) ?: return
-            if (outerPhase == Phase.DESCRIPTION && isConfigurationDomainFunctionBody(functionBody)) {
+            if (outerPhase == Phase.DESCRIPTION && isDescriptionDomainFunctionBody(functionBody)) {
                 walkBlock(block, Phase.DESCRIPTION)
                 return
             }
@@ -294,9 +294,14 @@ internal object XMakePsiScopeInterpreter {
         private fun dynamicNamespaceIdentity(startOffset: Int): String =
             "<dynamic>@$startOffset"
 
-        private fun isConfigurationDomainFunctionBody(functionBody: LuaFunctionBody): Boolean {
+        private fun isDescriptionDomainFunctionBody(functionBody: LuaFunctionBody): Boolean {
             val functionCall = PsiTreeUtil.getParentOfType(functionBody, LuaFunctionCall::class.java) ?: return false
             val calledName = functionCall.calleeName ?: return false
+            if (XMakeDescriptionDomainRules.isNamespaceEntry(calledName)) {
+                return functionCall.arguments.any { argument ->
+                    PsiTreeUtil.findChildOfType(argument, LuaFunctionBody::class.java) == functionBody
+                }
+            }
             val entryCall = XMakeConfigurationEntryCall.from(calledName, functionCall) ?: return false
             if (!entryCall.opensConfigurationFrame) return false
             return functionCall.arguments.any { argument ->

@@ -197,6 +197,21 @@ class XMakeScopeQueryTest : XMakeTestCase() {
         assertTrue(issues.none { it.kind == ScopeIssue.Kind.UNCLOSED_SCOPE })
     }
 
+    fun testFunctionNamespaceBodyStaysInDescriptionDomain() {
+        val identifier = configureAndFindIdentifier(
+            """
+            namespace("test", function ()
+                set_<caret>project("inside")
+            end)
+            """.trimIndent()
+        )
+
+        val state = XMakeScopeQuery.stateAt(identifier)
+
+        assertEquals(XMakeDomain.Description, state.domain)
+        assertTrue(state.root is XMakeRoot.Namespace)
+    }
+
     fun testEnclosingConfigurationRegionTracksCurrentScopeOnly() {
         val file = configure(
             """
