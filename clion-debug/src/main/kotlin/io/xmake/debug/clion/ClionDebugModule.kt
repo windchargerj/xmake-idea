@@ -76,14 +76,19 @@ object ClionDebugModule {
         args: List<String> = emptyList(),
         env: Map<String, String> = emptyMap()
     ): XDebugProcess {
-        Logger.i(TAG, "Creating debug process: project=${project.name}, driver=$driverName, path=$driverPath, target=$targetPath, workDir=$workingDir, args=$args, env=$env")
+        Logger.i(
+            TAG,
+            "Creating debug process: project=${project.name}, driver=$driverName, path=$driverPath, " +
+                "target=$targetPath, workDir=$workingDir, argumentCount=${args.size}, environmentVariableCount=${env.size}"
+        )
         
-        val configuration = XMakeDapDriverConfiguration(project, driverPath, driverName, launchConfig, args, env)
+        val configuration = XMakeDapDriverConfiguration(project, driverPath, driverName, launchConfig, env)
         
         // Create command line for target executable
         val commandLine = GeneralCommandLine(targetPath)
             .withWorkDirectory(workingDir.ifBlank { project.basePath })
             .withEnvironment(env)
+            .withParameters(args)
         
         // Create TrivialRunParameters directly using CLion API
         val trivialParams = TrivialRunParameters(configuration, commandLine, ArchitectureType.UNKNOWN)

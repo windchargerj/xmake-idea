@@ -46,7 +46,6 @@ class XMakeDapDriverConfiguration(
     private val driverPath: String,
     private val driverName: String,
     private val userLaunchConfig: String = "",
-    private val args: List<String> = emptyList(),
     private val env: Map<String, String> = emptyMap()
 ) : DapDriverConfiguration(project, driverName, false, false, DapRequestType.LAUNCH, true) {
 
