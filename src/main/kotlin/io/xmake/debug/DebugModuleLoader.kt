@@ -20,138 +20,119 @@
  */
 package io.xmake.debug
 
+import com.intellij.ide.plugins.cl.PluginAwareClassLoader
 import com.intellij.openapi.project.Project
-import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebugProcess
+import com.intellij.xdebugger.XDebugSession
 import io.xmake.utils.Logger
-import io.xmake.utils.SystemUtils
-import java.io.File
-import java.net.URLClassLoader
-import java.lang.reflect.Method
 
 /**
- * Dynamic debug module loader for CLion-specific debugging functionality
+ * Dynamic bridge to the optional CLion debug module.
  */
 object DebugModuleLoader {
-    
+
     private const val TAG = "DebugModuleLoader"
-    private const val DEBUG_JAR_NAME = "xmake-clion-debug.jar"
-    
-    private var debugClassLoader: URLClassLoader? = null
+    private const val DEBUG_CONTENT_MODULE_NAME = "xmake-idea.clion-debug"
+    private const val DEBUG_MODULE_CLASS_NAME = "io.xmake.debug.clion.ClionDebugModule"
+
+    @Volatile
     private var debugModuleClass: Class<*>? = null
-    private var isLoaded = false
-    
+    @Volatile
+    private var loadAttempted = false
+
     /**
-     * Check if CLion is available and load debug module if needed
+     * Resolve and cache the optional debug module if it is available.
      */
-    fun loadDebugModuleIfNeeded(project: Project): Boolean {
-        if (isLoaded) {
-            return true
+    fun loadDebugModuleIfNeeded(): Boolean {
+        if (loadAttempted) {
+            return debugModuleClass != null
         }
-        
-        if (!SystemUtils.isClionAvailable()) {
-            Logger.d(TAG, "CLion not available, skipping debug module loading")
-            return false
-        }
-        
-        return try {
-            loadDebugModule()
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to load debug module", e)
-            false
+
+        return synchronized(this) {
+            if (loadAttempted) {
+                debugModuleClass != null
+            } else {
+                val loaded = try {
+                    loadDebugModule()
+                } catch (e: Exception) {
+                    Logger.e(TAG, "Failed to load debug module", e)
+                    false
+                }
+                loadAttempted = true
+                loaded
+            }
         }
     }
-    
+
     /**
-     * Load the debug module JAR
+     * Load the debug module class from the plugin classpath or packaged content module jar.
      */
     private fun loadDebugModule(): Boolean {
-        return try {
-            // Find debug JAR in resources
-            val jarPath = findDebugJar()
-            if (jarPath == null) {
-                Logger.w(TAG, "Debug JAR not found: $DEBUG_JAR_NAME")
-                return false
-            }
-            
-            Logger.d(TAG, "Loading debug module from: $jarPath")
-            
-            // Create class loader for JAR
-            val jarFile = File(jarPath)
-            val jarUrl = jarFile.toURI().toURL()
-            debugClassLoader = URLClassLoader(arrayOf(jarUrl), this::class.java.classLoader)
-            
-            // Load main debug module class
-            debugModuleClass = debugClassLoader?.loadClass("io.xmake.debug.clion.ClionDebugModule")
-            
-            isLoaded = true
-            Logger.d(TAG, "Debug module loaded successfully")
-            true
-            
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to load debug module", e)
-            false
+        debugModuleClass = resolveDebugModuleClass()
+            ?: loadDebugModuleFromContentModule()
+
+        if (debugModuleClass == null) {
+            Logger.w(TAG, "Debug module class not found: $DEBUG_MODULE_CLASS_NAME")
+            return false
         }
+
+        Logger.d(TAG, "Debug module loaded successfully")
+        return true
     }
-    
-    /**
-     * Find debug JAR in plugin resources
-     */
-    private fun findDebugJar(): String? {
+
+    private fun resolveDebugModuleClass(classLoader: ClassLoader? = this::class.java.classLoader): Class<*>? {
+        if (classLoader == null) {
+            return null
+        }
         return try {
-            Logger.d(TAG, "Searching for debug JAR: $DEBUG_JAR_NAME")
-            
-            // Use getModulePath method to get the debug module JAR
-            val jarPath = SystemUtils.getModulePath(DEBUG_JAR_NAME)
-            
-            if (jarPath != null) {
-                Logger.i(TAG, "Found debug JAR at: $jarPath")
-                return jarPath
-            } else {
-                Logger.e(TAG, "Debug JAR not found: $DEBUG_JAR_NAME")
-                return null
-            }
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to find debug JAR", e)
+            Class.forName(DEBUG_MODULE_CLASS_NAME, false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            null
+        } catch (e: LinkageError) {
+            Logger.d(TAG, "Debug module class is not linkable from classpath: ${e.message}")
             null
         }
     }
-    
-    /**
-     * Find project root directory by looking for build.gradle.kts
-     */
-    private fun findProjectRoot(startDir: File): File? {
-        var current = startDir
-        while (current.parentFile != null) {
-            if (File(current, "build.gradle.kts").exists()) {
-                return current
-            }
-            current = current.parentFile
+
+    private fun loadDebugModuleFromContentModule(): Class<*>? {
+        val rootDescriptor = (DebugModuleLoader::class.java.classLoader as? PluginAwareClassLoader)
+            ?.pluginDescriptor
+        if (rootDescriptor == null) {
+            Logger.d(TAG, "Root plugin descriptor not found")
+            return null
         }
-        return null
+
+        val classLoader = ContentModuleClassLoaderResolver.resolve(rootDescriptor, DEBUG_CONTENT_MODULE_NAME)
+        if (classLoader == null) {
+            Logger.d(TAG, "Content module class loader not found: $DEBUG_CONTENT_MODULE_NAME")
+            return null
+        }
+
+        return resolveDebugModuleClass(classLoader)
     }
-    
+
     /**
-     * Create a debug process using the loaded module
+     * Create a debug process using the loaded CLion module.
      */
     fun createDebugProcess(
-        project: Project, 
+        project: Project,
         driverName: String,
-        driverPath: String, 
-        launchConfig: String, 
+        driverPath: String,
+        launchConfig: String,
         targetPath: String,
         workingDir: String,
         session: XDebugSession,
         args: List<String> = emptyList(),
         env: Map<String, String> = emptyMap()
     ): XDebugProcess? {
-        if (!isLoaded || debugModuleClass == null) {
+        val moduleClass = debugModuleClass
+        if (moduleClass == null) {
             Logger.w(TAG, "Debug module not loaded")
             return null
         }
-        
+
         return try {
-            val createProcessMethod = debugModuleClass?.getMethod(
+            val createProcessMethod = moduleClass.getMethod(
                 "createDebugProcess",
                 Project::class.java,
                 String::class.java,
@@ -163,44 +144,54 @@ object DebugModuleLoader {
                 List::class.java,
                 Map::class.java
             )
-            val result = createProcessMethod?.invoke(null, project, driverName, driverPath, launchConfig, targetPath, workingDir, session, args, env)
+            val result = createProcessMethod.invoke(
+                null,
+                project,
+                driverName,
+                driverPath,
+                launchConfig,
+                targetPath,
+                workingDir,
+                session,
+                args,
+                env
+            )
             result as? XDebugProcess
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to create debug process", e)
             null
+        } catch (e: LinkageError) {
+            Logger.e(TAG, "Debug module is not compatible with this IDE", e)
+            null
         }
     }
-    
+
     /**
-     * Check if debugging is available
+     * Check if debugging is available.
      */
     fun isDebuggingAvailable(project: Project): Boolean {
-        if (!isLoaded || debugModuleClass == null) {
-            return false
-        }
-        
+        val moduleClass = debugModuleClass ?: return false
+
         return try {
-            val isAvailableMethod = debugModuleClass?.getMethod("isDebuggingAvailable", Project::class.java)
-            val result = isAvailableMethod?.invoke(null, project)
+            val isAvailableMethod = moduleClass.getMethod("isDebuggingAvailable", Project::class.java)
+            val result = isAvailableMethod.invoke(null, project)
             result as? Boolean ?: false
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to check debugging availability", e)
             false
+        } catch (e: LinkageError) {
+            Logger.e(TAG, "Debug module is not compatible with this IDE", e)
+            false
         }
     }
-    
+
     /**
-     * Unload debug module
+     * Reset the loaded debug module state.
      */
+    @Synchronized
     fun unloadDebugModule() {
-        try {
-            debugClassLoader?.close()
-            debugClassLoader = null
-            debugModuleClass = null
-            isLoaded = false
-            Logger.d(TAG, "Debug module unloaded")
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to unload debug module", e)
-        }
+        debugModuleClass = null
+        loadAttempted = false
+        Logger.d(TAG, "Debug module unloaded")
     }
 }
