@@ -12,9 +12,9 @@ val localDescription: String = file("${projectDir}/description.html").readText(C
 plugins {
     id("java")
     id("org.jetbrains.intellij.platform") version "2.18.1"
-    id("org.jetbrains.kotlin.jvm") version "2.3.0"
+    id("org.jetbrains.kotlin.jvm") version "2.3.20"
     id("org.jetbrains.changelog") version "2.5.0"
-    kotlin("plugin.serialization") version "2.3.0"
+    kotlin("plugin.serialization") version "2.3.20"
 }
 
 group = "io.xmake"
@@ -23,6 +23,12 @@ repositories {
     mavenCentral()
     intellijPlatform {
         defaultRepositories()
+    }
+}
+
+configurations.configureEach {
+    if (name.endsWith("RuntimeClasspath", ignoreCase = true)) {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
     }
 }
 
@@ -58,7 +64,7 @@ intellijPlatform {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     intellijPlatform {
         clion(runIdeVersion) { useCache }
         bundledPlugin("com.intellij.nativeDebug")
