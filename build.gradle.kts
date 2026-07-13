@@ -9,9 +9,9 @@ val localDescription: String = file("${projectDir}/description.html").readText(C
 
 plugins {
     id("java")
-    id("org.jetbrains.intellij.platform") version "2.7.2"
+    id("org.jetbrains.intellij.platform") version "2.18.1"
     id("org.jetbrains.kotlin.jvm") version "2.3.0"
-    id("org.jetbrains.changelog") version "2.2.0"
+    id("org.jetbrains.changelog") version "2.5.0"
     kotlin("plugin.serialization") version "2.3.0"
 }
 
@@ -46,7 +46,7 @@ intellijPlatform {
     pluginVerification {
         ides {
             create(IntelliJPlatformType.CLion, properties("runIdeVersion")) {}
-            create(IntelliJPlatformType.IntellijIdeaCommunity, "2024.3") {}
+            create(IntelliJPlatformType.IntellijIdeaCommunity, properties("runIdeVersion")) {}
         }
     }
 }
