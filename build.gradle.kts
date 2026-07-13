@@ -1,7 +1,9 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
-fun properties(key: String) = project.findProperty(key).toString()
+val pluginVersion = providers.gradleProperty("pluginVersion")
+val pluginSinceBuild = providers.gradleProperty("pluginSinceBuild")
+val runIdeVersion = providers.gradleProperty("runIdeVersion")
 
 // read local workspace file to string
 val localChangeNotes: String = file("${projectDir}/change-notes.html").readText(Charsets.UTF_8)
@@ -24,31 +26,41 @@ repositories {
     }
 }
 
+kotlin {
+    jvmToolchain(21)
+}
+
 intellijPlatform {
+    buildSearchableOptions.set(false)
+
     pluginConfiguration {
-        version = properties("pluginVersion")
+        version = pluginVersion
         changeNotes = localChangeNotes
         description = localDescription
         ideaVersion {
-            sinceBuild = properties("pluginSinceBuild")
+            sinceBuild = pluginSinceBuild
         }
     }
 
-    dependencies {
-        // Default to CLion for development
-        intellijPlatform {
-            clion(properties("runIdeVersion"))
-            bundledPlugin("com.intellij.nativeDebug")
-            testFramework(TestFrameworkType.Platform)
-        }
+    caching.ides {
+        enabled = true
+        path = layout.projectDirectory.dir(".intellijPlatform/ides")
     }
-    
-    pluginVerification {
-        ides {
-            create(IntelliJPlatformType.CLion, properties("runIdeVersion")) {}
-            create(IntelliJPlatformType.IntellijIdeaCommunity, properties("runIdeVersion")) {}
-        }
+    pluginVerification.ides {
+        create(IntelliJPlatformType.CLion, runIdeVersion)
+        create(IntelliJPlatformType.IntellijIdea, runIdeVersion)
     }
+}
+
+dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+    intellijPlatform {
+        clion(runIdeVersion) { useCache }
+        bundledPlugin("com.intellij.nativeDebug")
+        testFramework(TestFrameworkType.Platform)
+    }
+    testImplementation("io.mockk:mockk:1.13.12")
+    testImplementation("junit:junit:4.13.2")
 }
 
 tasks {
@@ -58,18 +70,7 @@ tasks {
     }
 }
 
-// Disable buildSearchableOptions (due to CLion traverseUI issues)
-tasks.matching { task -> task.name.contains("buildSearchableOptions") }.configureEach {
-    enabled = false
-}
-
-dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
-    testImplementation("io.mockk:mockk:1.13.12")
-    testImplementation("junit:junit:4.13.2")
-}
-
-// Add compilation order dependency - build clion-debug first
+// Keep the existing CLion debug jar packaging until it is migrated to a plugin module.
 tasks.named("compileKotlin") {
     dependsOn(":clion-debug:build", ":clion-debug:copyToPluginResources")
 }
@@ -78,7 +79,6 @@ tasks.named("build") {
     dependsOn(":clion-debug:build", ":clion-debug:copyToPluginResources")
 }
 
-// Also ensure all CLion tasks complete before main plugin compilation
 tasks.named("classes") {
     dependsOn(":clion-debug:build", ":clion-debug:copyToPluginResources")
 }
@@ -90,12 +90,3 @@ tasks.named("processResources") {
 tasks.named("jar") {
     dependsOn(":clion-debug:build", ":clion-debug:copyToPluginResources")
 }
-
-val Project.dependencyCachePath
-    get(): String {
-        val cachePath = file("${rootProject.projectDir}/deps")
-        if (!cachePath.exists()) {
-            cachePath.mkdirs()
-        }
-        return cachePath.absolutePath
-    }
