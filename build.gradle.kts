@@ -47,8 +47,13 @@ intellijPlatform {
         path = layout.projectDirectory.dir(".intellijPlatform/ides")
     }
     pluginVerification.ides {
-        create(IntelliJPlatformType.CLion, runIdeVersion)
-        create(IntelliJPlatformType.IntellijIdea, runIdeVersion)
+        select {
+            types = listOf(
+                IntelliJPlatformType.CLion,
+                IntelliJPlatformType.IntellijIdea
+            )
+            sinceBuild = pluginSinceBuild
+        }
     }
 }
 

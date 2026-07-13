@@ -28,7 +28,7 @@ intellijPlatform {
 
 dependencies {
     intellijPlatform {
-        clion("2026.1.1")
+        clion(providers.gradleProperty("runIdeVersion"))
         bundledPlugin("com.intellij.nativeDebug")
     }
 }
