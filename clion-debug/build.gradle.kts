@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.3.0"
+    kotlin("jvm") version "2.3.20"
     id("org.jetbrains.intellij.platform") version "2.18.1"
 }
 
@@ -10,6 +10,12 @@ repositories {
     mavenCentral()
     intellijPlatform {
         defaultRepositories()
+    }
+}
+
+configurations.configureEach {
+    if (name.endsWith("RuntimeClasspath", ignoreCase = true)) {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
     }
 }
 
