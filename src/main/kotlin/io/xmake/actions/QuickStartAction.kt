@@ -30,6 +30,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.wm.ToolWindowManager
@@ -56,6 +57,8 @@ class QuickStartAction : AnAction() {
 
         // the project
         val project = e.project ?: return
+
+        FileDocumentManager.getInstance().saveAllDocuments()
 
         if (!SystemUtils.isXMakeProject(project)) {
             val xmakePath = project.activatedToolkit?.path ?: "xmake"

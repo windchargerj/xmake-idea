@@ -29,6 +29,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.runWriteAction
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.VirtualFileManager
 import io.xmake.project.toolkit.activatedToolkit
 import io.xmake.project.xmakeConsoleView
@@ -42,6 +43,8 @@ class UpdateCompileCommandsAction : XMakeBaseAction() {
     override fun actionPerformed(e: AnActionEvent) {
         // the project
         val project = e.project ?: return
+
+        FileDocumentManager.getInstance().saveAllDocuments()
 
         // clear console first
         project.xmakeConsoleView.clear()

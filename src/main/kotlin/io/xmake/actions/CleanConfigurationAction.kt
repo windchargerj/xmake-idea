@@ -25,6 +25,7 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import io.xmake.project.xmakeConsoleView
 import io.xmake.shared.xmakeConfiguration
 import io.xmake.utils.SystemUtils
@@ -36,6 +37,8 @@ class CleanConfigurationAction : XMakeBaseAction() {
 
         // the project
         val project = e.project ?: return
+
+        FileDocumentManager.getInstance().saveAllDocuments()
 
         // clear console first
         project.xmakeConsoleView.clear()
