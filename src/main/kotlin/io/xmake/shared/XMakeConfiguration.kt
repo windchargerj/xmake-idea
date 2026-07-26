@@ -198,4 +198,4 @@ val Project.xmakeConfiguration: XMakeConfiguration
         ?: error("Failed to get XMakeConfiguration for $this")
 
 val Project.xmakeConfigurationOrNull: XMakeConfiguration?
-    get() = this.getService(XMakeConfiguration::class.java) ?: null
+    get() = this.getService(XMakeConfiguration::class.java)

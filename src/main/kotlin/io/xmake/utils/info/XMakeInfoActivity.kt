@@ -40,7 +40,7 @@ class XMakeInfoActivity : ProjectActivity {
             manager.probeXMakeApis(it)
         }
 
-        ApplicationManager.getApplication().messageBus.connect()
+        ApplicationManager.getApplication().messageBus.connect(project)
             .subscribe(
                 ToolkitChangedNotifier.TOOLKIT_CHANGED_TOPIC,
                 object : ToolkitChangedNotifier {

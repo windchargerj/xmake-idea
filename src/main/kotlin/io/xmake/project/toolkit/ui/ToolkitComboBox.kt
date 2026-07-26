@@ -52,7 +52,7 @@ class ToolkitComboBox(toolkitProperty: KMutableProperty0<Toolkit?>) : ComboBox<T
         private set
 
     override fun getItem(): ToolkitListItem? {
-        return model.selectedItem ?: null
+        return model.selectedItem
     }
 
     override fun setItem(anObject: ToolkitListItem?) {
@@ -263,5 +263,4 @@ class ToolkitComboBox(toolkitProperty: KMutableProperty0<Toolkit?>) : ComboBox<T
     }
 
 }
-
 

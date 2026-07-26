@@ -24,16 +24,12 @@ import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.execution.configuration.EnvironmentVariablesComponent
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.util.messages.MessageBusConnection
-import com.intellij.ui.PopupMenuListenerAdapter
 import com.intellij.ui.RawCommandLineEditor
 import com.intellij.ui.EditorTextField
-import com.intellij.openapi.editor.EditorSettings
-import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.CheckBox
 import com.intellij.ui.dsl.builder.AlignX
@@ -55,6 +51,7 @@ import io.xmake.debug.DapDriverDetector
 import io.xmake.utils.info.XMakeInfoManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.Dimension
 import javax.swing.DefaultComboBoxModel
@@ -69,12 +66,10 @@ class XMakeRunConfigurationEditor(
 ) : SettingsEditor<XMakeRunConfiguration>() {
 
     private val scope = CoroutineScope(Dispatchers.Default)
-
-    private var messageBusConnection: MessageBusConnection? = null
+    private val messageBusConnection: MessageBusConnection = project.messageBus.connect()
 
     init {
-        messageBusConnection = project.messageBus.connect()
-        messageBusConnection!!.subscribe(XMakeInfoManager.XMAKE_INFO_TOPIC, object : XMakeInfoManager.XMakeInfoListener {
+        messageBusConnection.subscribe(XMakeInfoManager.XMAKE_INFO_TOPIC, object : XMakeInfoManager.XMakeInfoListener {
             override fun onXMakeInfoUpdated(xmakeInfo: XMakeInfo) {
                 SwingUtilities.invokeLater {
                     updateComboBoxes()
@@ -89,7 +84,8 @@ class XMakeRunConfigurationEditor(
     }
 
     override fun disposeEditor() {
-        messageBusConnection?.disconnect()
+        scope.cancel()
+        messageBusConnection.disconnect()
         super.disposeEditor()
     }
 
