@@ -63,19 +63,6 @@ import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.event.PopupMenuEvent
 
-private fun createEnvironmentVariablesComponent(project: Project): EnvironmentVariablesComponent {
-    // 2026.2 adds the Project constructor and deprecates the 2026.1 no-arg constructor.
-    return try {
-        EnvironmentVariablesComponent::class.java
-            .getConstructor(Project::class.java)
-            .newInstance(project)
-    } catch (_: Exception) {
-        EnvironmentVariablesComponent::class.java
-            .getConstructor()
-            .newInstance()
-    }
-}
-
 class XMakeRunConfigurationEditor(
     private val project: Project,
     private val runConfiguration: XMakeRunConfiguration,
@@ -200,7 +187,7 @@ class XMakeRunConfigurationEditor(
 
     private val runArguments = RawCommandLineEditor()
 
-    private val environmentVariables = createEnvironmentVariablesComponent(project)
+    private val environmentVariables = EnvironmentVariablesComponent(project)
 
     private val workingDirectoryBrowser = DirectoryBrowser(project).apply { text = runConfiguration.runWorkingDir }
 

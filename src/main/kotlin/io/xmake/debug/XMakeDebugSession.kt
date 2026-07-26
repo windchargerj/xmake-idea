@@ -49,7 +49,6 @@ import io.xmake.utils.execute.runProcess
 import io.xmake.utils.Logger
 import kotlinx.coroutines.runBlocking
 import java.io.File
-import java.lang.reflect.InvocationTargetException
 
 /**
  * Manages XMake debugging session creation and lifecycle
@@ -261,34 +260,11 @@ class XMakeDebugSession(
     }
 
     private fun startDebugSession(starter: XDebugProcessStarter): com.intellij.execution.ui.RunContentDescriptor? {
-        try {
-            val manager = XDebuggerManager.getInstance(project)
-            val builder = XDebuggerManager::class.java
-                .getMethod("newSessionBuilder", XDebugProcessStarter::class.java)
-                .invoke(manager, starter)
-            val builderApi = Class.forName(
-                "com.intellij.xdebugger.XDebugSessionBuilder",
-                false,
-                XDebuggerManager::class.java.classLoader
-            )
-            builderApi.getMethod("environment", ExecutionEnvironment::class.java)
-                .invoke(builder, environment)
-            val result = builderApi.getMethod("startSession").invoke(builder)
-            val resultApi = Class.forName(
-                "com.intellij.xdebugger.XSessionStartedResult",
-                false,
-                XDebuggerManager::class.java.classLoader
-            )
-            return resultApi.getMethod("getRunContentDescriptor")
-                .invoke(result) as? com.intellij.execution.ui.RunContentDescriptor
-        } catch (e: InvocationTargetException) {
-            throw e.targetException
-        } catch (e: ReflectiveOperationException) {
-            throw IllegalStateException(
-                "The current IDE does not provide the required debugger session API",
-                e
-            )
-        }
+        return XDebuggerManager.getInstance(project)
+            .newSessionBuilder(starter)
+            .environment(environment)
+            .startSession()
+            .runContentDescriptor
     }
     
     /**
