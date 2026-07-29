@@ -167,7 +167,7 @@ class XMakeRunConfiguration(
 
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
         return when (executor.id) {
-            DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugState.create(this)
+            DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugState.create(this, environment)
             DefaultRunExecutor.EXECUTOR_ID -> XMakeRunState.create(this, environment)
             else -> throw ExecutionException("Unsupported XMake executor: ${executor.id}")
         }
