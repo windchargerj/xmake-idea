@@ -30,6 +30,8 @@ import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.annotations.XCollection
 import io.xmake.project.toolkit.ToolkitHostType.SSH
+import io.xmake.project.toolkit.ToolkitHostScan.Completed
+import io.xmake.project.toolkit.ToolkitHostScan.Failed
 import io.xmake.utils.Logger
 import io.xmake.utils.extension.ToolkitHostExtension
 import kotlinx.coroutines.CancellationException
@@ -79,16 +81,20 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
     }
 
     private suspend fun detectToolkits(project: Project?) {
-        val detectedIds = mutableSetOf<String>()
         try {
-            detector.detect(project).collect { detectedToolkit ->
-                val toolkit = reconcileDetectedToolkit(detectedToolkit)
-                rememberDetectedToolkit(project, toolkit)
-                detectedIds.add(toolkit.id)
-                publishToolkitChanged(project, toolkit)
-                Logger.i(TAG, "toolkit added: $toolkit")
+            detector.detect(project).collect { scan ->
+                when (scan) {
+                    is Completed -> replaceDetectedToolkits(project, scan.host, scan.toolkits).forEach { toolkit ->
+                        publishToolkitChanged(project, toolkit)
+                        Logger.i(TAG, "toolkit added: $toolkit")
+                    }
+                    is Failed -> Logger.w(
+                        TAG,
+                        "Keeping previous toolkits for ${scan.host.endpointIdentity}: " +
+                            (scan.cause.message ?: "detection failed"),
+                    )
+                }
             }
-            retainDetectedToolkits(project, detectedIds)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -173,15 +179,18 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
     /** All toolkits known to the registry: detected installations plus registered ones. */
     internal fun getKnownToolkits(project: Project?): List<Toolkit> = synchronized(stateLock) {
         linkedMapOf<String, Toolkit>().apply {
+            globalDetectedToolkits.values
+                .filter(::isAvailableToolkit)
+                .forEach { toolkit -> put(toolkit.id, toolkit) }
+            project?.let { currentProject ->
+                detectedToolkitsByProject[currentProject]
+                    ?.values
+                    ?.filter(::isAvailableToolkit)
+                    ?.forEach { toolkit -> put(toolkit.id, toolkit) }
+            }
             storage.registeredToolkits
                 .filter(::isAvailableToolkit)
                 .forEach { toolkit -> put(toolkit.id, toolkit) }
-            globalDetectedToolkits.values.forEach { toolkit -> putIfAbsent(toolkit.id, toolkit) }
-            project?.let { currentProject ->
-                detectedToolkitsByProject[currentProject]?.values?.forEach { toolkit ->
-                    putIfAbsent(toolkit.id, toolkit)
-                }
-            }
         }.values.toList()
     }
 
@@ -193,10 +202,6 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
         toolkit.host.type != SSH || sshHostExtensions().any { extension ->
             extension.filterRegistered()(toolkit)
         }
-
-    private fun reconcileDetectedToolkit(toolkit: Toolkit): Toolkit = synchronized(stateLock) {
-        updateRegisteredToolkit(toolkit) ?: toolkit
-    }
 
     /** Pushes the loaded host target and validity back into the registered copy. */
     private fun applyLoadedHostTarget(toolkit: Toolkit): Toolkit? = synchronized(stateLock) {
@@ -237,16 +242,30 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
     private fun findRegisteredToolkitByIdUnlocked(id: String): Toolkit? =
         storage.registeredToolkits.find { toolkit -> toolkit.id == id }
 
-    private fun rememberDetectedToolkit(project: Project?, toolkit: Toolkit) = synchronized(stateLock) {
-        val toolkits = detectedToolkits(project)
-        toolkits.entries.removeIf { (id, knownToolkit) ->
-            id != toolkit.id && knownToolkit.hasSameInstallationAs(toolkit)
+    private fun replaceDetectedToolkits(
+        project: Project?,
+        host: ToolkitHost,
+        detected: List<Toolkit>,
+    ): List<Toolkit> = synchronized(stateLock) {
+        val detectedToolkits = detectedToolkits(project)
+        val previousToolkits = detectedToolkits.values
+            .filter { toolkit -> toolkit.host.endpointIdentity == host.endpointIdentity }
+        val replacements = linkedMapOf<String, Toolkit>()
+        val changedToolkits = mutableListOf<Toolkit>()
+        detected.forEach { detectedToolkit ->
+            val resolvedToolkit = updateRegisteredToolkit(detectedToolkit) ?: detectedToolkit
+            val toolkit = previousToolkits
+                .firstOrNull { previous -> previous.hasSameInstallationAs(resolvedToolkit) }
+                ?.takeIf { previous -> previous.hasSameResolvedStateAs(resolvedToolkit) }
+                ?: resolvedToolkit.also(changedToolkits::add)
+            replacements[toolkit.id] = toolkit
         }
-        toolkits[toolkit.id] = toolkit
-    }
-
-    private fun retainDetectedToolkits(project: Project?, detectedIds: Set<String>) = synchronized(stateLock) {
-        detectedToolkits(project).keys.retainAll(detectedIds)
+        val hostIdentity = host.endpointIdentity
+        detectedToolkits.apply {
+            entries.removeIf { (_, toolkit) -> toolkit.host.endpointIdentity == hostIdentity }
+            putAll(replacements)
+        }
+        changedToolkits
     }
 
     private fun detectedToolkits(project: Project?): MutableMap<String, Toolkit> =
