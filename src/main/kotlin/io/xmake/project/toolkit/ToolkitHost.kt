@@ -24,54 +24,58 @@ import com.intellij.execution.wsl.WSLDistribution
 import com.intellij.execution.wsl.WslDistributionManager
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
-import com.intellij.util.system.OS
 import com.intellij.util.xmlb.annotations.Attribute
 import com.intellij.util.xmlb.annotations.Tag
 import io.xmake.project.toolkit.ToolkitHostType.*
 import io.xmake.utils.extension.ToolkitHostExtension
-import kotlinx.coroutines.coroutineScope
 
 @Tag("toolkitHost")
 data class ToolkitHost(
     @Attribute
     val type: ToolkitHostType = LOCAL,
+    @Attribute
+    val id: String? = null,
 ) {
-
-    private val EP_NAME: ExtensionPointName<ToolkitHostExtension> =
-        ExtensionPointName("io.xmake.toolkitHostExtension")
-
-    constructor(type: ToolkitHostType, target: Any? = null) : this(type) {
+    constructor(type: ToolkitHostType, target: Any) : this(type = type, id = targetId(type, target)) {
         this.target = target
-        this.id = when (type) {
-            LOCAL -> OS.CURRENT.name
-            WSL -> (target as WSLDistribution).id
-            SSH -> EP_NAME.extensions.first { it.KEY == "SSH" }.getTargetId(target)
-        }
     }
 
     @Transient
     var target: Any? = null
 
-    @Attribute
-    var id: String? = null
+    internal val endpointIdentity: String
+        get() = if (type == LOCAL) LOCAL.name else "$type:${id.orEmpty()}"
 
     suspend fun loadTarget(project: Project? = null) {
         when (type) {
             LOCAL -> {}
             WSL -> loadWslTarget()
             SSH -> {
-                with(EP_NAME.extensions.first { it.KEY == "SSH" }) {
+                with(HOST_EXTENSIONS.extensions.firstOrNull { it.KEY == "SSH" } ?: return) {
                     loadTargetX(project)
                 }
             }
         }
     }
 
-    private suspend fun loadWslTarget() = coroutineScope {
-        target = WslDistributionManager.getInstance().installedDistributions.find { it.id == id }!!
+    private fun loadWslTarget() {
+        target = WslDistributionManager.getInstance().installedDistributions.find { it.id == id }
     }
 
     override fun toString(): String {
         return "ToolkitHost(type=$type, id=$id)"
+    }
+
+    companion object {
+        private val HOST_EXTENSIONS: ExtensionPointName<ToolkitHostExtension> =
+            ExtensionPointName("io.xmake.toolkitHostExtension")
+
+        private fun targetId(type: ToolkitHostType, target: Any): String = when (type) {
+            LOCAL -> LOCAL.name
+            WSL -> (target as WSLDistribution).id
+            SSH -> HOST_EXTENSIONS.extensions
+                .first { it.KEY == "SSH" }
+                .getTargetId(target)
+        }
     }
 }
