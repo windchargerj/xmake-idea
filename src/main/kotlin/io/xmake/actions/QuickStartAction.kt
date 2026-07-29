@@ -120,7 +120,7 @@ class QuickStartAction : XMakeProjectAction() {
     private fun findLocalToolkit(): Toolkit {
         val manager = ToolkitManager.getInstance()
         val preferred = manager.state.lastSelectedToolkitId
-            ?.let(manager::findRegisteredToolkitById)
+            ?.let(manager::registeredToolkitSnapshot)
             ?.takeUnless(Toolkit::isOnRemote)
         return preferred
             ?: manager.getRegisteredToolkits().firstOrNull { !it.isOnRemote }

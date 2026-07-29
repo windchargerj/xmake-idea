@@ -36,6 +36,7 @@ import com.intellij.openapi.observable.properties.ObservableProperty
 import com.intellij.openapi.observable.util.*
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootModificationUtil
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.ui.getCanonicalPath
 import com.intellij.openapi.ui.shortenTextWithEllipsis
@@ -82,7 +83,9 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
     override val kindsProperty: GraphProperty<String> =
         propertyGraph.lazyProperty { kindsModel.selectedItem.toString() }
     override val toolkitProperty: GraphProperty<Toolkit?> = propertyGraph.lazyProperty {
-        toolkitManager.state.lastSelectedToolkitId?.let { toolkitManager.findRegisteredToolkitById(it) }
+        toolkitManager.state.lastSelectedToolkitId
+            ?.let(toolkitManager::registeredToolkitSnapshot)
+            ?: toolkitManager.getRegisteredToolkits().firstOrNull()
     }
     private val isOnRemoteProperty: GraphProperty<Boolean> =
         propertyGraph.lazyProperty { toolkit?.isOnRemote == true }
@@ -123,7 +126,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
     }
 
     private val browser = DirectoryBrowser(context.project)
-    private val toolkitComboBox = ToolkitComboBox(::toolkit)
+    private val toolkitComboBox = ToolkitComboBox(context.project, ::toolkit)
 
     override fun setupUI(builder: Panel) {
         val locationProperty = remotePathProperty.joinCanonicalPath(nameProperty)
@@ -146,7 +149,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
                         }
                         isOnRemote = toolkit?.isOnRemote == true
                     }
-                    activatedToolkit?.let { browser.addBrowserListenerByToolkit(it) }
+                    selectedToolkit?.let { browser.addBrowserListenerByToolkit(it) }
                 }
                     .validationRequestor(WHEN_PROPERTY_CHANGED(toolkitProperty))
                     .validationOnInput(CHECK_NON_EMPTY_TOOLKIT.forToolkitComboBox())
@@ -279,6 +282,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
     }
 
     init {
+        Disposer.register(context.disposable, toolkitComboBox)
         data.putUserData(XMakeNewProjectWizardData.KEY, this)
     }
 

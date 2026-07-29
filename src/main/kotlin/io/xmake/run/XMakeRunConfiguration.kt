@@ -128,7 +128,7 @@ class XMakeRunConfiguration(
         XmlSerializer.deserializeInto(this, element)
         runEnvironment = EnvironmentVariablesData.readExternal(element)
         runToolkit = runToolkit?.let { toolkit ->
-            ToolkitManager.getInstance().findRegisteredToolkitById(toolkit.id)
+            ToolkitManager.getInstance().registeredToolkitSnapshot(toolkit.id)
         }
         // Todo: Optimize to avoid probing delay.
         XMakeInfoManager.getInstance(project).probeXMakeInfo(runToolkit)

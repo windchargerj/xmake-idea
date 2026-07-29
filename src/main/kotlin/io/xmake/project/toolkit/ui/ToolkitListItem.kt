@@ -20,8 +20,6 @@
  */
 package io.xmake.project.toolkit.ui
 
-import com.intellij.execution.configurations.RuntimeConfigurationError
-import com.intellij.openapi.actionSystem.AnAction
 import io.xmake.icons.XMakeIcons
 import io.xmake.project.toolkit.Toolkit
 import javax.swing.Icon
@@ -34,16 +32,13 @@ open class ToolkitListItem(
     var caption: String? = null,
     var isCaptionVisible: Boolean = false,
     var icon: Icon? = null,
-) {
+) : Comparable<ToolkitListItem> {
 
-    infix operator fun compareTo(other: ToolkitListItem): Int {
-        return if (this is ToolkitItem && other is ToolkitItem) {
-            return this compareTo other
-        } else if (this is NoneItem || other is NoneItem) {
-            compareValuesBy(this, other) { it.id }
-        } else {
-            return compareValuesBy(this, other) { it.text }
-        }
+    override fun compareTo(other: ToolkitListItem): Int = when {
+        this is NoneItem && other is NoneItem -> 0
+        this is NoneItem -> -1
+        other is NoneItem -> 1
+        else -> compareValuesBy(this, other) { it.id }
     }
 
     class NoneItem : ToolkitListItem(id = "", text = "None")
@@ -57,36 +52,27 @@ open class ToolkitListItem(
         true,
         XMakeIcons.XMAKE
     ) {
-        infix operator fun compareTo(other: ToolkitItem): Int {
-            return compareValuesBy(this, other,
-                { if (it.caption == "Registered") -1 else it.toolkit.host.type.ordinal },
+        override fun compareTo(other: ToolkitListItem): Int = when (other) {
+            is NoneItem -> 1
+            is ToolkitItem -> compareValuesBy(
+                this, other,
+                { !it.toolkit.isRegistered },
                 { it.toolkit.host.type.ordinal },
-                { it.toolkit.path }
+                { it.toolkit.path },
             )
+            else -> super.compareTo(other)
         }
 
         fun asRegistered(): ToolkitItem {
-            if (this.toolkit.isRegistered)
-                return this.apply { caption = "Registered" }
-            else
-                throw RuntimeConfigurationError("Toolkit is not registered!")
+            require(toolkit.isRegistered) { "Toolkit is not registered" }
+            caption = "Registered"
+            if (!toolkit.isValid) asInvalid()
+            return this
         }
 
         fun asInvalid(): ToolkitItem {
             return this.apply { tertiaryText = "Invalid" }
         }
 
-        fun asCurrent(): ToolkitItem {
-            return this.apply { caption = "Current" }
-        }
     }
-
-    enum class ActionRole { DOWNLOAD, ADD }
-
-    class ActionItem(
-        id: String,
-        name: String,
-        private val role: ActionRole,
-        private val action: AnAction,
-    ) : ToolkitListItem(id, name,) {}
 }

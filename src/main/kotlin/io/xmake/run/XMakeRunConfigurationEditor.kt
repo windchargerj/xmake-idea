@@ -179,7 +179,7 @@ class XMakeRunConfigurationEditor(
     }
 
     private var toolkit: Toolkit? = runConfiguration.runToolkit
-    private val toolkitComboBox = ToolkitComboBox(::toolkit)
+    private val toolkitComboBox = ToolkitComboBox(project, ::toolkit)
 
     // the targets ui
     private val targetsModel = DefaultComboBoxModel<String>()
@@ -408,7 +408,7 @@ class XMakeRunConfigurationEditor(
                         XMakeInfoManager.getInstance(project).probeXMakeInfo(it)
                     }
                 }
-                activatedToolkit?.let {
+                selectedToolkit?.let {
                     workingDirectoryBrowser.addBrowserListenerByToolkit(it)
                     buildDirectoryBrowser.addBrowserListenerByToolkit(it)
                     androidNDKDirectoryBrowser.addBrowserListenerByToolkit(it)
@@ -533,7 +533,7 @@ class XMakeRunConfigurationEditor(
 
         row("Sync Directory:") {
             button("Upload") {
-                toolkitComboBox.activatedToolkit?.let { toolkit ->
+                toolkitComboBox.selectedToolkit?.let { toolkit ->
                     val workingDirectoryPath = WorkingDirectoryResolver.resolve(
                         project,
                         workingDirectoryBrowser.text,

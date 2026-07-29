@@ -50,6 +50,9 @@ data class Toolkit(
     val isOnRemote: Boolean
         get() = with(host) { type == ToolkitHostType.WSL || type == ToolkitHostType.SSH }
 
+    internal fun hasSameInstallationAs(other: Toolkit): Boolean =
+        host.endpointIdentity == other.host.endpointIdentity && path == other.path
+
     companion object {
         private fun createId(host: ToolkitHost, path: String): String {
             val identity = "xmake-toolkit-v2\u0000${host.endpointIdentity}\u0000$path"
