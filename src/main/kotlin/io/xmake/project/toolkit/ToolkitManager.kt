@@ -20,7 +20,6 @@
  */
 package io.xmake.project.toolkit
 
-import com.intellij.execution.RunManager
 import com.intellij.execution.processTools.getBareExecutionResult
 import com.intellij.execution.wsl.WSLDistribution
 import com.intellij.execution.wsl.WSLUtil
@@ -33,8 +32,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.util.system.OS
 import com.intellij.util.xmlb.annotations.XCollection
+import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.project.toolkit.ToolkitHostType.*
-import io.xmake.run.XMakeRunConfiguration
 import io.xmake.utils.execute.*
 import io.xmake.utils.extension.ToolkitHostExtension
 import io.xmake.utils.Logger
@@ -276,12 +275,7 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
     fun unregisterToolkit(toolkit: Toolkit) {
         if(state.registeredToolkits.remove(toolkit)) {
             ProjectManager.getInstance().openProjects.forEach { project ->
-                RunManager.getInstance(project).allConfigurationsList.forEach {
-                    if (it is XMakeRunConfiguration) {
-                        if (it.runToolkit?.id == toolkit.id)
-                            it.runToolkit = null
-                    }
-                }
+                project.xmakeBuildProfiles.clearToolkit(toolkit.id)
             }
         }
     }
