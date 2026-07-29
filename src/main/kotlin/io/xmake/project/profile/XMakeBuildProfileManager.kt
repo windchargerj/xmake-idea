@@ -26,7 +26,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitListener
-import io.xmake.project.toolkit.ToolkitManager
 
 @Service(Service.Level.PROJECT)
 @State(name = "XMakeBuildProfiles", storages = [Storage("xmake.xml")])
@@ -110,12 +109,7 @@ class XMakeBuildProfileManager(private val project: Project) :
 
     private fun ensureProfiles(): MutableList<XMakeBuildProfile> {
         if (profileState.profiles.isEmpty()) {
-            profileState.profiles.add(
-                XMakeBuildProfile(
-                    toolkitId = ToolkitManager.getInstance().getRegisteredToolkits().firstOrNull()?.id,
-                    workingDirectory = project.basePath.orEmpty(),
-                ),
-            )
+            profileState.profiles.add(XMakeBuildProfile.defaultFor(project))
         }
         return profileState.profiles
     }

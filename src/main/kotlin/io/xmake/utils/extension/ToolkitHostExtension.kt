@@ -50,5 +50,7 @@ interface ToolkitHostExtension {
 
     fun DirectoryBrowser.createBrowseListener(host: ToolkitHost): ActionListener
 
+    suspend fun prepareProjectDirectory(project: Project, host: ToolkitHost): String? = null
+
     fun GeneralCommandLine.createProcess(host: ToolkitHost): Process
 }

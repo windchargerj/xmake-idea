@@ -168,6 +168,21 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
         }
     }
 
+    override suspend fun prepareProjectDirectory(project: Project, host: ToolkitHost): String {
+        val sshConfig = host.requireSshConfig()
+        return runInterruptible(Dispatchers.IO) {
+            connectionBuilder(sshConfig)
+                .openFailSafeSftpChannel()
+                .use { channel ->
+                    val workspaceRoot = remoteChild(channel.home, ".xmake-idea")
+                    val projectDirectory = remoteChild(workspaceRoot, project.locationHash)
+                    channel.ensureDirectory(workspaceRoot)
+                    channel.ensureDirectory(projectDirectory)
+                    projectDirectory
+                }
+        }
+    }
+
     override fun GeneralCommandLine.createProcess(host: ToolkitHost): Process {
         val sshConfig = host.requireSshConfig()
         Log.info("commandOnRemote: $commandLineString")
@@ -188,6 +203,14 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
         target as? SshConfig
             ?: error("SSH toolkit host is unavailable: ${id.orEmpty()}")
 
+    private fun SftpChannel.ensureDirectory(path: String) {
+        try {
+            lstat(path)
+        } catch (_: SftpChannelNoSuchFileException) {
+            mkdir(path)
+        }
+    }
+
     private fun SftpChannel.requireSafeSyncDestination(path: String) {
         val destination = runCatching { canonicalize(path) }
             .getOrDefault(path)
@@ -197,6 +220,9 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
             "Refusing to replace unsafe SSH sync directory: $path"
         }
     }
+
+    private fun remoteChild(parent: String, child: String): String =
+        if (parent == "/") "/$child" else "${parent.trimEnd('/')}/$child"
 
     companion object {
         private val Log = logger<SshToolkitHostExtensionImpl>()

@@ -87,6 +87,19 @@ data class XMakeBuildProfile(
     }
 
     companion object {
+        internal fun defaultFor(project: Project, name: String = "Default"): XMakeBuildProfile {
+            val toolkit = ToolkitManager.getInstance().getRegisteredToolkits(project).firstOrNull()
+            return XMakeBuildProfile(
+                name = name,
+                toolkitId = toolkit?.id,
+                workingDirectory = if (toolkit?.host?.type == ToolkitHostType.SSH) {
+                    ""
+                } else {
+                    project.basePath.orEmpty()
+                },
+            )
+        }
+
         internal fun isValidId(id: String): Boolean = PROFILE_ID.matches(id)
 
         private val PROFILE_ID = Regex("[A-Za-z0-9_-]+")
