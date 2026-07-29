@@ -1,0 +1,130 @@
+/*!A Xmake integration in IntelliJ IDEA/Clion
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2015-present, Xmake Open Source Community.
+ */
+package io.xmake.run.command
+
+import com.intellij.execution.ExecutionException
+import com.intellij.execution.process.KillableColoredProcessHandler
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.process.ProcessListener
+import com.intellij.execution.process.ProcessOutputType
+import com.intellij.execution.process.ProcessTerminatedListener
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Key
+import io.xmake.shared.XMakeProblem
+import io.xmake.utils.SystemUtils.parseProblem
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.nio.file.InvalidPathException
+import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+internal fun XMakeCommand.createProcessHandler(
+    project: Project,
+    options: XMakeConsoleOptions = XMakeConsoleOptions(),
+    onTextAvailable: (String, Key<*>) -> Unit = { _, _ -> },
+    onProblems: (List<XMakeProblem>) -> Unit = {},
+): ProcessHandler {
+    val process = try {
+        createProcess(project)
+    } catch (error: Exception) {
+        throw ExecutionException("Failed to start XMake command: ${commandLine.commandLineString}", error)
+    }
+    return try {
+        val handler = KillableColoredProcessHandler(process, commandLine.commandLineString, Charsets.UTF_8)
+        val output = if (options.showProblems) StringBuilder() else null
+
+        handler.addProcessListener(object : ProcessListener {
+            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
+                onTextAvailable(event.text, outputType)
+                if (
+                    output != null &&
+                    (ProcessOutputType.isStdout(outputType) || ProcessOutputType.isStderr(outputType))
+                ) {
+                    output.append(event.text)
+                }
+            }
+        })
+
+        if (output != null) {
+            handler.addProcessListener(object : ProcessListener {
+                override fun processTerminated(event: ProcessEvent) {
+                    onProblems(parseProblems(output, workingDirectory))
+                }
+            })
+        }
+        if (options.showExitCode) {
+            ProcessTerminatedListener.attach(handler, project)
+        }
+        handler
+    } catch (error: Throwable) {
+        runCatching { process.destroyForcibly() }
+            .exceptionOrNull()
+            ?.let(error::addSuppressed)
+        throw ExecutionException("Failed to prepare XMake command: ${commandLine.commandLineString}", error)
+    }
+}
+
+internal suspend fun ProcessHandler.awaitSuccessfulCompletion(commandLine: String) {
+    suspendCancellableCoroutine { continuation ->
+        val completed = AtomicBoolean()
+        val listener = object : ProcessListener {
+            override fun processTerminated(event: ProcessEvent) {
+                removeProcessListener(this)
+                if (!completed.compareAndSet(false, true)) return
+
+                if (event.exitCode == 0) {
+                    continuation.resume(Unit)
+                } else {
+                    continuation.resumeWithException(
+                        ExecutionException("XMake command failed with exit code ${event.exitCode}: $commandLine"),
+                    )
+                }
+            }
+        }
+        addProcessListener(listener)
+        continuation.invokeOnCancellation {
+            removeProcessListener(listener)
+            if (completed.compareAndSet(false, true)) terminateProcess()
+        }
+
+        try {
+            startNotify()
+        } catch (error: Throwable) {
+            removeProcessListener(listener)
+            terminateProcess()
+            if (completed.compareAndSet(false, true)) continuation.resumeWithException(error)
+        }
+    }
+}
+
+private fun ProcessHandler.terminateProcess() {
+    if (isProcessTerminated || isProcessTerminating) return
+    runCatching { destroyProcess() }
+}
+
+private fun parseProblems(output: CharSequence, workingDirectory: String): List<XMakeProblem> {
+    val path = try {
+        Path.of(workingDirectory)
+    } catch (_: InvalidPathException) {
+        null
+    }
+
+    return output.split(Regex("\\r\\n|\\n|\\r"))
+        .mapNotNull { parseProblem(it.trim(), path) }
+}
