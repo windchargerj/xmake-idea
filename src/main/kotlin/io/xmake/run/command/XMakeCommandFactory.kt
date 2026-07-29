@@ -119,6 +119,13 @@ internal class XMakeCommandFactory(project: Project, profile: XMakeBuildProfile)
         }
     }
 
+    fun createInfoQuery(name: String): XMakeCommand {
+        require(INFO_QUERY_NAME.matches(name)) { "Invalid XMake info query: $name" }
+        return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            args("show", "-l", name, "--json")
+        }
+    }
+
     private fun createCommand(
         environmentVariables: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT,
         environmentOverrides: Map<String, String> = emptyMap(),
@@ -138,6 +145,8 @@ internal class XMakeCommandFactory(project: Project, profile: XMakeBuildProfile)
     }
 
     private companion object {
+        val INFO_QUERY_NAME = Regex("[a-z]+")
+
         val QUERY_ENVIRONMENT = mapOf(
             "XMAKE_SKIP_HISTORY" to "1",
             "XMAKE_ROOT" to "y",

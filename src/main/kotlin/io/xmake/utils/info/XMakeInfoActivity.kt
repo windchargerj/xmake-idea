@@ -20,35 +20,38 @@
  */
 package io.xmake.utils.info
 
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.execution.ExecutionTargetListener
+import com.intellij.execution.ExecutionTargetManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
-import io.xmake.project.toolkit.Toolkit
-import io.xmake.project.toolkit.ToolkitListener
-import io.xmake.project.toolkit.activatedToolkit
-
-import io.xmake.project.toolkit.ToolkitManager
+import io.xmake.project.profile.XMakeBuildProfileManager
+import io.xmake.run.target.activeXMakeBuildProfile
+import io.xmake.run.target.xmakeBuildProfile
+import io.xmake.utils.SystemUtils
 
 class XMakeInfoActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
-        // Initial probe
+        if (!SystemUtils.isXMakeProject(project)) return
+
         val manager = XMakeInfoManager.getInstance(project)
-        val toolkit = project.activatedToolkit ?: ToolkitManager.getInstance().getRegisteredToolkits().firstOrNull()
-        
-        toolkit?.let {
-            manager.probeXMakeInfo(it)
-            manager.probeXMakeApis(it)
+        project.activeXMakeBuildProfile.let { profile ->
+            manager.preloadBuildProfileInfo(profile)
+            manager.refreshSyntaxInfo(profile)
         }
 
-        ApplicationManager.getApplication().messageBus.connect()
-            .subscribe(
-                ToolkitListener.TOPIC,
-                object : ToolkitListener {
-                    override fun toolkitChanged(sourceProject: Project?, toolkit: Toolkit) {
-                        manager.probeXMakeInfo(toolkit)
-                        manager.probeXMakeApis(toolkit)
-                    }
+        project.messageBus.connect().apply {
+            subscribe(ExecutionTargetManager.TOPIC, ExecutionTargetListener { target ->
+                project.xmakeBuildProfile(target).let { profile ->
+                    manager.preloadBuildProfileInfo(profile)
+                    manager.refreshSyntaxInfo(profile)
                 }
-            )
+            })
+            subscribe(XMakeBuildProfileManager.TOPIC, XMakeBuildProfileManager.Listener {
+                project.activeXMakeBuildProfile.let { profile ->
+                    manager.preloadBuildProfileInfo(profile)
+                    manager.refreshSyntaxInfo(profile)
+                }
+            })
+        }
     }
 }
