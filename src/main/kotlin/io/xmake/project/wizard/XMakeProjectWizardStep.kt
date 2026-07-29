@@ -87,8 +87,8 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
         propertyGraph.lazyProperty { kindsModel.selectedItem.toString() }
     override val toolkitProperty: GraphProperty<Toolkit?> = propertyGraph.lazyProperty {
         toolkitManager.state.lastSelectedToolkitId
-            ?.let(toolkitManager::findRegisteredToolkitById)
-            ?: toolkitManager.getRegisteredToolkits().firstOrNull()
+            ?.let { id -> context.project?.let { project -> toolkitManager.resolveRegisteredToolkit(id, project) } }
+            ?: toolkitManager.getRegisteredToolkits(context.project).firstOrNull()
     }
     private val isOnRemoteProperty: GraphProperty<Boolean> =
         propertyGraph.lazyProperty { toolkit?.isOnRemote == true }

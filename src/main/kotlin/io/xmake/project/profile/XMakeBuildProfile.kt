@@ -43,8 +43,8 @@ data class XMakeBuildProfile(
     var verbose: Boolean = false,
     var additionalConfiguration: String = "",
 ) {
-    internal fun resolveToolkit(): Toolkit? =
-        toolkitId?.let(ToolkitManager.getInstance()::findRegisteredToolkitById)
+    internal fun resolveToolkit(project: Project): Toolkit? =
+        toolkitId?.let { id -> ToolkitManager.getInstance().resolveRegisteredToolkit(id, project) }
 
     internal fun resolveWorkingDirectory(project: Project, toolkit: Toolkit): String {
         if (toolkit.path.isBlank()) {

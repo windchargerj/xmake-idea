@@ -45,8 +45,10 @@ internal class XMakeCommandFactory(project: Project, profile: XMakeBuildProfile)
         }
     }
     private val commandBuilder = run {
-        val toolkit = profile.resolveToolkit()
-            ?: throw RuntimeConfigurationError("XMake toolkit is not set or is no longer registered")
+        val toolkit = profile.resolveToolkit(project)
+            ?: throw RuntimeConfigurationError(
+                "XMake toolkit is not set, is unavailable in this project, or is no longer registered",
+            )
         val workingDirectory = profile.resolveWorkingDirectory(project, toolkit)
         XMakeCommandBuilder.forBuildProfile(profile.id, toolkit, workingDirectory, configureOptions)
     }

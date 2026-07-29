@@ -47,21 +47,13 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
 
     override val KEY: String = "SSH"
 
-    private val sshConfigManager = SshConfigManager.getInstance(null)
-
     override fun getHostType(): String {
         return "SSH"
     }
 
     override fun getToolkitHosts(project: Project?): List<ToolkitHost> {
-        return sshConfigManager.configs.map {
+        return sshConfigManager(project).configs.map {
             ToolkitHost(ToolkitHostType.SSH, it)
-        }
-    }
-
-    override fun filterRegistered(): (Toolkit) -> Boolean {
-        return { toolkit ->
-            toolkit.host.id?.let(sshConfigManager::findConfigById) != null
         }
     }
 
@@ -137,7 +129,7 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
     }
 
     override suspend fun ToolkitHost.loadTargetX(project: Project?) {
-        target = id?.let(sshConfigManager::findConfigById)
+        target = id?.let(sshConfigManager(project)::findConfigById)
     }
 
     override fun getTargetId(target: Any?): String {
@@ -188,6 +180,9 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
     private fun connectionBuilder(sshConfig: SshConfig): ConnectionBuilder =
         ConnectionBuilder(sshConfig.host)
             .withSshPasswordProvider(PlatformSshPasswordProvider(sshConfig.copyToCredentials()))
+
+    private fun sshConfigManager(project: Project?): SshConfigManager =
+        SshConfigManager.getInstance(project)
 
     private fun ToolkitHost.requireSshConfig(): SshConfig =
         target as? SshConfig

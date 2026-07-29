@@ -111,7 +111,7 @@ class ToolkitComboBox(
 
             val toolkit = (event.item as? ToolkitListItem.ToolkitItem)
                 ?.toolkit
-                ?.let(toolkitManager::registerToolkit)
+                ?.let { selected -> toolkitManager.registerToolkit(selected, project) }
             if (selectedToolkit === toolkit) return@addItemListener
 
             selectedToolkit = toolkit

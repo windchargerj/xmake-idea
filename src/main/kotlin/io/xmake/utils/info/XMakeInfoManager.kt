@@ -175,7 +175,7 @@ class XMakeInfoManager(private val project: Project, private val scope: Coroutin
     }
 
     private fun buildProfileInfoKey(profile: XMakeBuildProfile): BuildProfileInfoKey? {
-        val toolkit = profile.resolveToolkit() ?: return null
+        val toolkit = profile.resolveToolkit(project) ?: return null
         val workingDirectory = try {
             profile.resolveWorkingDirectory(project, toolkit)
         } catch (_: RuntimeConfigurationError) {

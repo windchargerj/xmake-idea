@@ -35,8 +35,6 @@ interface ToolkitHostExtension {
 
     fun getToolkitHosts(project: Project? = null): List<ToolkitHost>
 
-    fun filterRegistered(): (Toolkit) -> Boolean
-
     fun createToolkit(host: ToolkitHost, path: String, version: String): Toolkit
 
     suspend fun syncProject(
