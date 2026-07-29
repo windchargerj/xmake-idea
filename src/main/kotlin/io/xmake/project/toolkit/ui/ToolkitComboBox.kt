@@ -33,8 +33,11 @@ import com.intellij.ui.SortedComboBoxModel
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitListener
 import io.xmake.project.toolkit.ToolkitManager
+import io.xmake.utils.ui.enableDynamicModelUpdates
+import io.xmake.utils.ui.notifyPopupModelChanged
 import java.awt.event.ItemEvent
 import java.util.Comparator
+import javax.swing.Timer
 import javax.swing.event.PopupMenuEvent
 import kotlin.reflect.KMutableProperty0
 
@@ -49,6 +52,11 @@ class ToolkitComboBox(
 
     private val toolkitManager = ToolkitManager.getInstance()
     private val toolkitChangedListeners = mutableListOf<(Toolkit?) -> Unit>()
+    private val popupModelRefreshTimer = Timer(POPUP_MODEL_REFRESH_DELAY_MS) {
+        if (!disposed) notifyPopupModelChanged()
+    }.apply {
+        isRepeats = false
+    }
     private var suppressSelectionEvents = false
     private var disposed = false
 
@@ -65,7 +73,7 @@ class ToolkitComboBox(
     }
 
     init {
-        isSwingPopup = true
+        enableDynamicModelUpdates()
         maximumRowCount = 30
         renderer = ToolkitComboBoxRenderer(this)
         toolkitModel.add(ToolkitListItem.NoneItem())
@@ -80,12 +88,12 @@ class ToolkitComboBox(
                 }
 
                 override fun toolkitRemoved(toolkitId: String) {
-                    onUiThread(::synchronizeToolkits)
+                    onUiThread { synchronizeToolkits() }
                 }
 
                 override fun detectionFinished(sourceProject: Project?) {
                     if (!accepts(sourceProject)) return
-                    onUiThread(::synchronizeToolkits)
+                    onUiThread { synchronizeToolkits() }
                 }
             },
         )
@@ -93,6 +101,7 @@ class ToolkitComboBox(
         addPopupMenuListener(object : PopupMenuListenerAdapter() {
             override fun popupMenuWillBecomeVisible(event: PopupMenuEvent?) {
                 synchronizeToolkits()
+                notifyPopupModelChanged()
                 toolkitManager.requestDetection(project)
             }
         })
@@ -136,26 +145,31 @@ class ToolkitComboBox(
             selectedToolkit?.let { toolkit -> putIfAbsent(toolkit.id, toolkit) }
         }
 
-        val staleItems = toolkitModel.items
-            .filterIsInstance<ToolkitListItem.ToolkitItem>()
-            .filterNot { item -> item.id in desiredToolkits }
+        var changed = false
         withoutSelectionEvents {
-            staleItems.forEach(toolkitModel::remove)
+            val staleItems = toolkitModel.items
+                .filterIsInstance<ToolkitListItem.ToolkitItem>()
+                .filterNot { item -> item.id in desiredToolkits }
+            staleItems.forEach { item ->
+                toolkitModel.remove(item)
+                changed = true
+            }
             desiredToolkits.values.forEach { toolkit ->
-                upsertToolkit(toolkit, toolkit.id !in knownToolkitIds)
+                changed = upsertToolkit(toolkit, unavailable = toolkit.id !in knownToolkitIds) || changed
             }
             selectCurrentToolkit()
         }
+        if (changed) popupModelRefreshTimer.restart()
     }
 
     private fun updateToolkit(toolkit: Toolkit) {
-        val selectedToolkitUpdated = selectedToolkit?.id == toolkit.id && selectedToolkit !== toolkit
-        if (selectedToolkitUpdated) selectedToolkit = toolkit
+        val selectedToolkitAffected = selectedToolkit?.id == toolkit.id
+        if (selectedToolkitAffected) selectedToolkit = toolkit
         synchronizeToolkits()
-        if (selectedToolkitUpdated) notifyToolkitChanged()
+        if (selectedToolkitAffected) notifyToolkitChanged()
     }
 
-    private fun upsertToolkit(toolkit: Toolkit, unavailable: Boolean) {
+    private fun upsertToolkit(toolkit: Toolkit, unavailable: Boolean): Boolean {
         val nextItem = ToolkitListItem.ToolkitItem(toolkit).apply {
             when {
                 toolkit.isRegistered -> asRegistered()
@@ -167,14 +181,20 @@ class ToolkitComboBox(
             .firstOrNull { item -> item.id == toolkit.id }
         if (currentItem == null) {
             toolkitModel.add(nextItem)
-            return
+            return true
         }
-        if (currentItem.toolkit === toolkit && currentItem.hasSamePresentationAs(nextItem)) return
+        if (
+            currentItem.toolkit.hasSameResolvedStateAs(toolkit) &&
+            currentItem.hasSamePresentationAs(nextItem)
+        ) {
+            return false
+        }
 
         val wasSelected = toolkitModel.selectedItem === currentItem
         toolkitModel.remove(currentItem)
         toolkitModel.add(nextItem)
         if (wasSelected) toolkitModel.selectedItem = nextItem
+        return true
     }
 
     private fun ToolkitListItem.ToolkitItem.hasSamePresentationAs(other: ToolkitListItem.ToolkitItem): Boolean =
@@ -218,10 +238,13 @@ class ToolkitComboBox(
 
     override fun dispose() {
         disposed = true
+        popupModelRefreshTimer.stop()
         toolkitChangedListeners.clear()
     }
 
     companion object {
+        private const val POPUP_MODEL_REFRESH_DELAY_MS = 50
+
         fun DialogValidation.WithParameter<() -> Toolkit?>.forToolkitComboBox(): DialogValidation.WithParameter<ToolkitComboBox> =
             transformParameter { ::selectedToolkit }
 

@@ -50,7 +50,7 @@ open class ToolkitListItem(
         toolkit.id,
         toolkit.path,
         toolkit.name,
-        toolkit.version,
+        toolkit.version.substringBefore('+'),
         toolkit.host.type.name,
         true,
         XMakeIcons.XMAKE
