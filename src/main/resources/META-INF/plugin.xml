@@ -152,6 +152,15 @@
             <add-to-group group-id="ExecutionTargets.Additional"/>
         </group>
 
+        <action id="XMake.RunToolbar.Build"
+                class="io.xmake.actions.RunToolbarBuildAction"
+                text="Build XMake Profile"
+                icon="AllIcons.Actions.Compile"
+                description="Build the active XMake profile.">
+            <add-to-group group-id="RunToolbarMainActionGroup"
+                          anchor="before"
+                          relative-to-action="compositeResumeGroup"/>
+        </action>
     </actions>
 
 </idea-plugin>
