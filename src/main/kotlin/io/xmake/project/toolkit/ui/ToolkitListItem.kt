@@ -20,8 +20,6 @@
  */
 package io.xmake.project.toolkit.ui
 
-import com.intellij.execution.configurations.RuntimeConfigurationError
-import com.intellij.openapi.actionSystem.AnAction
 import io.xmake.icons.XMakeIcons
 import io.xmake.project.toolkit.Toolkit
 import javax.swing.Icon
@@ -38,11 +36,11 @@ open class ToolkitListItem(
 
     infix operator fun compareTo(other: ToolkitListItem): Int {
         return if (this is ToolkitItem && other is ToolkitItem) {
-            return this compareTo other
+            this compareTo other
         } else if (this is NoneItem || other is NoneItem) {
             compareValuesBy(this, other) { it.id }
         } else {
-            return compareValuesBy(this, other) { it.text }
+            compareValuesBy(this, other) { it.text }
         }
     }
 
@@ -66,27 +64,15 @@ open class ToolkitListItem(
         }
 
         fun asRegistered(): ToolkitItem {
-            if (this.toolkit.isRegistered)
-                return this.apply { caption = "Registered" }
-            else
-                throw RuntimeConfigurationError("Toolkit is not registered!")
+            require(toolkit.isRegistered) { "Toolkit is not registered" }
+            caption = "Registered"
+            if (!toolkit.isValid) asInvalid()
+            return this
         }
 
         fun asInvalid(): ToolkitItem {
             return this.apply { tertiaryText = "Invalid" }
         }
 
-        fun asCurrent(): ToolkitItem {
-            return this.apply { caption = "Current" }
-        }
     }
-
-    enum class ActionRole { DOWNLOAD, ADD }
-
-    class ActionItem(
-        id: String,
-        name: String,
-        private val role: ActionRole,
-        private val action: AnAction,
-    ) : ToolkitListItem(id, name,) {}
 }

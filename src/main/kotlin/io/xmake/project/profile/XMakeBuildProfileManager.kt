@@ -24,6 +24,8 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
+import io.xmake.project.toolkit.Toolkit
+import io.xmake.project.toolkit.ToolkitListener
 import io.xmake.project.toolkit.ToolkitManager
 
 @Service(Service.Level.PROJECT)
@@ -35,6 +37,21 @@ class XMakeBuildProfileManager(private val project: Project) :
     )
 
     private var profileState = State()
+
+    init {
+        project.messageBus.connect().subscribe(
+            ToolkitListener.TOPIC,
+            object : ToolkitListener {
+                override fun toolkitChanged(sourceProject: Project?, toolkit: Toolkit) {
+                    profilesChanged(toolkit.id)
+                }
+
+                override fun toolkitRemoved(toolkitId: String) {
+                    clearToolkit(toolkitId)
+                }
+            },
+        )
+    }
 
     override fun getState(): State = profileState
 
@@ -114,9 +131,15 @@ class XMakeBuildProfileManager(private val project: Project) :
         return "$baseName $suffix"
     }
 
-    private fun profilesChanged() {
+    private fun profilesChanged(affectedToolkitId: String? = null) {
         val notifyPlatform = Runnable {
             if (project.isDisposed) return@Runnable
+            if (
+                affectedToolkitId != null &&
+                profileState.profiles.none { profile -> profile.toolkitId == affectedToolkitId }
+            ) {
+                return@Runnable
+            }
             ExecutionTargetManager.update(project)
             project.messageBus.syncPublisher(TOPIC).profilesChanged()
         }

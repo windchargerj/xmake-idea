@@ -13,24 +13,26 @@
  * limitations under the License.
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
- *
- * @author      ruki
- * @file        ToolkitChangedNotifier.kt
- *
  */
 package io.xmake.project.toolkit
 
+import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
 
-interface ToolkitChangedNotifier {
+interface ToolkitListener {
+    /** A null source project denotes a globally visible registry change. */
+    fun toolkitChanged(sourceProject: Project?, toolkit: Toolkit) {}
 
-    fun toolkitChanged(toolkit: Toolkit?)
+    fun toolkitRemoved(toolkitId: String) {}
+
+    fun detectionFinished(sourceProject: Project?) {}
 
     companion object {
-        @Topic.ProjectLevel
-        val TOOLKIT_CHANGED_TOPIC: Topic<ToolkitChangedNotifier> = Topic.create(
-            "toolkit changed",
-            ToolkitChangedNotifier::class.java
+        @Topic.AppLevel
+        val TOPIC: Topic<ToolkitListener> = Topic.create(
+            "XMake toolkit state",
+            ToolkitListener::class.java,
+            Topic.BroadcastDirection.TO_CHILDREN,
         )
     }
 }
