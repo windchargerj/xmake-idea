@@ -33,6 +33,7 @@ import com.intellij.util.xmlb.XmlSerializer
 import com.intellij.util.xmlb.annotations.OptionTag
 import com.intellij.util.xmlb.annotations.Transient
 import com.intellij.util.IncorrectOperationException
+import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.utils.path.WorkingDirectoryResolver
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitHostType
@@ -118,6 +119,7 @@ class XMakeRunConfiguration(
         super.writeExternal(element)
 
         XmlSerializer.serializeInto(this, element)
+        removeLegacyBuildProfileFields(element)
         runEnvironment.writeExternal(element)
     }
 
@@ -127,6 +129,7 @@ class XMakeRunConfiguration(
 
         XmlSerializer.deserializeInto(this, element)
         runEnvironment = EnvironmentVariablesData.readExternal(element)
+        readLegacyBuildProfile(element, name)?.let(project.xmakeBuildProfiles::importProfile)
         runToolkit = runToolkit?.let { toolkit ->
             ToolkitManager.getInstance().findRegisteredToolkitById(toolkit.id)
         }
