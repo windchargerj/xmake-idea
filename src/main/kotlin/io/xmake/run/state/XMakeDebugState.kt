@@ -20,10 +20,12 @@ import com.intellij.execution.ExecutionException
 import com.intellij.execution.Executor
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.execution.runners.ProgramRunner
+import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.util.execution.ParametersListUtil
 import io.xmake.run.XMakeRunConfiguration
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeCommandFactory
+import io.xmake.run.target.requireXMakeBuildProfile
 
 internal class XMakeDebugState private constructor(
     val configureCommand: XMakeCommand,
@@ -43,9 +45,13 @@ internal class XMakeDebugState private constructor(
         throw ExecutionException("XMakeDebugState must be executed by XMakeRunner")
 
     companion object {
-        fun create(configuration: XMakeRunConfiguration): XMakeDebugState {
-            val commands = XMakeCommandFactory(configuration)
-            val buildCommand = commands.createTargetBuild()
+        fun create(
+            configuration: XMakeRunConfiguration,
+            environment: ExecutionEnvironment,
+        ): XMakeDebugState {
+            val profile = configuration.project.requireXMakeBuildProfile(environment.executionTarget)
+            val commands = XMakeCommandFactory(configuration.project, profile)
+            val buildCommand = commands.createTargetBuild(configuration.runTarget)
             if (buildCommand.toolkit.isOnRemote) {
                 throw ExecutionException("Remote XMake toolkits are not supported for debugging")
             }
@@ -53,9 +59,9 @@ internal class XMakeDebugState private constructor(
             return XMakeDebugState(
                 configureCommand = commands.createConfigure(),
                 buildCommand = buildCommand,
-                targetPathCommand = commands.createTargetPathQuery(),
+                targetPathCommand = commands.createTargetPathQuery(configuration.runTarget),
                 targetName = configuration.runTarget,
-                buildMode = configuration.runMode,
+                buildMode = profile.mode,
                 configuredDapDriverPath = configuration.dapDriverPath,
                 detectDapDriver = configuration.dapDriverAutoDetect,
                 launchConfiguration = configuration.launchConfiguration,

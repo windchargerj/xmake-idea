@@ -22,22 +22,22 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.task.ProjectTaskManager
 import io.xmake.build.XMakeBuildTask
-import io.xmake.run.XMakeRunConfiguration
+import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.run.command.XMakeCommandFactory
+import io.xmake.run.target.activeXMakeBuildProfile
 
 abstract class XMakeBuildAction : XMakeProjectAction() {
     final override fun execute(project: Project) {
-        val configuration = project.selectedXMakeRunConfiguration
-        if (configuration == null) {
-            notifyConfigurationError(project, "Please select an XMake run configuration first")
+        val profile = project.activeXMakeBuildProfile()
+        if (profile == null) {
+            notifyConfigurationError(project, "Please select an XMake build profile first")
             return
         }
 
         val task = try {
-            configuration.checkConfiguration()
-            createTask(project, configuration, XMakeCommandFactory(configuration))
+            createTask(project, profile, XMakeCommandFactory(project, profile))
         } catch (error: Exception) {
-            notifyConfigurationError(project, error.message ?: "The XMake configuration is invalid")
+            notifyConfigurationError(project, error.message ?: "The XMake build profile is invalid")
             return
         }
 
@@ -47,7 +47,7 @@ abstract class XMakeBuildAction : XMakeProjectAction() {
 
     internal abstract fun createTask(
         project: Project,
-        configuration: XMakeRunConfiguration,
+        profile: XMakeBuildProfile,
         commands: XMakeCommandFactory,
     ): XMakeBuildTask
 }

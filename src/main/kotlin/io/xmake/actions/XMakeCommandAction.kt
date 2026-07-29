@@ -26,6 +26,7 @@ import io.xmake.project.console.XMakeConsole
 import io.xmake.project.console.xmakeConsoleService
 import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.command.xmakeExecutionService
+import io.xmake.run.target.activeXMakeBuildProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.CancellationException
@@ -33,8 +34,8 @@ import java.util.concurrent.CancellationException
 abstract class XMakeCommandAction : XMakeProjectAction() {
 
     final override fun execute(project: Project) {
-        val configuration = project.selectedXMakeRunConfiguration
-        val commandsResult = configuration?.let { runCatching { XMakeCommandFactory(it) } }
+        val profile = project.activeXMakeBuildProfile()
+        val commandsResult = profile?.let { runCatching { XMakeCommandFactory(project, it) } }
         FileDocumentManager.getInstance().saveAllDocuments()
 
         project.xmakeExecutionService.submit {
@@ -42,7 +43,7 @@ abstract class XMakeCommandAction : XMakeProjectAction() {
             withContext(Dispatchers.EDT) {
                 console.clear()
                 if (commandsResult == null) {
-                    console.reportMissingRunConfiguration(project)
+                    console.reportMissingBuildProfile(project)
                 }
             }
             if (commandsResult == null) {
@@ -67,9 +68,9 @@ abstract class XMakeCommandAction : XMakeProjectAction() {
     )
 }
 
-private fun XMakeConsole.reportMissingRunConfiguration(project: Project) {
-    print("Please select an XMake run configuration first!\n", ConsoleViewContentType.ERROR_OUTPUT)
-    notifyError(project, "Error with XMake Configuration", "XMake configuration is not selected!")
+private fun XMakeConsole.reportMissingBuildProfile(project: Project) {
+    print("Please select an XMake build profile first!\n", ConsoleViewContentType.ERROR_OUTPUT)
+    notifyError(project, "Error with XMake Build Profile", "XMake build profile is not selected!")
 }
 
 private fun XMakeConsole.reportCommandError(project: Project, error: Throwable) {

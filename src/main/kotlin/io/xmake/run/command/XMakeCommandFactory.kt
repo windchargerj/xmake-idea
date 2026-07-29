@@ -18,70 +18,67 @@ package io.xmake.run.command
 
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configuration.EnvironmentVariablesData
+import com.intellij.execution.configurations.RuntimeConfigurationError
+import com.intellij.openapi.project.Project
 import com.intellij.util.execution.ParametersListUtil
+import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.xmakeSettings
-import io.xmake.run.XMakeRunConfiguration
 import io.xmake.utils.SystemUtils
 
-/** Builds commands from one run configuration captured at construction time. */
-internal class XMakeCommandFactory(configuration: XMakeRunConfiguration) {
-    private val target = configuration.runTarget
-    private val platform = configuration.runPlatform
-    private val architecture = configuration.runArchitecture
-    private val toolchain = configuration.runToolchain
-    private val mode = configuration.runMode
-    private val arguments = configuration.runArguments
-    private val environment = configuration.runEnvironment
-    private val buildDirectory = configuration.buildDirectory
-    private val androidNdkDirectory = configuration.androidNDKDirectory
-    private val verbose = configuration.enableVerbose
-    private val additionalConfiguration = configuration.additionalConfiguration
-    private val compileCommandsPath = configuration.project.xmakeSettings.state.compileCommandsPath
+/** Builds commands from one project-owned build profile captured at construction time. */
+internal class XMakeCommandFactory(project: Project, profile: XMakeBuildProfile) {
+    private val profile = profile.copy()
+    private val compileCommandsPath = project.xmakeSettings.state.compileCommandsPath
     private val configureOptions = commandArguments {
-        args("-m", mode)
-        option("-p", platform.takeUnless { it == DEFAULT_VALUE })
-        option("-a", architecture.takeUnless { it == DEFAULT_VALUE })
-        if (toolchain != DEFAULT_VALUE) {
-            args("--toolchain=$toolchain")
+        args("-m", profile.mode)
+        option("-p", profile.platform.takeUnless { it == DEFAULT_VALUE })
+        option("-a", profile.architecture.takeUnless { it == DEFAULT_VALUE })
+        if (profile.toolchain != DEFAULT_VALUE) {
+            args("--toolchain=${profile.toolchain}")
         }
-        if (platform == "android" && androidNdkDirectory.isNotEmpty()) {
-            args("--ndk=$androidNdkDirectory")
+        if (profile.platform == "android" && profile.androidNdkDirectory.isNotEmpty()) {
+            args("--ndk=${profile.androidNdkDirectory}")
         }
-        option("-o", buildDirectory.takeIf { it.isNotEmpty() })
-        if (additionalConfiguration.isNotEmpty()) {
-            parsedArgs(additionalConfiguration)
+        option("-o", profile.buildDirectory.takeIf { it.isNotEmpty() })
+        if (profile.additionalConfiguration.isNotEmpty()) {
+            parsedArgs(profile.additionalConfiguration)
         }
     }
-    private val commandBuilder = XMakeCommandBuilder.forConfiguration(configuration, configureOptions)
+    private val commandBuilder = run {
+        val toolkit = profile.resolveToolkit()
+            ?: throw RuntimeConfigurationError("XMake toolkit is not set or is no longer registered")
+        val workingDirectory = profile.resolveWorkingDirectory(project, toolkit)
+        XMakeCommandBuilder.forBuildProfile(profile.id, toolkit, workingDirectory, configureOptions)
+    }
 
     fun createBuild(): XMakeCommand = createTargetBuild(DEFAULT_VALUE)
 
-    fun createTargetBuild(target: String = this.target): XMakeCommand = createCommand {
+    fun createTargetBuild(target: String): XMakeCommand = createCommand {
         args("build", "-y")
-        flag("-v", verbose)
+        flag("-v", profile.verbose)
         target(target)
     }
 
     fun createRebuild(): XMakeCommand = createCommand {
         args("build", "-r", "-y")
-        flag("-v", verbose)
+        flag("-v", profile.verbose)
     }
 
     fun createClean(): XMakeCommand = createCommand {
         args("clean")
-        flag("-v", verbose)
+        flag("-v", profile.verbose)
     }
 
     fun createCleanConfiguration(): XMakeCommand = createCommand {
         args("config", "-c", "-y")
-        flag("-v", verbose)
-        option("-o", buildDirectory.takeIf { it.isNotEmpty() })
+        flag("-v", profile.verbose)
+        option("-o", profile.buildDirectory.takeIf { it.isNotEmpty() })
     }
 
     fun createConfigure(): XMakeCommand = createCommand {
         args("config", "-y")
         args(configureOptions)
-        flag("-v", verbose)
+        flag("-v", profile.verbose)
     }
 
     fun createUpdateCmakeLists(): XMakeCommand = createCommand {
@@ -95,7 +92,11 @@ internal class XMakeCommandFactory(configuration: XMakeRunConfiguration) {
             ?.let { args(it) }
     }
 
-    fun createRun(): XMakeCommand = createCommand(
+    fun createRun(
+        target: String,
+        arguments: String,
+        environment: EnvironmentVariablesData,
+    ): XMakeCommand = createCommand(
         environmentVariables = environment,
     ) {
         args("run")
@@ -105,10 +106,10 @@ internal class XMakeCommandFactory(configuration: XMakeRunConfiguration) {
         }
     }
 
-    fun createTargetPathQuery(): XMakeCommand {
+    fun createTargetPathQuery(target: String): XMakeCommand {
         val scriptPath = SystemUtils.getScriptPath("targetpath.lua")
             ?: throw ExecutionException("The target path script was not found")
-        return createCommand(environmentOverrides = TARGET_QUERY_ENVIRONMENT) {
+        return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             args("l", scriptPath)
             target
                 .takeUnless { it == DEFAULT_VALUE || it.isBlank() }
@@ -137,7 +138,7 @@ internal class XMakeCommandFactory(configuration: XMakeRunConfiguration) {
     private companion object {
         const val DEFAULT_VALUE = "default"
 
-        val TARGET_QUERY_ENVIRONMENT = mapOf(
+        val QUERY_ENVIRONMENT = mapOf(
             "XMAKE_SKIP_HISTORY" to "1",
             "XMAKE_ROOT" to "y",
             "XMAKE_COLOR_TERM" to "nocolor",

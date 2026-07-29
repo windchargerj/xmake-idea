@@ -28,6 +28,7 @@ import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.createProcessHandler
+import io.xmake.run.target.requireXMakeBuildProfile
 
 internal class XMakeRunState private constructor(
     environment: ExecutionEnvironment,
@@ -66,11 +67,16 @@ internal class XMakeRunState private constructor(
             configuration: XMakeRunConfiguration,
             environment: ExecutionEnvironment,
         ): XMakeRunState {
-            val commands = XMakeCommandFactory(configuration)
+            val profile = configuration.project.requireXMakeBuildProfile(environment.executionTarget)
+            val commands = XMakeCommandFactory(configuration.project, profile)
             return XMakeRunState(
                 environment,
                 commands.createConfigure(),
-                commands.createRun(),
+                commands.createRun(
+                    configuration.runTarget,
+                    configuration.runArguments,
+                    configuration.runEnvironment,
+                ),
             )
         }
     }
