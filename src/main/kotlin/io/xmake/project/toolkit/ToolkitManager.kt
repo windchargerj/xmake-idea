@@ -30,6 +30,7 @@ import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.annotations.XCollection
 import io.xmake.project.toolkit.ToolkitHostType.SSH
+import io.xmake.project.toolkit.ToolkitHostType.WSL
 import io.xmake.project.toolkit.ToolkitHostScan.Completed
 import io.xmake.project.toolkit.ToolkitHostScan.Failed
 import io.xmake.utils.Logger
@@ -120,6 +121,8 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
     }
 
     private fun loadToolkit(toolkit: Toolkit) {
+        if (toolkit.host.type == SSH) return
+
         scope.launch(Dispatchers.IO) {
             try {
                 toolkit.host.loadTarget()
@@ -136,23 +139,29 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
         }
     }
 
-    fun registerToolkit(toolkit: Toolkit): Toolkit {
+    fun registerToolkit(toolkit: Toolkit, project: Project? = null): Toolkit {
         val registeredToolkit = synchronized(stateLock) {
-            updateRegisteredToolkit(toolkit) ?: toolkit.also { newToolkit ->
-                newToolkit.isRegistered = true
-                storage.registeredToolkits.removeIf { registered -> registered.id == newToolkit.id }
+            val registered = updateRegisteredToolkit(toolkit) ?: toolkit.toPersistentRegistration().also { newToolkit ->
+                storage.registeredToolkits.removeIf { existing -> existing.id == newToolkit.id }
                 storage.registeredToolkits.add(newToolkit)
             }
+            detectedToolkitMaps()
+                .flatMap { detectedToolkits -> detectedToolkits.values.asSequence() }
+                .filter { detected -> detected.hasSameInstallationAs(registered) }
+                .forEach { detected -> detected.isRegistered = true }
+            registered
         }
 
         registeredToolkit.isRegistered = true
-        if (registeredToolkit.isOnRemote && registeredToolkit.host.target == null) {
+        if (registeredToolkit.host.type == WSL && registeredToolkit.host.target == null) {
             registeredToolkit.isValid = false
             loadToolkit(registeredToolkit)
         }
         publishToolkitChanged(null, registeredToolkit)
         Logger.i(TAG, "load registered toolkit: ${registeredToolkit.name}, ${registeredToolkit.id}")
-        return registeredToolkit
+        return project
+            ?.let { currentProject -> resolveToolkit(registeredToolkit.id, currentProject) }
+            ?: registeredToolkit.asRegisteredView(toolkit.host, toolkit.isValid)
     }
 
     fun unregisterToolkit(toolkit: Toolkit) {
@@ -176,32 +185,67 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
     internal fun registeredToolkitSnapshot(id: String): Toolkit? =
         synchronized(stateLock) { findRegisteredToolkitByIdUnlocked(id) }
 
+    /** Resolves a persisted installation identity to a host instance owned by this project. */
+    internal fun resolveToolkit(id: String, project: Project): Toolkit? = synchronized(stateLock) {
+        findRegisteredToolkitByIdUnlocked(id)?.let { toolkit ->
+            resolveToolkitView(toolkit, project)
+        }
+    }
+
     /** All toolkits known to the registry: detected installations plus registered ones. */
     internal fun getKnownToolkits(project: Project?): List<Toolkit> = synchronized(stateLock) {
         linkedMapOf<String, Toolkit>().apply {
             globalDetectedToolkits.values
-                .filter(::isAvailableToolkit)
+                .mapNotNull { toolkit -> resolveToolkitForProject(toolkit, project) }
                 .forEach { toolkit -> put(toolkit.id, toolkit) }
             project?.let { currentProject ->
                 detectedToolkitsByProject[currentProject]
                     ?.values
-                    ?.filter(::isAvailableToolkit)
+                    ?.mapNotNull { toolkit -> resolveToolkitForProject(toolkit, project) }
                     ?.forEach { toolkit -> put(toolkit.id, toolkit) }
             }
             storage.registeredToolkits
-                .filter(::isAvailableToolkit)
+                .mapNotNull { toolkit -> resolveToolkitView(toolkit, project) }
                 .forEach { toolkit -> put(toolkit.id, toolkit) }
         }.values.toList()
     }
 
-    fun getRegisteredToolkits(): List<Toolkit> = synchronized(stateLock) {
-        storage.registeredToolkits.filter(::isAvailableToolkit)
+    fun getRegisteredToolkits(project: Project? = null): List<Toolkit> = synchronized(stateLock) {
+        storage.registeredToolkits.mapNotNull { toolkit -> resolveToolkitView(toolkit, project) }
     }
 
-    private fun isAvailableToolkit(toolkit: Toolkit): Boolean =
-        toolkit.host.type != SSH || sshHostExtensions().any { extension ->
-            extension.filterRegistered()(toolkit)
+    private fun resolveToolkitView(toolkit: Toolkit, project: Project?): Toolkit? {
+        val detected = project
+            ?.let(detectedToolkitsByProject::get)
+            ?.values
+            ?.firstOrNull(toolkit::hasSameInstallationAs)
+            ?: globalDetectedToolkits.values.firstOrNull(toolkit::hasSameInstallationAs)
+        val resolvedDetected = detected?.let { resolveToolkitForProject(it, project) }
+        if (resolvedDetected != null) {
+            return if (resolvedDetected.isRegistered) {
+                resolvedDetected
+            } else {
+                toolkit.asRegisteredView(resolvedDetected.host, resolvedDetected.isValid)
+            }
         }
+        return if (toolkit.host.type == SSH) resolveToolkitForProject(toolkit, project) else toolkit
+    }
+
+    private fun resolveToolkitForProject(toolkit: Toolkit, project: Project?): Toolkit? {
+        if (toolkit.host.type != SSH) return toolkit
+
+        val host = sshHostExtensions()
+            .asSequence()
+            .flatMap { extension -> extension.getToolkitHosts(project).asSequence() }
+            .firstOrNull { candidate -> candidate.endpointIdentity == toolkit.host.endpointIdentity }
+            ?: return null
+        if (toolkit.host.target === host.target) return toolkit
+
+        return toolkit.copy(host = host).apply {
+            isRegistered = toolkit.isRegistered
+            isValid = host.target != null
+        }
+    }
 
     /** Pushes the loaded host target and validity back into the registered copy. */
     private fun applyLoadedHostTarget(toolkit: Toolkit): Toolkit? = synchronized(stateLock) {
@@ -219,14 +263,9 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
      */
     private fun updateRegisteredToolkit(toolkit: Toolkit): Toolkit? {
         val registeredToolkit = findRegisteredToolkit(toolkit) ?: return null
-        val updatedToolkit = toolkit.copy(id = registeredToolkit.id).apply {
-            isRegistered = true
-            isValid = toolkit.isValid
-        }
+        val updatedToolkit = toolkit.toPersistentRegistration(registeredToolkit.id)
         if (registeredToolkit == updatedToolkit) {
-            registeredToolkit.host.target = toolkit.host.target
             registeredToolkit.isRegistered = true
-            registeredToolkit.isValid = toolkit.isValid
             return registeredToolkit
         }
 
@@ -253,7 +292,10 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
         val replacements = linkedMapOf<String, Toolkit>()
         val changedToolkits = mutableListOf<Toolkit>()
         detected.forEach { detectedToolkit ->
-            val resolvedToolkit = updateRegisteredToolkit(detectedToolkit) ?: detectedToolkit
+            val registeredToolkit = updateRegisteredToolkit(detectedToolkit)
+            val resolvedToolkit = registeredToolkit
+                ?.asRegisteredView(detectedToolkit.host, detectedToolkit.isValid)
+                ?: detectedToolkit
             val toolkit = previousToolkits
                 .firstOrNull { previous -> previous.hasSameInstallationAs(resolvedToolkit) }
                 ?.takeIf { previous -> previous.hasSameResolvedStateAs(resolvedToolkit) }
@@ -279,6 +321,22 @@ class ToolkitManager(private val scope: CoroutineScope) : PersistentStateCompone
 
     private fun sshHostExtensions(): List<ToolkitHostExtension> =
         hostExtensions.extensionList.filter { extension -> extension.KEY == "SSH" }
+
+    private fun Toolkit.toPersistentRegistration(registeredId: String = id): Toolkit = copy(
+        host = ToolkitHost(host.type, host.id),
+        id = registeredId,
+    ).apply {
+        isRegistered = true
+        isValid = !isOnRemote
+    }
+
+    private fun Toolkit.asRegisteredView(
+        resolvedHost: ToolkitHost,
+        resolvedValidity: Boolean,
+    ): Toolkit = copy(host = resolvedHost).apply {
+        isRegistered = true
+        isValid = resolvedValidity
+    }
 
     private fun publishToolkitChanged(project: Project?, toolkit: Toolkit) {
         val application = ApplicationManager.getApplication() ?: return

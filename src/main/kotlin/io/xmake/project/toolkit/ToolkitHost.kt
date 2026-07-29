@@ -52,7 +52,7 @@ data class ToolkitHost(
             WSL -> loadWslTarget()
             SSH -> {
                 with(HOST_EXTENSIONS.extensions.firstOrNull { it.KEY == "SSH" } ?: return) {
-                    loadTargetX(project)
+                    loadHostTarget(project)
                 }
             }
         }
