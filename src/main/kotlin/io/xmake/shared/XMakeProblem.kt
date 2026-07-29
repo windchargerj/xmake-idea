@@ -20,6 +20,7 @@
  */
 package io.xmake.shared
 
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
 class XMakeProblem(
@@ -30,3 +31,18 @@ class XMakeProblem(
     val message: String? = "",
     val workingDirectory: Path? = null,
 )
+
+internal fun XMakeProblem.resolveFilePath(): Path? {
+    val filePath = file?.takeIf(String::isNotBlank) ?: return null
+    val path = try {
+        Path.of(filePath)
+    } catch (_: InvalidPathException) {
+        return null
+    }
+
+    return if (path.isAbsolute) {
+        path.normalize()
+    } else {
+        workingDirectory?.resolve(path)?.normalize()
+    }
+}
