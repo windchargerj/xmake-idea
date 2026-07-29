@@ -24,7 +24,9 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.ui.Messages
 import com.intellij.ssh.*
+import com.intellij.ssh.channels.SftpChannel
 import com.intellij.ssh.config.unified.SshConfig
 import com.intellij.ssh.config.unified.SshConfigManager
 import com.intellij.ssh.interaction.PlatformSshPasswordProvider
@@ -58,11 +60,13 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
     }
 
     override fun filterRegistered(): (Toolkit) -> Boolean {
-        return { it.isOnRemote }
+        return { toolkit ->
+            toolkit.host.id?.let(sshConfigManager::findConfigById) != null
+        }
     }
 
     override fun createToolkit(host: ToolkitHost, path: String, version: String): Toolkit {
-        val sshConfig = (host.target as? SshConfig) ?: throw IllegalArgumentException()
+        val sshConfig = host.requireSshConfig()
         val name = sshConfig.presentableShortName
         return Toolkit(name, host, path, version)
     }
@@ -73,13 +77,12 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
         direction: SyncDirection,
         remoteDirectory: String,
     ) {
-        val sshConfig = (host.target as? SshConfig) ?: throw IllegalArgumentException()
+        val sshConfig = host.requireSshConfig()
         val projectDirectory = project.guessProjectDir()?.path
             ?: project.basePath
             ?: throw IllegalStateException("Cannot resolve project directory")
         val projectDirectoryFile = File(projectDirectory)
-        val builder = ConnectionBuilder(sshConfig.host)
-            .withSshPasswordProvider(PlatformSshPasswordProvider(sshConfig.copyToCredentials()))
+        val builder = connectionBuilder(sshConfig)
         val cancellationContext = currentCoroutineContext()
         val sftpChannel = runInterruptible(Dispatchers.IO) {
             builder.openFailSafeSftpChannel()
@@ -90,6 +93,7 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
                 cancellationContext.ensureActive()
                 when (direction) {
                     SyncDirection.LOCAL_TO_UPSTREAM -> {
+                        sftpChannel.requireSafeSyncDestination(remoteDirectory)
                         try {
                             sftpChannel.rmRecur(remoteDirectory)
                         } catch (error: SftpChannelNoSuchFileException) {
@@ -132,54 +136,71 @@ class SshToolkitHostExtensionImpl : ToolkitHostExtension {
         }
     }
 
-    override suspend fun ToolkitHost.loadTargetX(project: Project?) = coroutineScope {
-        target = SshConfigManager.getInstance(project).findConfigById(id!!)!!
+    override suspend fun ToolkitHost.loadTargetX(project: Project?) {
+        target = id?.let(sshConfigManager::findConfigById)
     }
 
     override fun getTargetId(target: Any?): String {
-        val sshConfig = target as? SshConfig ?: throw IllegalArgumentException()
+        val sshConfig = target as? SshConfig
+            ?: throw IllegalArgumentException("SSH toolkit target must be an SshConfig")
         return sshConfig.id
     }
 
     override fun DirectoryBrowser.createBrowseListener(host: ToolkitHost): ActionListener {
-        val sshConfig = host.target as? SshConfig ?: throw IllegalArgumentException()
+        val sshConfig = host.requireSshConfig()
 
-        val sftpChannel = runBlocking(Dispatchers.Default) {
-            ConnectionBuilder(sshConfig.host)
-                .withSshPasswordProvider(PlatformSshPasswordProvider(sshConfig.copyToCredentials()))
-                .openFailSafeSftpChannel()
+        return ActionListener {
+            try {
+                val selectedDirectory = runBlocking(Dispatchers.IO) {
+                    connectionBuilder(sshConfig).openFailSafeSftpChannel()
+                }.use { channel ->
+                    val dialog = RemoteBrowserDialog(
+                        remoteBrowserProvider = SftpRemoteBrowserProvider(channel),
+                        project = project,
+                        foldersOnly = true,
+                        hostName = sshConfig.presentableShortName,
+                        pathToExpand = text.takeIf(String::isNotBlank),
+                        withCreateDirectoryButton = true,
+                    )
+                    if (dialog.showAndGet()) dialog.getResult() else null
+                }
+                selectedDirectory?.let { text = it }
+            } catch (error: Exception) {
+                Log.warn("Failed to open the SSH directory browser", error)
+                Messages.showErrorDialog(
+                    project,
+                    error.message ?: "Unable to open the SSH directory browser",
+                    "SSH Directory Browser",
+                )
+            }
         }
-        val sftpRemoteBrowserProvider = SftpRemoteBrowserProvider(sftpChannel)
-        val remoteBrowseFolderListener = ActionListener {
-            text = RemoteBrowserDialog(
-                sftpRemoteBrowserProvider,
-                project,
-                true,
-                withCreateDirectoryButton = true
-            ).apply { showAndGet() }.getResult()
-        }
-        return remoteBrowseFolderListener
     }
 
     override fun GeneralCommandLine.createProcess(host: ToolkitHost): Process {
+        val sshConfig = host.requireSshConfig()
+        Log.info("commandOnRemote: $commandLineString")
+        return connectionBuilder(sshConfig)
+            .processBuilder(this)
+            .withAllocatePty(false)
+            .start()
+    }
 
-        val sshConfig = host.target as? SshConfig ?: throw IllegalArgumentException()
-
-        val builder = ConnectionBuilder(sshConfig.host)
+    private fun connectionBuilder(sshConfig: SshConfig): ConnectionBuilder =
+        ConnectionBuilder(sshConfig.host)
             .withSshPasswordProvider(PlatformSshPasswordProvider(sshConfig.copyToCredentials()))
 
-        val command = GeneralCommandLine("sh").withParameters("-c")
-            .withParameters(this.commandLineString)
-            .withWorkDirectory(workDirectory)
-            .withCharset(charset)
-            .withEnvironment(environment)
-            .withInput(inputFile)
-            .withRedirectErrorStream(isRedirectErrorStream)
+    private fun ToolkitHost.requireSshConfig(): SshConfig =
+        target as? SshConfig
+            ?: error("SSH toolkit host is unavailable: ${id.orEmpty()}")
 
-        return builder
-            .also { Log.info("commandOnRemote: ${command.commandLineString}") }
-            .processBuilder(command)
-            .start()
+    private fun SftpChannel.requireSafeSyncDestination(path: String) {
+        val destination = runCatching { canonicalize(path) }
+            .getOrDefault(path)
+            .trimEnd('/')
+        val homeDirectory = canonicalize(home).trimEnd('/')
+        require(destination.isNotEmpty() && destination != homeDirectory) {
+            "Refusing to replace unsafe SSH sync directory: $path"
+        }
     }
 
     companion object {
