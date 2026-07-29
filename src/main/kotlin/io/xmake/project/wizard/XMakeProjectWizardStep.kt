@@ -20,6 +20,7 @@
  */
 package io.xmake.project.wizard
 
+import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.RunManager
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.ProcessNotCreatedException
@@ -49,6 +50,8 @@ import com.intellij.ui.dsl.builder.*
 import com.intellij.ui.util.getTextWidth
 import com.intellij.util.containers.map2Array
 import io.xmake.project.directory.ui.DirectoryBrowser
+import io.xmake.project.profile.XMakeBuildProfile
+import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitHostType.*
 import io.xmake.project.toolkit.ToolkitManager
@@ -56,8 +59,8 @@ import io.xmake.project.toolkit.ui.ToolkitComboBox
 import io.xmake.project.toolkit.ui.ToolkitComboBox.Companion.CHECK_NON_EMPTY_TOOLKIT
 import io.xmake.project.toolkit.ui.ToolkitComboBox.Companion.forToolkitComboBox
 import io.xmake.project.wizard.XMakeNewProjectWizardData.Companion.xmakeData
-import io.xmake.run.XMakeRunConfiguration
 import io.xmake.run.XMakeRunConfigurationType
+import io.xmake.run.target.XMakeBuildProfileExecutionTarget
 import io.xmake.utils.execute.SyncDirection
 import io.xmake.utils.execute.createProcess
 import io.xmake.utils.execute.runProcess
@@ -265,16 +268,24 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
                 }
             }
 
+            val profile = XMakeBuildProfile(
+                name = project.name,
+                toolkitId = toolkit?.id,
+                workingDirectory = workingDirectory,
+            )
+            project.xmakeBuildProfiles.replaceProfiles(listOf(profile))
             with(RunManager.getInstance(project)) {
-                val configSettings = createConfiguration(project.name, XMakeRunConfigurationType.getInstance().factory)
-                addConfiguration(configSettings.apply {
-                    (configuration as XMakeRunConfiguration).apply {
-                        runToolkit = toolkit
-                        runWorkingDir = workingDirectory
-                    }
-                })
-                selectedConfiguration = allSettings.first()
+                val configSettings = createConfiguration(
+                    project.name,
+                    XMakeRunConfigurationType.getInstance().factory,
+                )
+                addConfiguration(configSettings)
+                selectedConfiguration = configSettings
             }
+            ExecutionTargetManager.setActiveTarget(
+                project,
+                XMakeBuildProfileExecutionTarget(project, profile),
+            )
         }
     }
 
