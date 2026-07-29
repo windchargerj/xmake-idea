@@ -53,6 +53,12 @@ data class Toolkit(
     internal fun hasSameInstallationAs(other: Toolkit): Boolean =
         host.endpointIdentity == other.host.endpointIdentity && path == other.path
 
+    internal fun hasSameResolvedStateAs(other: Toolkit): Boolean =
+        this == other &&
+            isRegistered == other.isRegistered &&
+            isValid == other.isValid &&
+            host.target === other.host.target
+
     companion object {
         private fun createId(host: ToolkitHost, path: String): String {
             val identity = "xmake-toolkit-v2\u0000${host.endpointIdentity}\u0000$path"
