@@ -72,10 +72,13 @@ data class ToolkitHost(
 
         private fun targetId(type: ToolkitHostType, target: Any): String = when (type) {
             LOCAL -> LOCAL.name
-            WSL -> (target as WSLDistribution).id
+            WSL -> (target as? WSLDistribution)
+                ?.id
+                ?: error("XMake WSL toolkit target must be a WSLDistribution")
             SSH -> HOST_EXTENSIONS.extensions
-                .first { it.KEY == "SSH" }
-                .getTargetId(target)
+                .firstOrNull { it.KEY == "SSH" }
+                ?.getTargetId(target)
+                ?: error("XMake SSH toolkit host extension is not registered")
         }
     }
 }
