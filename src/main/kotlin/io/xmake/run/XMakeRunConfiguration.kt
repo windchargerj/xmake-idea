@@ -37,6 +37,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.XmlSerializer
 import com.intellij.util.xmlb.annotations.OptionTag
 import com.intellij.util.xmlb.annotations.Transient
+import io.xmake.migration.readLegacyBuildProfile
+import io.xmake.migration.removeLegacyBuildProfileFields
+import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
 import io.xmake.run.target.xmakeBuildProfile
@@ -70,6 +73,7 @@ class XMakeRunConfiguration(
     override fun writeExternal(element: Element) {
         super.writeExternal(element)
 
+        removeLegacyBuildProfileFields(element)
         XmlSerializer.serializeInto(this, element)
         runEnvironment.writeExternal(element)
     }
@@ -79,6 +83,9 @@ class XMakeRunConfiguration(
 
         XmlSerializer.deserializeInto(this, element)
         runEnvironment = EnvironmentVariablesData.readExternal(element)
+        // Transitional fallback: the project converter performs the same import before the
+        // project loads; this keeps declining the conversion dialog from losing settings.
+        readLegacyBuildProfile(element, name)?.let(project.xmakeBuildProfiles::addProfile)
     }
 
     override fun canRunOn(target: ExecutionTarget): Boolean = project.xmakeBuildProfile(target) != null
