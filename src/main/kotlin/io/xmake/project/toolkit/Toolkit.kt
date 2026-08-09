@@ -24,7 +24,8 @@ import com.intellij.util.xmlb.annotations.Attribute
 import com.intellij.util.xmlb.annotations.Property
 import com.intellij.util.xmlb.annotations.Tag
 import com.intellij.util.xmlb.annotations.Transient
-import java.util.*
+import java.nio.charset.StandardCharsets.UTF_8
+import java.util.UUID
 
 @Tag("toolkit")
 data class Toolkit(
@@ -36,14 +37,23 @@ data class Toolkit(
     val path: String = "",
     @Attribute
     val version: String = "",
-) {
     @Attribute
-    val id: String = UUID.nameUUIDFromBytes((name+host.type.name+path+version).toByteArray()).toString()
+    val id: String = createId(host, path),
+) {
     @get:Transient
     var isRegistered: Boolean = false
+
     @get:Transient
     var isValid: Boolean = true
+
     @get:Transient
     val isOnRemote: Boolean
         get() = with(host) { type == ToolkitHostType.WSL || type == ToolkitHostType.SSH }
+
+    companion object {
+        private fun createId(host: ToolkitHost, path: String): String {
+            val identity = "xmake-toolkit-v2\u0000${host.endpointIdentity}\u0000$path"
+            return UUID.nameUUIDFromBytes(identity.toByteArray(UTF_8)).toString()
+        }
+    }
 }
