@@ -30,79 +30,83 @@ import com.intellij.openapi.ui.TextComponentAccessor
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitHost
-import io.xmake.project.toolkit.ToolkitHostType.*
+import io.xmake.project.toolkit.ToolkitHostType.LOCAL
+import io.xmake.project.toolkit.ToolkitHostType.SSH
+import io.xmake.project.toolkit.ToolkitHostType.WSL
 import io.xmake.utils.extension.ToolkitHostExtension
 import java.awt.event.ActionListener
 
-class DirectoryBrowser(val project: Project?) : TextFieldWithBrowseButton() {
+class DirectoryBrowser(
+    val project: Project?,
+    private val browseTitle: String = "Working Directory",
+    private val browseDescription: String = "Select the working directory",
+) : TextFieldWithBrowseButton() {
 
     private val listeners = mutableSetOf<ActionListener>()
 
-    private val EP_NAME: ExtensionPointName<ToolkitHostExtension> = ExtensionPointName("io.xmake.toolkitHostExtension")
+    fun setToolkit(toolkit: Toolkit?) {
+        removeBrowseListeners()
+        toolkit?.let { addBrowseListener(it.host) }
+    }
 
     private fun createLocalBrowseListener(): ActionListener {
         val fileChooserDescriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor()
-        val browseFolderListener = BrowseFolderActionListener(
+        return BrowseFolderActionListener(
             this,
             project,
             fileChooserDescriptor
-                .withTitle("Working Directory")
-                .withDescription("Select the working directory"),
-            TextComponentAccessor.TEXT_FIELD_WHOLE_TEXT
+                .withTitle(browseTitle)
+                .withDescription(browseDescription),
+            TextComponentAccessor.TEXT_FIELD_WHOLE_TEXT,
         )
-        return browseFolderListener
     }
 
     private fun createWslBrowseListener(target: WSLDistribution): ActionListener {
         val fileChooserDescriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor()
-        val wslBrowseFolderListener = ActionListener {
-            browseWslPath(this,
+            .withTitle(browseTitle)
+            .withDescription(browseDescription)
+        return ActionListener {
+            browseWslPath(
+                this,
                 target,
                 this,
                 true,
-                fileChooserDescriptor)
+                fileChooserDescriptor,
+            )
         }
-        return wslBrowseFolderListener
     }
 
-    fun addBrowserListenerByToolkit(toolkit: Toolkit){
-        addBrowserListenerByHostType(toolkit.host)
-    }
-
-    fun addBrowserListenerByHostType(host: ToolkitHost) {
-        when (host.type) {
+    private fun addBrowseListener(host: ToolkitHost) {
+        val listener = when (host.type) {
             LOCAL -> {
-                val localBrowseListener = createLocalBrowseListener()
-                addActionListener(localBrowseListener)
-                listeners.add(localBrowseListener)
-                Log.debug("addActionListener local: $localBrowseListener")
+                createLocalBrowseListener()
             }
 
             WSL -> {
-                val wslBrowseListener = createWslBrowseListener(host.target as WSLDistribution)
-                addActionListener(wslBrowseListener)
-                listeners.add(wslBrowseListener)
-                Log.debug("addActionListener wsl: $wslBrowseListener")
+                val target = host.target as? WSLDistribution ?: return
+                createWslBrowseListener(target)
             }
 
             SSH -> {
-                EP_NAME.extensions.first { it.KEY == "SSH" }.let { extension ->
-                    val browseListener = with(extension) { createBrowseListener(host) }
-                    addActionListener(browseListener)
-                    listeners.add(browseListener)
-                    Log.debug("addActionListener ${extension.getHostType()}: $browseListener")
-                }
+                if (host.target == null) return
+                val extension = HOST_EXTENSIONS.extensionList.firstOrNull { it.KEY == "SSH" } ?: return
+                with(extension) { createBrowseListener(host) }
             }
         }
+
+        addActionListener(listener)
+        listeners += listener
+        Log.debug("Added directory browser listener for ${host.type}")
     }
 
-    fun removeBrowserAllListener() {
-        listeners.onEach {
-            removeActionListener(it)
-        }.clear()
+    private fun removeBrowseListeners() {
+        listeners.forEach(::removeActionListener)
+        listeners.clear()
     }
-    companion object{
+
+    private companion object {
+        private val HOST_EXTENSIONS: ExtensionPointName<ToolkitHostExtension> =
+            ExtensionPointName("io.xmake.toolkitHostExtension")
         private val Log = logger<DirectoryBrowser>()
     }
 }
-

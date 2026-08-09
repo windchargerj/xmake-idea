@@ -63,16 +63,16 @@ class ToolkitComboBox(
             object : ToolkitListener {
                 override fun toolkitChanged(sourceProject: Project?, toolkit: Toolkit) {
                     if (!accepts(sourceProject)) return
-                    onUiThread { updateToolkit(toolkit) }
+                    onUiThread { onToolkitChanged(toolkit) }
                 }
 
                 override fun toolkitRemoved(toolkitId: String) {
-                    onUiThread(::synchronizeToolkits)
+                    onUiThread { synchronizeToolkits() }
                 }
 
                 override fun detectionFinished(sourceProject: Project?) {
                     if (!accepts(sourceProject)) return
-                    onUiThread(::synchronizeToolkits)
+                    onUiThread { synchronizeToolkits() }
                 }
             },
         )
@@ -80,6 +80,7 @@ class ToolkitComboBox(
         addPopupMenuListener(object : PopupMenuListenerAdapter() {
             override fun popupMenuWillBecomeVisible(event: PopupMenuEvent?) {
                 synchronizeToolkits()
+                notifyModelChanged()
                 toolkitManager.requestDetection(project)
             }
         })
@@ -118,35 +119,57 @@ class ToolkitComboBox(
     private fun synchronizeToolkits() {
         val knownToolkits = toolkitManager.getKnownToolkits(project)
         val knownToolkitIds = knownToolkits.map(Toolkit::id).toSet()
-        val desiredToolkits = linkedMapOf<String, Toolkit>().apply {
+        val target = targetToolkits(knownToolkits)
+        val modelChanged = withoutSelectionEvents {
+            val pruned = prune(target)
+            val merged = merge(target, knownToolkitIds)
+            alignSelection()
+            pruned || merged
+        }
+        if (modelChanged) scheduleModelRefresh()
+    }
+
+    private fun onToolkitChanged(toolkit: Toolkit) {
+        val selectedToolkitAffected = selectedToolkit?.id == toolkit.id
+        if (selectedToolkitAffected) selectedToolkit = toolkit
+        synchronizeToolkits()
+        if (selectedToolkitAffected) notifyToolkitChanged()
+    }
+
+    private fun targetToolkits(knownToolkits: List<Toolkit>): Map<String, Toolkit> =
+        linkedMapOf<String, Toolkit>().apply {
             knownToolkits.forEach { toolkit -> put(toolkit.id, toolkit) }
             selectedToolkit?.let { toolkit -> putIfAbsent(toolkit.id, toolkit) }
-        }
+    }
 
-        val staleItems = toolkitModel.items
+    private fun prune(target: Map<String, Toolkit>): Boolean {
+        var pruned = false
+        toolkitModel.items
             .filterIsInstance<ToolkitListItem.ToolkitItem>()
-            .filterNot { item -> item.id in desiredToolkits }
-        withoutSelectionEvents {
-            staleItems.forEach(toolkitModel::remove)
-            desiredToolkits.values.forEach { toolkit ->
-                upsertToolkit(toolkit, toolkit.id !in knownToolkitIds)
+            .filterNot { item -> item.id in target }
+            .forEach { item ->
+                toolkitModel.remove(item)
+                pruned = true
             }
-            selectCurrentToolkit()
+        return pruned
+    }
+
+    private fun merge(
+        target: Map<String, Toolkit>,
+        knownToolkitIds: Set<String>,
+    ): Boolean {
+        var changed = false
+        target.values.forEach { toolkit ->
+            changed = mergeToolkit(toolkit, isUnavailable = toolkit.id !in knownToolkitIds) || changed
         }
+        return changed
     }
 
-    private fun updateToolkit(toolkit: Toolkit) {
-        val selectedToolkitUpdated = selectedToolkit?.id == toolkit.id && selectedToolkit !== toolkit
-        if (selectedToolkitUpdated) selectedToolkit = toolkit
-        synchronizeToolkits()
-        if (selectedToolkitUpdated) notifyToolkitChanged()
-    }
-
-    private fun upsertToolkit(toolkit: Toolkit, unavailable: Boolean) {
+    private fun mergeToolkit(toolkit: Toolkit, isUnavailable: Boolean): Boolean {
         val nextItem = ToolkitListItem.ToolkitItem(toolkit).apply {
             when {
                 toolkit.isRegistered -> asRegistered()
-                unavailable -> asInvalid()
+                isUnavailable -> asInvalid()
             }
         }
         val currentItem = toolkitModel.items
@@ -154,14 +177,20 @@ class ToolkitComboBox(
             .firstOrNull { item -> item.id == toolkit.id }
         if (currentItem == null) {
             toolkitModel.add(nextItem)
-            return
+            return true
         }
-        if (currentItem.toolkit === toolkit && currentItem.hasSamePresentationAs(nextItem)) return
+        if (
+            currentItem.toolkit.hasSameResolvedStateAs(toolkit) &&
+            currentItem.hasSamePresentationAs(nextItem)
+        ) {
+            return false
+        }
 
         val wasSelected = toolkitModel.selectedItem === currentItem
         toolkitModel.remove(currentItem)
         toolkitModel.add(nextItem)
         if (wasSelected) toolkitModel.selectedItem = nextItem
+        return true
     }
 
     private fun ToolkitListItem.ToolkitItem.hasSamePresentationAs(other: ToolkitListItem.ToolkitItem): Boolean =
@@ -172,7 +201,7 @@ class ToolkitComboBox(
             isCaptionVisible == other.isCaptionVisible &&
             icon == other.icon
 
-    private fun selectCurrentToolkit() {
+    private fun alignSelection() {
         val selectedId = selectedToolkit?.id
         val item = selectedId
             ?.let { id -> toolkitModel.items.firstOrNull { item -> item.id == id } }

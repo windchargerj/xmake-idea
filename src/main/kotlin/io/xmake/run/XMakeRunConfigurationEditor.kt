@@ -398,20 +398,17 @@ class XMakeRunConfigurationEditor(
             cell(toolkitComboBox).align(AlignX.FILL).applyToComponent {
                 // Todo: Store previously selected toolkit to restore it if not applied.
                 addToolkitChangedListener { toolkit ->
-                    workingDirectoryBrowser.removeBrowserAllListener()
-                    buildDirectoryBrowser.removeBrowserAllListener()
-                    androidNDKDirectoryBrowser.removeBrowserAllListener()
+                    workingDirectoryBrowser.setToolkit(toolkit)
+                    buildDirectoryBrowser.setToolkit(toolkit)
+                    androidNDKDirectoryBrowser.setToolkit(toolkit)
                     toolkit?.let {
-                        workingDirectoryBrowser.addBrowserListenerByToolkit(it)
-                        buildDirectoryBrowser.addBrowserListenerByToolkit(it)
-                        androidNDKDirectoryBrowser.addBrowserListenerByToolkit(it)
                         XMakeInfoManager.getInstance(project).probeXMakeInfo(it)
                     }
                 }
                 selectedToolkit?.let {
-                    workingDirectoryBrowser.addBrowserListenerByToolkit(it)
-                    buildDirectoryBrowser.addBrowserListenerByToolkit(it)
-                    androidNDKDirectoryBrowser.addBrowserListenerByToolkit(it)
+                    workingDirectoryBrowser.setToolkit(it)
+                    buildDirectoryBrowser.setToolkit(it)
+                    androidNDKDirectoryBrowser.setToolkit(it)
                     XMakeInfoManager.getInstance(project).probeXMakeInfo(it)
                 }
             }

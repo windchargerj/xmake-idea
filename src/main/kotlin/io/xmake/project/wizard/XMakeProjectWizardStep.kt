@@ -143,13 +143,10 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
             row("XMake Toolkit") {
                 cell(toolkitComboBox).applyToComponent {
                     addToolkitChangedListener { toolkit ->
-                        browser.removeBrowserAllListener()
-                        toolkit?.let {
-                            browser.addBrowserListenerByToolkit(it)
-                        }
+                        browser.setToolkit(toolkit)
                         isOnRemote = toolkit?.isOnRemote == true
                     }
-                    selectedToolkit?.let { browser.addBrowserListenerByToolkit(it) }
+                    browser.setToolkit(selectedToolkit)
                 }
                     .validationRequestor(WHEN_PROPERTY_CHANGED(toolkitProperty))
                     .validationOnInput(CHECK_NON_EMPTY_TOOLKIT.forToolkitComboBox())
