@@ -89,7 +89,7 @@ class XMakeProjectTaskRunner : ProjectTaskRunner() {
                 XMakeCommandProcessHandler(
                     project,
                     command,
-                    XMakeConsoleOptions(showProblems = true, preserveAnsiEscapes = true),
+                    XMakeConsoleOptions(showProblems = true),
                     onTextAvailable = { text, outputType ->
                         progress.output(text, ProcessOutputType.fromKey(outputType))
                     },
