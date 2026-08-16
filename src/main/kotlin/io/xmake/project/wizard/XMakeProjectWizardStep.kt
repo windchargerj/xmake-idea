@@ -192,12 +192,14 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
 
     override fun setupProject(project: Project) {
         if (context.isCreatingNewProject) {
+            val selectedToolkit = toolkit
+                ?: throw IllegalStateException("An XMake toolkit must be selected to create a project")
             val workingDirectory =
-                if (!toolkit!!.requiresBackend) File(contentEntryPath).path
+                if (!selectedToolkit.requiresBackend) File(contentEntryPath).path
                 else remoteContentEntryPath
 
             val generateDirectory =
-                if (!toolkit!!.requiresBackend) File("$contentEntryPath.tmpdir").path
+                if (!selectedToolkit.requiresBackend) File("$contentEntryPath.tmpdir").path
                 else remoteContentEntryPath
 
 
@@ -206,7 +208,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
             Log.info("working directory: $workingDirectory")
 
             val command = listOf(
-                "xmake",
+                selectedToolkit.path,
                 "create",
                 "-P",
                 generateDirectory,
@@ -216,14 +218,12 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
                 kindOptions[xmakeData?.kind]
             )
             val commandLine: GeneralCommandLine = GeneralCommandLine(command)
-//                .withWorkDirectory(workingDirectory)
                 .withCharset(Charsets.UTF_8)
 
             val output = try {
-                val result = runBlocking(Dispatchers.IO) {
-                    return@runBlocking runProcess(commandLine.createProcess(toolkit!!))
+                runBlocking(Dispatchers.IO) {
+                    runProcess(commandLine.createProcess(selectedToolkit)).first.getOrDefault("")
                 }
-                result.first.getOrDefault("")
             } catch (e: ProcessNotCreatedException) {
                 Log.warn("Failed to create the XMake project", e)
                 ""
@@ -231,7 +231,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
 
             Log.info("XMake project creation output: $output")
 
-            with(toolkit!!) {
+            with(selectedToolkit) {
                 when (host.type) {
                     LOCAL -> {
                         val tempDirectory = File(generateDirectory)
