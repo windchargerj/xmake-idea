@@ -24,6 +24,7 @@ import com.intellij.openapi.project.Project
 import io.xmake.project.console.XMakeConsole
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.XMakeExecutionService
+import io.xmake.run.command.resolveLaunchWorkingDirectory
 import io.xmake.run.state.XMakeDebugState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -50,33 +51,66 @@ internal suspend fun prepareXMakeDebugLaunch(
         throw ExecutionException("GDB does not support DAP: ${driver.path}")
     }
     return XMakeDebugLaunch(
-        executablePath = target.absolutePath,
+        executablePath = target.file.absolutePath,
         driver = driver,
         launchConfiguration = state.launchConfiguration,
         arguments = state.arguments,
         environment = state.environment,
-        workingDirectory = state.buildCommand.workingDirectory,
+        workingDirectory = resolveDebugWorkingDirectory(state, project, target),
     )
 }
 
-private fun resolveTarget(state: XMakeDebugState, output: String): File {
+private data class DebugTarget(
+    val file: File,
+    val runDirectory: File,
+)
+
+private fun resolveTarget(state: XMakeDebugState, output: String): DebugTarget {
     val path = "__begin__([\\s\\S]*?)__end__".toRegex()
         .find(output.trim())
         ?.groupValues
         ?.get(1)
         ?.trim()
-        ?.takeIf { it.isNotBlank() }
+        ?.lineSequence()
+        ?.map(String::trim)
+        ?.filter(String::isNotEmpty)
+        ?.toList()
+        .orEmpty()
+
+    val targetPath = path.firstOrNull()
         ?: throw ExecutionException("Could not determine the executable path for ${state.targetName}")
 
-    val targetPath = if (File(path).isAbsolute) {
-        path
+    val resolvedTargetPath = if (File(targetPath).isAbsolute) {
+        targetPath
     } else {
-        File(state.targetPathCommand.workingDirectory, path).absolutePath
+        File(state.targetPathCommand.workingDirectory, targetPath).absolutePath
     }
-    val target = File(targetPath)
+    val target = File(resolvedTargetPath)
     if (!target.isFile) throw ExecutionException("Target executable not found: $targetPath")
-    return target
+
+    val runDirectoryPath = path.getOrNull(1)
+    val runDirectory = if (runDirectoryPath == null) {
+        target.absoluteFile.parentFile
+    } else if (File(runDirectoryPath).isAbsolute) {
+        File(runDirectoryPath)
+    } else {
+        File(state.targetPathCommand.workingDirectory, runDirectoryPath).absoluteFile
+    }
+    if (!runDirectory.isDirectory) {
+        throw ExecutionException("Target run directory not found: ${runDirectory.absolutePath}")
+    }
+    return DebugTarget(target.absoluteFile, runDirectory)
 }
+
+private fun resolveDebugWorkingDirectory(
+    state: XMakeDebugState,
+    project: Project,
+    target: DebugTarget,
+): String = resolveLaunchWorkingDirectory(
+    project,
+    state.targetPathCommand.toolkit,
+    state.workingDirectory,
+) ?: target.runDirectory.absolutePath
 
 private fun resolveDriver(state: XMakeDebugState): DapDriverDetector.DapDriverInfo {
     val driverPath = if (!state.autoDetectDapDriver && state.configuredDapDriverPath.isNotBlank()) {

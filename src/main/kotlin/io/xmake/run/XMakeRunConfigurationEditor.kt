@@ -35,6 +35,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
 import io.xmake.debug.DapDriverDetector
+import io.xmake.project.directory.ui.DirectoryBrowser
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.profile.XMakeBuildProfileManager
 import io.xmake.project.profile.xmakeBuildProfiles
@@ -69,6 +70,11 @@ class XMakeRunConfigurationEditor(
     private val buildTargetComboBox = LiveModelComboBox(buildTargetModel)
     private val runArguments = RawCommandLineEditor()
     private val environmentVariables = EnvironmentVariablesComponent(project)
+    private val workingDirectory = DirectoryBrowser(
+        project,
+        browseTitle = "Working Directory",
+        browseDescription = "Select the target process working directory",
+    )
 
     private val dapDriverAutoDetect = JBCheckBox("Auto-detect DAP driver")
     private val dapDriverPath = TextFieldWithBrowseButton().apply {
@@ -162,6 +168,7 @@ class XMakeRunConfigurationEditor(
             }
             buildTargetModel.selectedItem = selectedBuildTarget
             runArguments.text = configuration.runArguments
+            workingDirectory.text = configuration.workingDirectory
             environmentVariables.envData = configuration.runEnvironment
             dapDriverAutoDetect.isSelected = configuration.dapDriverAutoDetect
             dapDriverPath.text = configuration.dapDriverPath
@@ -178,6 +185,7 @@ class XMakeRunConfigurationEditor(
     override fun applyEditorTo(configuration: XMakeRunConfiguration) {
         configuration.runTarget = buildTargetModel.selectedItem?.toString() ?: DEFAULT_BUILD_TARGET
         configuration.runArguments = runArguments.text
+        configuration.workingDirectory = workingDirectory.text
         configuration.runEnvironment = environmentVariables.envData
         configuration.dapDriverAutoDetect = dapDriverAutoDetect.isSelected
         configuration.dapDriverPath = dapDriverPath.text
@@ -191,6 +199,10 @@ class XMakeRunConfigurationEditor(
 
         row("Program arguments:") {
             cell(runArguments).align(AlignX.FILL)
+        }
+
+        row("Working directory:") {
+            cell(workingDirectory).align(AlignX.FILL)
         }
 
         row("Environment variables:") {
@@ -221,7 +233,9 @@ class XMakeRunConfigurationEditor(
             ?: project.xmakeBuildProfiles.profiles.singleOrNull()
         if (profile == null) {
             resetBuildTargetChoices(configuration.runTarget)
+            workingDirectory.setToolkit(null)
         } else {
+            workingDirectory.setToolkit(profile.resolveToolkit(project))
             requestBuildTargets(profile)
         }
     }

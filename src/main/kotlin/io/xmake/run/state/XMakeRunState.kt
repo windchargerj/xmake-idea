@@ -76,6 +76,7 @@ internal class XMakeRunState private constructor(
                 commandFactory.createRun(
                     configuration.runTarget,
                     configuration.runArguments,
+                    configuration.workingDirectory,
                     configuration.runEnvironment,
                 ),
             )
