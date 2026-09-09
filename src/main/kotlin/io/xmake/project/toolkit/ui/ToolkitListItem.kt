@@ -52,7 +52,7 @@ sealed class ToolkitListItem(
         tertiaryText = if (!toolkit.isAvailable) {
             "Unavailable"
         } else {
-            toolkit.version
+            toolkit.version.toDisplayVersion()
         },
         caption = if (toolkit.isRegistered) "Registered" else toolkit.host.type.name,
         isCaptionVisible = true,
@@ -72,3 +72,5 @@ sealed class ToolkitListItem(
         }
     }
 }
+
+internal fun String.toDisplayVersion(): String = substringBefore('+').trim()
