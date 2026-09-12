@@ -49,7 +49,10 @@ import com.intellij.ui.UIBundle
 import com.intellij.ui.dsl.builder.*
 import com.intellij.ui.util.getTextWidth
 import com.intellij.util.containers.map2Array
+import io.xmake.project.directory.HostDirectory
+import io.xmake.project.directory.XMakeProjectDirectoryState
 import io.xmake.project.directory.ui.DirectoryBrowser
+import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.project.toolkit.Toolkit
@@ -194,7 +197,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
         if (context.isCreatingNewProject) {
             val selectedToolkit = toolkit
                 ?: throw IllegalStateException("An XMake toolkit must be selected to create a project")
-            val workingDirectory =
+            val hostDirectory =
                 if (!selectedToolkit.requiresBackend) File(contentEntryPath).path
                 else remoteContentEntryPath
 
@@ -205,7 +208,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
 
             Log.info("contentEntry path: $contentEntryPath")
             Log.info("remote contentEntry path: $remoteContentEntryPath")
-            Log.info("working directory: $workingDirectory")
+            Log.info("host directory: $hostDirectory")
 
             val command = listOf(
                 selectedToolkit.path,
@@ -237,7 +240,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
                     LOCAL -> {
                         val tempDirectory = File(generateDirectory)
                         if (tempDirectory.exists()) {
-                            tempDirectory.copyRecursively(File(workingDirectory), true)
+                            tempDirectory.copyRecursively(File(hostDirectory), true)
                             tempDirectory.deleteRecursively()
                         }
                     }
@@ -248,7 +251,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
                                 project,
                                 this@with,
                                 SyncDirection.REMOTE_TO_LOCAL,
-                                workingDirectory,
+                                hostDirectory,
                             )
                         }
                     }
@@ -276,7 +279,23 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
             val profile = XMakeBuildProfile(
                 name = project.name,
                 toolkitId = toolkit?.id,
-                workingDirectory = workingDirectory,
+            )
+            project.xmakeProjectDirectories.replaceState(
+                XMakeProjectDirectoryState(
+                    localDirectory = File(contentEntryPath).path,
+                    // Same asymmetry as importLegacyDirectory: WSL folds into the
+                    // local directory, only SSH keeps a host-specific entry.
+                    hostDirectories = if (selectedToolkit.host.type == SSH) {
+                        mutableListOf(
+                            HostDirectory(
+                                selectedToolkit.host.id.canonical,
+                                hostDirectory,
+                            ),
+                        )
+                    } else {
+                        mutableListOf()
+                    },
+                ),
             )
             project.xmakeBuildProfiles.replaceProfiles(listOf(profile))
             with(RunManager.getInstance(project)) {
@@ -330,6 +349,7 @@ class XMakeProjectWizardStep(parent: NewProjectWizardBaseStep) :
             }
             comment.bind(commentProperty)
         }
+
         private val Log = logger<XMakeProjectWizardStep>()
     }
 

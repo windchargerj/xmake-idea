@@ -25,6 +25,9 @@ import com.intellij.openapi.util.JDOMUtil
 import com.intellij.util.xmlb.XmlSerializer
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.profile.XMakeBuildProfileManager
+import io.xmake.project.directory.LegacyProjectDirectory
+import io.xmake.project.directory.XMakeProjectDirectoryState
+import io.xmake.project.directory.migrateLegacyDirectories
 import org.jdom.Element
 import java.nio.file.Files
 import java.nio.file.Path
@@ -47,6 +50,7 @@ private class XMakeBuildProfilesConverter(
 ) : ProjectConverter() {
 
     private val importedProfiles = mutableListOf<XMakeBuildProfile>()
+    private val importedRootDirectories = mutableListOf<LegacyProjectDirectory>()
 
     override fun createRunConfigurationsConverter(): ConversionProcessor<RunManagerSettings> =
         object : ConversionProcessor<RunManagerSettings>() {
@@ -56,9 +60,10 @@ private class XMakeBuildProfilesConverter(
             override fun process(settings: RunManagerSettings) {
                 settings.xmakeRunConfigurations().forEach { configuration ->
                     val name = configuration.getAttributeValue("name").orEmpty()
-                    readLegacyBuildSettingsAsProfile(configuration, name)?.let { profile ->
-                        importedProfiles += profile
-                        writeBuildProfileReference(configuration, profile.id)
+                    readLegacyBuildSettingsAsProfile(configuration, name)?.let { migrated ->
+                        importedProfiles += migrated.profile
+                        migrated.legacyProjectDirectory?.let(importedRootDirectories::add)
+                        writeBuildProfileReference(configuration, migrated.profile.id)
                         removeLegacyBuildSettings(configuration)
                     }
                 }
@@ -70,8 +75,9 @@ private class XMakeBuildProfilesConverter(
     }
 
     override fun postProcessingFinished() {
-        if (importedProfiles.isEmpty()) return
-        XMakeBuildProfileFile(profilesFile).mergeImportedProfiles(importedProfiles)
+        if (importedProfiles.isEmpty() && importedRootDirectories.isEmpty()) return
+        XMakeBuildProfileFile(profilesFile)
+            .mergeImportedProfiles(importedProfiles, importedRootDirectories)
     }
 
     private val profilesFile: Path
@@ -88,14 +94,36 @@ private fun RunManagerSettings.xmakeRunConfigurations(): List<Element> =
 
 private const val XMAKE_CONFIGURATION_TYPE = "XMakeRunConfiguration"
 
-/** Reads, merges, and writes the project build profiles storage file. */
+private const val PROFILE_ELEMENT_TAG = "XMakeBuildProfile"
+
+private fun profileElements(element: Element): List<Element> =
+    element.children.flatMap { child ->
+        if (child.name == PROFILE_ELEMENT_TAG) {
+            listOf(child)
+        } else {
+            profileElements(child)
+        }
+    }
+
+private fun optionValue(profile: Element, name: String): String? =
+    profile.getChildren("option")
+        .firstOrNull { option -> option.getAttributeValue("name") == name }
+        ?.let { it.getAttributeValue("value") ?: it.text }
+
+/** Reads, merges, and writes project build-profile and project-root storage. */
 private class XMakeBuildProfileFile(private val path: Path) {
 
-    fun mergeImportedProfiles(importedProfiles: List<XMakeBuildProfile>) {
+    fun mergeImportedProfiles(
+        importedProfiles: List<XMakeBuildProfile>,
+        importedRootDirectories: List<LegacyProjectDirectory>,
+    ) {
         val root = loadOrCreate()
-        val component = findOrCreateComponent(root)
-        val mergedProfiles = mergeProfiles(existingProfiles(component), importedProfiles)
-        writeProfiles(component, mergedProfiles)
+        val profilesComponent = findOrCreateComponent(root, PROFILES_COMPONENT)
+        val mergedProfiles = mergeProfiles(existingProfiles(profilesComponent), importedProfiles)
+        writeProfiles(profilesComponent, mergedProfiles)
+        if (importedRootDirectories.isNotEmpty()) {
+            writeImportedRoots(root, importedRootDirectories)
+        }
         JDOMUtil.write(root, path)
     }
 
@@ -106,15 +134,13 @@ private class XMakeBuildProfileFile(private val path: Path) {
             Element("project").setAttribute("version", "4")
         }
 
-    private fun findOrCreateComponent(root: Element): Element =
+    private fun findOrCreateComponent(root: Element, name: String): Element =
         root.getChildren("component")
-            .firstOrNull { element -> element.getAttributeValue("name") == PROFILES_COMPONENT }
-            ?: Element("component").setAttribute("name", PROFILES_COMPONENT).also(root::addContent)
+            .firstOrNull { element -> element.getAttributeValue("name") == name }
+            ?: Element("component").setAttribute("name", name).also(root::addContent)
 
     private fun existingProfiles(component: Element): List<XMakeBuildProfile> {
-        val state = XMakeBuildProfileManager.State()
-        XmlSerializer.deserializeInto(state, component)
-        return state.profiles
+        return XMakeBuildProfileManager.State.fromElement(component).toProfiles()
     }
 
     private fun mergeProfiles(
@@ -137,12 +163,41 @@ private class XMakeBuildProfileFile(private val path: Path) {
     }
 
     private fun writeProfiles(component: Element, profiles: List<XMakeBuildProfile>) {
+        // Keep per-profile legacy directories as workingDirectory options: the runtime
+        // loadState rewrites and migrates them into the project directory on next open.
+        val legacyDirectoriesById = profileElements(component).mapNotNull { profile ->
+            val id = optionValue(profile, "id") ?: return@mapNotNull null
+            optionValue(profile, "workingDirectory")?.takeIf(String::isNotBlank)?.let { id to it }
+        }.toMap()
+
         component.removeContent()
-        val state = XMakeBuildProfileManager.State(profiles.toMutableList())
+        val state = XMakeBuildProfileManager.State.fromProfiles(profiles)
         XmlSerializer.serializeInto(state, component)
+
+        legacyDirectoriesById.forEach { (id, directory) ->
+            profileElements(component)
+                .firstOrNull { profile -> optionValue(profile, "id") == id }
+                ?.addContent(Element("option").setAttribute("name", "workingDirectory").setAttribute("value", directory))
+        }
+    }
+
+    private fun writeImportedRoots(
+        root: Element,
+        imported: List<LegacyProjectDirectory>,
+    ) {
+        val component = findOrCreateComponent(root, DIRECTORY_COMPONENT)
+        val state = XMakeProjectDirectoryState()
+        XmlSerializer.deserializeInto(state, component)
+
+        val migrated = state.migrateLegacyDirectories(imported)
+        if (migrated == state) return
+
+        component.removeContent()
+        XmlSerializer.serializeInto(migrated, component)
     }
 
     private companion object {
         const val PROFILES_COMPONENT = "XMakeBuildProfiles"
+        const val DIRECTORY_COMPONENT = "XMakeProjectDirectory"
     }
 }
