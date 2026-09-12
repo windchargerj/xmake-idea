@@ -184,10 +184,13 @@ object SystemUtils {
         return getResourceFilePath(scriptName, "scripts")
     }
     
-    // check if xmake project
-    fun isXMakeProject(project: Project): Boolean {
-        return project.basePath?.let { File(it, "xmake.lua").exists() } == true
-    }
+    /** Checks whether the IDE project root itself is an XMake project directory. */
+    fun isXMakeProject(project: Project): Boolean =
+        project.basePath?.let(::hasRootXMakeLua) == true
+
+    /** Checks a local directory for the root XMake project file. */
+    fun hasRootXMakeLua(directory: String): Boolean =
+        File(directory, "xmake.lua").isFile
 }
 
 val VirtualFile.pathAsPath: Path get() = Paths.get(path)
