@@ -34,9 +34,8 @@ interface ToolkitHostCapabilities {
         host: ToolkitHost,
         direction: SyncDirection,
         hostDirectory: String,
+        localDirectory: String,
     )
-
-    suspend fun resolveDefaultWorkingDirectory(project: Project, host: ToolkitHost): String? = null
 
     fun startProcess(host: ToolkitHost, command: GeneralCommandLine): Process
 }

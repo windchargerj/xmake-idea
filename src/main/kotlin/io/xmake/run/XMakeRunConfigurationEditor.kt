@@ -38,6 +38,7 @@ import io.xmake.debug.DapDriverDetector
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.profile.XMakeBuildProfileManager
 import io.xmake.project.profile.xmakeBuildProfiles
+import io.xmake.project.directory.XMakeProjectDirectoryManager
 import io.xmake.project.target.discoverXMakeBuildTargets
 import io.xmake.run.command.DEFAULT_BUILD_TARGET
 import io.xmake.utils.ui.LiveModelComboBox
@@ -133,6 +134,9 @@ class XMakeRunConfigurationEditor(
             editedConfiguration?.let(::refreshBuildTargets)
         })
         profileSelectionConnection.subscribe(XMakeBuildProfileManager.TOPIC, XMakeBuildProfileManager.Listener {
+            editedConfiguration?.let(::refreshBuildTargets)
+        })
+        profileSelectionConnection.subscribe(XMakeProjectDirectoryManager.TOPIC, XMakeProjectDirectoryManager.Listener {
             editedConfiguration?.let(::refreshBuildTargets)
         })
         dapDriverAutoDetect.addItemListener { event ->

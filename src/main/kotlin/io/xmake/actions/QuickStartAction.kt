@@ -34,6 +34,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.wm.ToolWindowManager
 import io.xmake.project.console.xmakeConsoleService
+import io.xmake.project.directory.hasResolvedXMakeProjectDirectory
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitManager
 import io.xmake.utils.SystemUtils
@@ -48,7 +49,7 @@ class QuickStartAction : XMakeProjectAction() {
             e.presentation.isEnabledAndVisible = false
             return
         }
-        e.presentation.isVisible = true
+        e.presentation.isVisible = !project.hasResolvedXMakeProjectDirectory
         e.presentation.isEnabled = !SystemUtils.isXMakeProject(project)
     }
 

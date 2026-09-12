@@ -26,12 +26,12 @@ import com.intellij.openapi.application.runWriteAction
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.platform.ide.progress.withBackgroundProgress
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitHost
 import io.xmake.project.toolkit.ToolkitHostType
+import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.utils.extension.ToolkitHostExtension
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -58,20 +58,18 @@ private fun isDefaultSyncExcluded(path: NioPath): Boolean =
     path.fileName?.toString() in defaultSyncExcludedEntryNames
 
 private suspend fun transferWslFolder(
-    project: Project,
     host: ToolkitHost,
     direction: SyncDirection,
-    directoryPath: String,
+    localDirectoryPath: String,
+    hostDirectoryPath: String,
     relativePath: String? = null,
 ) {
     val wslDistribution = host.wslDistribution
         ?: throw IllegalArgumentException("XMake WSL host backend is not available")
     val cancellationContext = currentCoroutineContext()
     runInterruptible(Dispatchers.IO) {
-        val localRoot = project.guessProjectDir()?.toNioPath()
-            ?: project.basePath?.let { Path(it) }
-            ?: throw IllegalStateException("Cannot resolve project directory")
-        val remoteRoot = Path(wslDistribution.toWindowsPath(directoryPath))
+        val localRoot = Path(localDirectoryPath)
+        val remoteRoot = Path(wslDistribution.toWindowsPath(hostDirectoryPath))
         val syncPaths = resolveSyncPaths(localRoot, remoteRoot, relativePath)
         val checkCanceled = { cancellationContext.ensureActive() }
 
@@ -85,6 +83,7 @@ private suspend fun transferWslFolder(
                     ::isDefaultSyncExcluded,
                 )
             }
+
             SyncDirection.REMOTE_TO_LOCAL -> copyPath(syncPaths.remote, syncPaths.local, checkCanceled)
         }
     }
@@ -267,12 +266,13 @@ suspend fun transferProjectFiles(
     }
 
     try {
+        val localDirectoryPath = project.xmakeProjectDirectories.resolveLocalSyncDirectory()
         when (toolkit.host.type) {
             ToolkitHostType.LOCAL -> Unit
             ToolkitHostType.WSL -> transferWslFolder(
-                project,
                 toolkit.host,
                 direction,
+                localDirectoryPath,
                 directoryPath,
                 relativePath,
             )
@@ -280,7 +280,7 @@ suspend fun transferProjectFiles(
             ToolkitHostType.SSH -> {
                 val path = resolveSshSyncPath(directoryPath, relativePath)
                 ToolkitHostExtension.requireForHostType(ToolkitHostType.SSH)
-                    .syncProject(project, toolkit.host, direction, path)
+                    .syncProject(project, toolkit.host, direction, path, localDirectoryPath)
             }
         }
     } finally {
