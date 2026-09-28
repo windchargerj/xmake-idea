@@ -1,5 +1,6 @@
 package io.xmake.project.directory
 
+import com.intellij.openapi.diagnostic.Logger
 import io.xmake.project.directory.XMakeProjectDirectoryState.HostDirectory
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitHostType
@@ -23,10 +24,14 @@ private fun XMakeProjectDirectoryState.importLegacyDirectory(legacy: LegacyProje
     }
 
 private fun XMakeProjectDirectoryState.importWslDirectory(legacy: LegacyProjectDirectory): XMakeProjectDirectoryState {
+    // Profile-based versions persisted a Windows path for WSL toolkits and mapped it into the
+    // distribution at run time; only a '/'-prefixed value was an explicit distribution path.
+    if (!legacy.directory.startsWith('/')) {
+        return importLocalDirectory(legacy.directory)
+    }
     val windowsDirectoryPath = legacy.toolkit
         ?.host
         ?.wslDistribution
-        ?.takeIf { legacy.directory.startsWith('/') }
         ?.getWindowsPath(legacy.directory)
     if (windowsDirectoryPath != null) {
         return importLocalDirectory(windowsDirectoryPath)
@@ -39,7 +44,13 @@ private fun XMakeProjectDirectoryState.importLocalDirectory(directory: String): 
 
 private fun XMakeProjectDirectoryState.importHostDirectory(legacy: LegacyProjectDirectory, directory: String): XMakeProjectDirectoryState {
     val hostId = legacy.toolkit?.host?.id?.canonical ?: return this
+    if (!directory.startsWith('/')) {
+        Log.warn("Skipped legacy $hostId directory that is not an absolute host path: $directory")
+        return this
+    }
     if (hostDirectories.any { it.hostId == hostId }) return this
     val hostDirectory = HostDirectory(hostId, directory)
     return copy(hostDirectories = (hostDirectories + hostDirectory).toMutableList())
 }
+
+private val Log = Logger.getInstance("XMakeProjectDirectoryMigration")
