@@ -2,6 +2,7 @@ package io.xmake.project.directory
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.vfs.VirtualFile
@@ -12,6 +13,7 @@ import com.intellij.openapi.vfs.newvfs.events.VFileDeleteEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
 import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,10 +58,19 @@ class XMakeProjectDirectoryResolutionService(
         if (project.isDisposed) return
         val request = requestGeneration.incrementAndGet()
         scope.launch {
-            val refreshed = withContext(Dispatchers.IO) {
-                project.xmakeProjectDirectories.hasDirectorySource()
+            try {
+                val refreshed = withContext(Dispatchers.IO) {
+                    project.xmakeProjectDirectories.hasDirectorySource()
+                }
+                publishLatestResolution(request, refreshed)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Log.error("Failed to resolve the XMake project directory source", error)
+            } finally {
+                // Startup awaits the first resolution: it must complete on every path.
+                initialResolution.complete(Unit)
             }
-            publishLatestResolution(request, refreshed)
         }
     }
 
@@ -98,6 +109,8 @@ class XMakeProjectDirectoryResolutionService(
         // The message bus connection registered with [this] is disposed automatically.
     }
 }
+
+private val Log = logger<XMakeProjectDirectoryResolutionService>()
 
 /** Whether the project has any XMake project-directory source. This is deliberately weaker than
  *  toolkit-specific resolution and is cached for action visibility. */
