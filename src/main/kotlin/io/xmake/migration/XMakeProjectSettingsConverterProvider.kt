@@ -16,6 +16,7 @@
  */
 package io.xmake.migration
 
+import com.intellij.conversion.CannotConvertException
 import com.intellij.conversion.ConversionContext
 import com.intellij.conversion.ConversionProcessor
 import com.intellij.conversion.ConverterProvider
@@ -124,7 +125,11 @@ private class XMakeProjectSettingsFile(private val path: Path) {
 
     private fun loadOrCreate(): Element =
         if (Files.exists(path)) {
-            JDOMUtil.load(path)
+            try {
+                JDOMUtil.load(path)
+            } catch (error: Exception) {
+                throw CannotConvertException("xmake.xml is corrupted: ${error.message}", error)
+            }
         } else {
             Element("project").setAttribute("version", "4")
         }
