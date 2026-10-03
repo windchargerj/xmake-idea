@@ -16,6 +16,7 @@
  */
 package io.xmake.project.profile
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.PersistentStateComponent
@@ -29,21 +30,39 @@ import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.project.toolkit.ToolkitManager
 import org.jdom.Element
 
+/** Serves the project's XMake build profiles from the configured [XMakeBuildProfileStorage]. */
 @Service(Service.Level.PROJECT)
 @State(name = "XMakeBuildProfiles", storages = [Storage("xmake.xml")])
 class XMakeBuildProfileManager(private val project: Project) :
-    PersistentStateComponent<Element> {
+    PersistentStateComponent<Element>,
+    Disposable {
 
     private val stateLock = Any()
+    private var storageScope = XMakeBuildProfileStorage.PROJECT
     private var currentProfiles = listOf<XMakeBuildProfile>()
 
     /** Legacy working directories whose toolkit is not registered yet; they stay in the
      *  persisted snapshot until the toolkit appears instead of being dropped. */
     private var pendingLegacyDirectories: Map<String, XMakeBuildProfileXml.PendingLegacyDirectory> = emptyMap()
 
+    init {
+        // Shared-list edits in one project must refresh every project using the shared storage.
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            XMakeSharedBuildProfiles.TOPIC,
+            XMakeSharedBuildProfiles.Listener { onSharedProfilesChanged() },
+        )
+    }
+
+    override fun dispose() {
+        // The message bus connection is parented to this service and disposed with it.
+    }
+
     override fun getState(): Element = synchronized(stateLock) {
         Element("XMakeBuildProfiles").also { element ->
-            XMakeBuildProfileXml.writeProfiles(element, currentProfiles)
+            element.setAttribute(STORAGE_ATTRIBUTE, storageScope.name)
+            if (storageScope == XMakeBuildProfileStorage.PROJECT) {
+                XMakeBuildProfileXml.writeProfiles(element, currentProfiles)
+            }
             XMakeBuildProfileXml.writeLegacyWorkingDirectories(element, pendingLegacyDirectories)
         }
     }
@@ -56,6 +75,9 @@ class XMakeBuildProfileManager(private val project: Project) :
     }
 
     override fun loadState(state: Element) {
+        val loadedScope = state.getAttributeValue(STORAGE_ATTRIBUTE)
+            ?.let { attribute -> XMakeBuildProfileStorage.entries.firstOrNull { it.name == attribute } }
+            ?: XMakeBuildProfileStorage.PROJECT
         // A malformed ID cannot be remapped safely because run configurations may still refer to it.
         // Isolate that record and let the next state write remove it from the persisted snapshot.
         val rawProfiles = XMakeBuildProfileXml.readProfiles(state)
@@ -74,10 +96,53 @@ class XMakeBuildProfileManager(private val project: Project) :
             Log.warn("Discarding legacy working directories of malformed profiles: IDs $orphanedIds")
         }
         synchronized(stateLock) {
+            storageScope = loadedScope
             currentProfiles = loadedState
             pendingLegacyDirectories = pendingDirectories - orphanedIds
         }
+        if (loadedScope == XMakeBuildProfileStorage.SHARED) {
+            adoptSharedProfiles()
+        }
         migratePendingLegacyDirectories()
+    }
+
+    /** Where this project's profile list is persisted; see [switchStorage]. */
+    val storage: XMakeBuildProfileStorage
+        get() = synchronized(stateLock) { storageScope }
+
+    /**
+     * Moves the project's profile list to the given storage.
+     *
+     * Switching to [XMakeBuildProfileStorage.SHARED] merges the project's profiles into the
+     * shared list (profiles with an already present id are skipped) and the project then uses
+     * the shared list. Switching back copies the current shared list into the project; the
+     * shared list itself is left untouched for the other projects using it.
+     */
+    fun switchStorage(scope: XMakeBuildProfileStorage) {
+        if (scope == synchronized(stateLock) { storageScope }) return
+
+        when (scope) {
+            XMakeBuildProfileStorage.SHARED -> {
+                // Resolve what is resolvable while the local profile list still owns the record.
+                migratePendingLegacyDirectories()
+                val localProfiles = synchronized(stateLock) { currentProfiles.map(XMakeBuildProfile::copy) }
+                val shared = XMakeSharedBuildProfiles.getInstance()
+                val imported = shared.importProfiles(localProfiles)
+                synchronized(stateLock) {
+                    storageScope = scope
+                    currentProfiles = imported
+                }
+            }
+
+            XMakeBuildProfileStorage.PROJECT -> {
+                val sharedProfiles = XMakeSharedBuildProfiles.getInstance().profiles
+                synchronized(stateLock) {
+                    storageScope = scope
+                    currentProfiles = sharedProfiles
+                }
+            }
+        }
+        publishProfilesChanged()
     }
 
     /** Migrates pending legacy directories whose toolkit has appeared; the rest are retained in
@@ -96,6 +161,27 @@ class XMakeBuildProfileManager(private val project: Project) :
         }
     }
 
+    private fun onSharedProfilesChanged() {
+        if (project.isDisposed) return
+        val shouldPublish = synchronized(stateLock) {
+            if (storageScope != XMakeBuildProfileStorage.SHARED) return
+            adoptSharedProfilesLocked()
+        }
+        if (shouldPublish) publishProfilesChanged()
+    }
+
+    /** Adopts the current shared list after a scope switch or a shared-list change;
+     *  returns whether the project's list changed. */
+    private fun adoptSharedProfiles(): Boolean =
+        synchronized(stateLock) { adoptSharedProfilesLocked() }
+
+    private fun adoptSharedProfilesLocked(): Boolean {
+        val sharedProfiles = XMakeSharedBuildProfiles.getInstance().profiles
+        if (currentProfiles == sharedProfiles) return false
+        currentProfiles = sharedProfiles
+        return true
+    }
+
     val profiles: List<XMakeBuildProfile>
         get() = synchronized(stateLock) { currentProfiles.map(XMakeBuildProfile::copy) }
 
@@ -104,16 +190,18 @@ class XMakeBuildProfileManager(private val project: Project) :
     }
 
     fun replaceProfiles(profiles: List<XMakeBuildProfile>) {
-        require(profiles.isNotEmpty()) { "At least one XMake build profile is required" }
-        require(profiles.all { XMakeBuildProfile.isValidId(it.id) }) { "XMake build profile IDs are invalid" }
-        require(profiles.map { it.id }.distinct().size == profiles.size) { "XMake build profile IDs must be unique" }
-        require(profiles.all { it.name.isNotBlank() }) { "XMake build profile names must not be blank" }
-        require(profiles.map { it.name.trim() }.distinct().size == profiles.size) {
-            "XMake build profile names must be unique"
-        }
+        XMakeBuildProfile.validateProfileList(profiles)
 
         val replacement = profiles
             .map { it.copy(name = it.name.trim()) }
+        if (synchronized(stateLock) { storageScope } == XMakeBuildProfileStorage.SHARED) {
+            // The synchronous shared-list notification adopts the new list; cover the unchanged
+            // case for this project as well.
+            XMakeSharedBuildProfiles.getInstance().replaceProfiles(replacement)
+            if (adoptSharedProfiles()) publishProfilesChanged()
+            return
+        }
+
         val changed = synchronized(stateLock) {
             if (currentProfiles == replacement) {
                 false
@@ -129,6 +217,15 @@ class XMakeBuildProfileManager(private val project: Project) :
 
     internal fun importMigratedProfile(profile: XMakeBuildProfile): XMakeBuildProfile {
         require(XMakeBuildProfile.isValidId(profile.id)) { "Invalid XMake build profile ID: ${profile.id}" }
+        if (synchronized(stateLock) { storageScope } == XMakeBuildProfileStorage.SHARED) {
+            val imported = XMakeSharedBuildProfiles.getInstance()
+                .importProfiles(listOf(profile))
+                .firstOrNull { merged -> merged.id == profile.id }
+                ?: profile
+            if (adoptSharedProfiles()) publishProfilesChanged()
+            return imported
+        }
+
         val (importedProfile, changed) = synchronized(stateLock) {
             currentProfiles.firstOrNull { existing -> existing.id == profile.id }?.let { existing ->
                 return@synchronized existing.copy() to false
@@ -144,23 +241,26 @@ class XMakeBuildProfileManager(private val project: Project) :
 
     internal fun handleToolkitChanges() {
         val toolkitManager = ToolkitManager.getInstance()
-        val shouldPublish = synchronized(stateLock) {
-            val updatedProfiles = currentProfiles.map { profile ->
-                val toolkitId = profile.toolkitId
-                if (toolkitId != null && !toolkitManager.isRegistered(toolkitId)) {
-                    profile.copy(toolkitId = null)
-                } else {
-                    profile
-                }
-            }
-            if (updatedProfiles == currentProfiles) {
-                false
+        val activeProfiles = synchronized(stateLock) { currentProfiles.map(XMakeBuildProfile::copy) }
+        val updatedProfiles = activeProfiles.map { profile ->
+            val toolkitId = profile.toolkitId
+            if (toolkitId != null && !toolkitManager.isRegistered(toolkitId)) {
+                profile.copy(toolkitId = null)
             } else {
-                currentProfiles = updatedProfiles
-                true
+                profile
             }
         }
-        if (shouldPublish) publishProfilesChanged()
+        if (updatedProfiles != activeProfiles) {
+            if (synchronized(stateLock) { storageScope } == XMakeBuildProfileStorage.SHARED) {
+                // Toolkit registrations are application-wide, so cleaning the shared list is
+                // correct for every project using it.
+                XMakeSharedBuildProfiles.getInstance().replaceProfiles(updatedProfiles)
+                if (adoptSharedProfiles()) publishProfilesChanged()
+            } else {
+                synchronized(stateLock) { currentProfiles = updatedProfiles }
+                publishProfilesChanged()
+            }
+        }
         // A newly registered or scanned toolkit may resolve retained legacy directories.
         migratePendingLegacyDirectories()
     }
@@ -185,6 +285,8 @@ class XMakeBuildProfileManager(private val project: Project) :
 
     companion object {
         private val Log = logger<XMakeBuildProfileManager>()
+
+        private const val STORAGE_ATTRIBUTE = "storage"
 
         @Topic.ProjectLevel
         val TOPIC: Topic<Listener> = Topic.create("XMake build profiles changed", Listener::class.java)

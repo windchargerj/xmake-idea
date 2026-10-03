@@ -11,12 +11,15 @@ import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.dsl.builder.Align
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
 import io.xmake.project.directory.ui.XMakeProjectDirectoryPanel
+import io.xmake.project.profile.XMakeBuildProfileStorage
+import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.project.toolkit.ToolkitListener
 import io.xmake.project.toolkit.ToolkitManager
 import io.xmake.project.toolkit.ui.ToolkitListItem
@@ -32,6 +35,9 @@ class XMakeSettingsConfigurable(private val project: Project) : SearchableConfig
     private val toolkitListModel = DefaultListModel<ToolkitListItem>()
     private var toolkitList: JBList<ToolkitListItem>? = null
     private var myPanel: DialogPanel? = null
+
+    private val projectStorageRadio = JBRadioButton("This project")
+    private val sharedStorageRadio = JBRadioButton("All projects")
 
     private val pendingToolkitRemovals = mutableSetOf<String>()
 
@@ -102,6 +108,19 @@ class XMakeSettingsConfigurable(private val project: Project) : SearchableConfig
                 projectDirectoryPanel.attachTo(this)
             }
 
+            groupRowsRange("Build Profiles") {
+                buttonsGroup {
+                    row("Profile storage:") {
+                        cell(projectStorageRadio)
+                        cell(sharedStorageRadio)
+                    }.comment(
+                        "'This project' keeps profiles in the project files. 'All projects' shares one " +
+                                "IDE-wide list: switching merges this project's profiles into it, and switching " +
+                                "back copies the shared list into this project.",
+                    )
+                }
+            }
+
             groupRowsRange("IntelliSense") {
                 row("Compile commands directory:") {
                     textField()
@@ -153,6 +172,7 @@ class XMakeSettingsConfigurable(private val project: Project) : SearchableConfig
 
     override fun isModified(): Boolean {
         return pendingToolkitRemovals.isNotEmpty() ||
+                selectedProfileStorage() != project.xmakeBuildProfiles.storage ||
                 projectDirectoryPanel?.isModified == true ||
                 myPanel?.isModified() == true
     }
@@ -160,6 +180,7 @@ class XMakeSettingsConfigurable(private val project: Project) : SearchableConfig
     override fun apply() {
         pendingToolkitRemovals.forEach(toolkitManager::unregister)
         pendingToolkitRemovals.clear()
+        project.xmakeBuildProfiles.switchStorage(selectedProfileStorage())
         projectDirectoryPanel?.apply()
         myPanel?.apply()
     }
@@ -167,6 +188,7 @@ class XMakeSettingsConfigurable(private val project: Project) : SearchableConfig
     override fun reset() {
         pendingToolkitRemovals.clear()
         refreshToolkitList()
+        resetProfileStorageSelection()
         projectDirectoryPanel?.reset()
         myPanel?.reset()
     }
@@ -175,6 +197,16 @@ class XMakeSettingsConfigurable(private val project: Project) : SearchableConfig
         // Cancelling a modified page does not run reset on this platform.
         pendingToolkitRemovals.clear()
         refreshToolkitList()
+        resetProfileStorageSelection()
+    }
+
+    private fun selectedProfileStorage(): XMakeBuildProfileStorage =
+        if (sharedStorageRadio.isSelected) XMakeBuildProfileStorage.SHARED else XMakeBuildProfileStorage.PROJECT
+
+    private fun resetProfileStorageSelection() {
+        val storage = project.xmakeBuildProfiles.storage
+        projectStorageRadio.isSelected = storage == XMakeBuildProfileStorage.PROJECT
+        sharedStorageRadio.isSelected = storage == XMakeBuildProfileStorage.SHARED
     }
 
     override fun getDisplayName() = "XMake"

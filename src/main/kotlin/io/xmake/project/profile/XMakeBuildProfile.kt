@@ -77,6 +77,17 @@ data class XMakeBuildProfile(
 
         internal fun isValidId(id: String): Boolean = PROFILE_ID_PATTERN.matches(id)
 
+        /** The shared invariant of a persisted profile list; throws [IllegalArgumentException]. */
+        internal fun validateProfileList(profiles: List<XMakeBuildProfile>) {
+            require(profiles.isNotEmpty()) { "At least one XMake build profile is required" }
+            require(profiles.all { isValidId(it.id) }) { "XMake build profile IDs are invalid" }
+            require(profiles.map { it.id }.distinct().size == profiles.size) { "XMake build profile IDs must be unique" }
+            require(profiles.all { it.name.isNotBlank() }) { "XMake build profile names must not be blank" }
+            require(profiles.map { it.name.trim() }.distinct().size == profiles.size) {
+                "XMake build profile names must be unique"
+            }
+        }
+
         /** Drops malformed/duplicate records and gives every remaining profile a unique name. */
         internal fun normalize(profiles: Iterable<XMakeBuildProfile>): List<XMakeBuildProfile> {
             val usedIds = mutableSetOf<String>()
