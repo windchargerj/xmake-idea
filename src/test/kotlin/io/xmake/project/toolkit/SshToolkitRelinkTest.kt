@@ -16,10 +16,12 @@ class SshToolkitRelinkTest : LightPlatformTestCase() {
     @Throws(Exception::class)
     override fun setUp() {
         super.setUp()
-        // Mirrors the real-world broken state: an application-level SSH configuration stored
-        // with the DESCRIPTIVE name format, whose presentable name is "jacky@local-srv:22".
+        // Mirrors the real-world broken state: an SSH configuration presented with the
+        // DESCRIPTIVE name format, whose presentable name is "jacky@local-srv:22". The relink
+        // path reads configs through SshConfigManager.getInstance(project), which merges
+        // project- and application-level configs, so the storage level does not matter here.
         sshConfig = SshConfigManager.getInstance(project).register(
-            true, "local-srv", "22", "jacky", AuthType.OPEN_SSH,
+            false, "local-srv", "22", "jacky", AuthType.OPEN_SSH,
             null, null, false, false, null, null,
         )
         assertNotNull("SSH config must be registered", sshConfig)
