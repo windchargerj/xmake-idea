@@ -16,11 +16,14 @@ class SshToolkitRelinkTest : LightPlatformTestCase() {
     @Throws(Exception::class)
     override fun setUp() {
         super.setUp()
+        // Mirrors the real-world broken state: an application-level SSH configuration stored
+        // with the DESCRIPTIVE name format, whose presentable name is "jacky@local-srv:22".
         sshConfig = SshConfigManager.getInstance(project).register(
-            false, "192.168.1.10", "22", "root", AuthType.PASSWORD,
+            true, "local-srv", "22", "jacky", AuthType.OPEN_SSH,
             null, null, false, false, null, null,
         )
         assertNotNull("SSH config must be registered", sshConfig)
+        sshConfig.setSerializedNameFormat(SshConfig.NameFormat.DESCRIPTIVE)
         // The SSH plugin flips AUTO_POPUP_JAVADOC_INFO while registering a config, which the
         // platform teardown would flag as settings damage; accept the post-registration baseline.
         setDefaultCodeInsightSettings(CodeInsightSettings.getInstance())
@@ -32,22 +35,22 @@ class SshToolkitRelinkTest : LightPlatformTestCase() {
             Toolkit(
                 name = name,
                 host = ToolkitHost(ToolkitHostType.SSH),
-                path = "/home/root/.local/bin/xmake",
+                path = "/home/jacky/.local/bin/xmake",
                 version = "v2.9.7",
             ),
         )
     }
 
     fun testRelinksLegacySshRegistrationAndRendersRow() {
-        val shortName = sshConfig.presentableShortName
-        ToolkitManager.getInstance().loadState(legacySshToolkitState(shortName))
+        assertEquals("jacky@local-srv:22", sshConfig.presentableShortName)
+        ToolkitManager.getInstance().loadState(legacySshToolkitState("jacky@local-srv:22"))
 
         val registered = ToolkitManager.getInstance().registeredToolkits(project)
         assertEquals(1, registered.size)
         val toolkit = registered.single()
         assertTrue("host backend must be relinked", toolkit.host.hasBackend)
         assertEquals(sshConfig.id, toolkit.host.sshConfig?.id)
-        assertEquals("SSH: $shortName:", settingsHostRowLabels().singleOrNull())
+        assertEquals("SSH: jacky@local-srv:22:", settingsHostRowLabels().singleOrNull())
     }
 
     fun testUnresolvableHostLabelDoesNotRepeatHostType() {
