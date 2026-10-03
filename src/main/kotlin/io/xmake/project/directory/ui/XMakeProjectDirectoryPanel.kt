@@ -174,7 +174,7 @@ internal class XMakeProjectDirectoryPanel(private val project: Project) {
         toolkit: Toolkit,
     ) {
         val hostId = toolkit.host.id.canonical
-        val displayName = "${toolkit.host.type}: ${toolkit.host.displayName}"
+        val displayName = hostDirectoryLabel(toolkit)
         val directoryBrowser = DirectoryBrowser(
             project,
             browseTitle = "XMake Project Directory",
@@ -183,5 +183,13 @@ internal class XMakeProjectDirectoryPanel(private val project: Project) {
             setToolkit(toolkit)
         }
     }
+}
 
+/** The host name falls back to the persisted toolkit name when the host backend is currently
+ *  unresolved, so the row still identifies the host instead of repeating the host type. */
+private fun hostDirectoryLabel(toolkit: Toolkit): String {
+    val hostType = toolkit.host.type.name
+    val hostName = toolkit.host.displayName.takeIf { name -> name != hostType }
+        ?: toolkit.name.takeIf(String::isNotBlank)
+    return if (hostName == null) hostType else "$hostType: $hostName"
 }

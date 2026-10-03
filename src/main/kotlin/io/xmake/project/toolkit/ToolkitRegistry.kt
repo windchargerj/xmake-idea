@@ -107,6 +107,16 @@ internal class ToolkitRegistry {
         return updated
     }
 
+    /** Attaches a resolved host backend id to a registration persisted without one, keeping its identity. */
+    fun relinkHost(id: String, host: ToolkitHost): Toolkit? {
+        val toolkit = entries[id] ?: return null
+        if (toolkit.host.type != host.type) return null
+        if (toolkit.host == host.toPersistedHost()) return null
+        val relinked = toolkit.copy(host = host.toPersistedHost())
+        entries[id] = relinked
+        return relinked
+    }
+
     fun toState(): ToolkitManager.State = ToolkitManager.State().apply {
         defaultToolkitId = this@ToolkitRegistry.defaultToolkitId
         entries.values.mapTo(registeredToolkits) { toolkit -> toolkit.toPersistedToolkit() }

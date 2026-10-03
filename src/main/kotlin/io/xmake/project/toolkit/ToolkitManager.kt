@@ -205,20 +205,25 @@ class ToolkitManager(private val scope: CoroutineScope) :
         sshHostsById: Map<ToolkitHost.Id, ToolkitHost>,
     ): List<Toolkit> =
         buildMap {
-            scanner.toolkits.forEach { scanned ->
-                val host = visibleHost(scanned.host, sshHostsById) ?: return@forEach
-                val registered = registry.findByLocation(scanned.location)
-                put(
-                    scanned.id,
-                    scanned.copy(
-                        host = host.toRuntimeHost(),
-                        isRegistered = registered != null,
-                    ),
-                )
-            }
             registry.registeredToolkits.forEach { registered ->
                 val resolved = resolve(registered, sshHostsById)
                 put(resolved.id, resolved)
+            }
+            scanner.toolkits.forEach { scanned ->
+                val host = visibleHost(scanned.host, sshHostsById) ?: return@forEach
+                // Registrations are published first, so a scanned installation at an already
+                // published location is skipped: publishing it under its scanned id would list
+                // the same installation twice.
+                if (values.none { published -> published.location == scanned.location }) {
+                    val registered = registry.findByLocation(scanned.location)
+                    put(
+                        scanned.id,
+                        scanned.copy(
+                            host = host.toRuntimeHost(),
+                            isRegistered = registered != null,
+                        ),
+                    )
+                }
             }
         }.values.toList()
 
@@ -226,25 +231,29 @@ class ToolkitManager(private val scope: CoroutineScope) :
         toolkit: Toolkit,
         sshHostsById: Map<ToolkitHost.Id, ToolkitHost>,
     ): Toolkit {
-        val host = visibleHost(toolkit.host, sshHostsById)
-            ?: return toolkit.copy(
+        var effectiveToolkit = toolkit
+        if (visibleHost(effectiveToolkit.host, sshHostsById) == null) {
+            effectiveToolkit = relinkSshHost(effectiveToolkit, sshHostsById.values) ?: effectiveToolkit
+        }
+        val host = visibleHost(effectiveToolkit.host, sshHostsById)
+            ?: return effectiveToolkit.copy(
                 isRegistered = true,
                 isAvailable = false,
             )
 
-        val scannedToolkit = scanner.findByLocation(toolkit.location)
+        val scannedToolkit = scanner.findByLocation(effectiveToolkit.location)
         return scannedToolkit
             ?.let { scanned ->
-                toolkit.copy(
+                effectiveToolkit.copy(
                     host = host.toRuntimeHost(),
                     isRegistered = true,
                     isAvailable = scanned.isAvailable,
                 )
             }
-            ?: toolkit.copy(
+            ?: effectiveToolkit.copy(
                 host = host.toRuntimeHost(),
                 isRegistered = true,
-                isAvailable = isPathAvailable(toolkit),
+                isAvailable = isPathAvailable(effectiveToolkit),
             )
     }
 
@@ -255,6 +264,25 @@ class ToolkitManager(private val scope: CoroutineScope) :
         LOCAL -> host
         WSL -> host.takeIf(ToolkitHost::hasBackend)
         SSH -> sshHostsById[host.id]
+    }
+
+    /**
+     * Re-attaches an SSH registration persisted without a backend id (registrations written by
+     * older plugin versions) to the current SSH configuration with the same presentable name.
+     * A unique name match is required; registrations that already carry a backend id are never
+     * moved to a different configuration.
+     */
+    private fun relinkSshHost(toolkit: Toolkit, sshHosts: Collection<ToolkitHost>): Toolkit? {
+        if (toolkit.host.type != SSH || toolkit.host.migratedBackendId != null) return null
+        val persistedName = toolkit.name.takeIf(String::isNotBlank) ?: return null
+        val matches = sshHosts.filter { host ->
+            val config = host.sshConfig ?: return@filter false
+            config.presentableShortName == persistedName || config.presentableFullName == persistedName
+        }
+        val matchedHost = matches.singleOrNull() ?: return null
+        return registry.relinkHost(toolkit.id, matchedHost)?.also {
+            Log.info("Relinked SSH toolkit ${toolkit.id} to host ${matchedHost.id.canonical} by name '$persistedName'")
+        }
     }
 
     private fun currentSshHostsById(project: Project?): Map<ToolkitHost.Id, ToolkitHost> =
