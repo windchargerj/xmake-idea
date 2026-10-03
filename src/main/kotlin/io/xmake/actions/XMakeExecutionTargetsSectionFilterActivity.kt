@@ -58,7 +58,6 @@ internal fun installExecutionTargetsSectionFilter() {
         val sectionParent = actionManager.getAction(TARGETS_SECTION_GROUP_ID) as? DefaultActionGroup
             ?: return
         val cmakeSection = actionManager.getAction(CMAKE_SECTION_GROUP_ID) ?: return
-        if (sectionParent.getChildren(null).none { child -> child === cmakeSection }) return
 
         sectionParent.remove(cmakeSection)
         sectionParent.add(XMakeAwareSectionGroup(cmakeSection))
