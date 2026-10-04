@@ -102,4 +102,32 @@ class XMakeBuildProfileStorageTest : LightPlatformTestCase() {
         assertEquals("PROJECT", manager.getState().getAttributeValue("storage"))
         assertTrue(XMakeBuildProfileXml.readProfiles(manager.getState()).isNotEmpty())
     }
+
+    fun testPendingLegacyDirectoriesSurviveSharedStorageSave() {
+        // A pre-profile-era working directory whose toolkit is not registered stays pending. In
+        // the per-profile legacy format the toolkit reference lives on the profile element.
+        val profile = XMakeBuildProfile(name = "Legacy Holder", toolkitId = "missing-toolkit")
+        val pending = mapOf(
+            profile.id to XMakeBuildProfileXml.PendingLegacyDirectory(
+                toolkitId = "missing-toolkit",
+                directory = "/remote/project",
+            ),
+        )
+        val projectState = org.jdom.Element("XMakeBuildProfiles").also { element ->
+            XMakeBuildProfileXml.writeProfiles(element, listOf(profile))
+            XMakeBuildProfileXml.writeLegacyWorkingDirectories(element, pending)
+        }
+        manager.loadState(projectState)
+        assertEquals(PROJECT, manager.storage)
+
+        manager.switchStorage(SHARED)
+        val sharedState = manager.getState()
+
+        assertTrue(XMakeBuildProfileXml.readProfiles(sharedState).isEmpty())
+        assertEquals(pending, XMakeBuildProfileXml.readStandalonePendingLegacyDirectories(sharedState))
+
+        // Reloading such a state keeps the entry pending instead of dropping it.
+        manager.loadState(sharedState)
+        assertEquals(pending, XMakeBuildProfileXml.readStandalonePendingLegacyDirectories(manager.getState()))
+    }
 }

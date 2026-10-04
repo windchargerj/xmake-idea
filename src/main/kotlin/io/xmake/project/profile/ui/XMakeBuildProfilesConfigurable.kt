@@ -21,22 +21,43 @@ import com.intellij.openapi.options.MasterDetails
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DetailsComponent
-import javax.swing.JComponent
+import com.intellij.util.messages.MessageBusConnection
+import io.xmake.project.profile.XMakeBuildProfileManager
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
+import javax.swing.JComponent
 
 /**
- * The Settings entry for project-owned XMake profiles.
+ * The Settings entry editing the project's XMake build profiles, whichever storage they live in.
  *
- * Implementing [MasterDetails] tells the Settings container that the page already
- * provides the standard master/details chrome; otherwise it adds another margin
- * around the editor and makes the page wider than the other pages.
+ * Implementing [MasterDetails] tells the Settings container that the page already provides the
+ * standard master/details chrome; otherwise it adds another margin around the editor and makes
+ * the page wider than the other pages.
  */
 class XMakeBuildProfilesConfigurable(
     private val project: Project,
 ) : SearchableConfigurable, Configurable.NoScroll, MasterDetails {
     private var editor: XMakeBuildProfilesEditor? = null
+    private var connection: MessageBusConnection? = null
 
-    override fun createComponent() = editorOrCreate().component
+    override fun createComponent(): JComponent {
+        if (connection == null) {
+            connection = project.messageBus.connect().also { connection ->
+                connection.subscribe(
+                    XMakeBuildProfileManager.TOPIC,
+                    XMakeBuildProfileManager.Listener {
+                        val currentEditor = editor ?: return@Listener
+                        // The list may change elsewhere while this page is open, for example the
+                        // shared storage updated from another project. An untouched page follows
+                        // along; a page with local edits keeps them for its own apply.
+                        if (!currentEditor.isModified) {
+                            currentEditor.reset()
+                        }
+                    },
+                )
+            }
+        }
+        return editorOrCreate().component
+    }
 
     override fun isModified(): Boolean = editor?.isModified == true
 
@@ -47,6 +68,8 @@ class XMakeBuildProfilesConfigurable(
     }
 
     override fun disposeUIResources() {
+        connection?.disconnect()
+        connection = null
         editor?.disposeUIResources()
         editor = null
     }

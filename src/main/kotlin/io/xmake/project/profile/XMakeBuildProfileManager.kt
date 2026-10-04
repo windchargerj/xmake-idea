@@ -61,9 +61,14 @@ class XMakeBuildProfileManager(private val project: Project) :
         Element("XMakeBuildProfiles").also { element ->
             element.setAttribute(STORAGE_ATTRIBUTE, storageScope.name)
             if (storageScope == XMakeBuildProfileStorage.PROJECT) {
+                // The legacy directories ride along with the profile elements for older versions.
                 XMakeBuildProfileXml.writeProfiles(element, currentProfiles)
+                XMakeBuildProfileXml.writeLegacyWorkingDirectories(element, pendingLegacyDirectories)
+            } else {
+                // No profile elements are written, so the pending legacy directories are
+                // persisted standalone instead of being silently dropped on save.
+                XMakeBuildProfileXml.writePendingLegacyDirectories(element, pendingLegacyDirectories)
             }
-            XMakeBuildProfileXml.writeLegacyWorkingDirectories(element, pendingLegacyDirectories)
         }
     }
 
@@ -90,8 +95,16 @@ class XMakeBuildProfileManager(private val project: Project) :
         val loadedState = loadedProfiles.ifEmpty {
             listOf(XMakeBuildProfile.createDefault(project))
         }
-        val pendingDirectories = XMakeBuildProfileXml.readLegacyWorkingDirectories(state)
-        val orphanedIds = pendingDirectories.keys - loadedState.mapTo(mutableSetOf(), XMakeBuildProfile::id)
+        val standalonePending = XMakeBuildProfileXml.readStandalonePendingLegacyDirectories(state)
+        val pendingDirectories = standalonePending
+            ?: XMakeBuildProfileXml.readLegacyWorkingDirectories(state)
+        // Only per-profile entries are bound to a local profile element; standalone entries
+        // (shared storage) reference profiles that may live outside the project file.
+        val orphanedIds = if (standalonePending != null) {
+            emptySet()
+        } else {
+            pendingDirectories.keys - loadedState.mapTo(mutableSetOf(), XMakeBuildProfile::id)
+        }
         if (orphanedIds.isNotEmpty()) {
             Log.warn("Discarding legacy working directories of malformed profiles: IDs $orphanedIds")
         }

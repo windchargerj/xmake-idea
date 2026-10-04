@@ -1,6 +1,5 @@
 package io.xmake.project.profile
 
-import com.intellij.openapi.diagnostic.logger
 import com.intellij.util.xmlb.XmlSerializer
 import com.intellij.util.xmlb.annotations.Tag
 import io.xmake.project.directory.LegacyProjectDirectory
@@ -67,6 +66,40 @@ internal object XMakeBuildProfileXml {
                     .setAttribute("value", entry.directory),
             )
         }
+    }
+
+    /** Reads pending legacy directories from the standalone [writePendingLegacyDirectories]
+     *  form, or null when the state does not carry that element (the per-profile form of
+     *  [readLegacyWorkingDirectories] applies instead). */
+    fun readStandalonePendingLegacyDirectories(element: Element): Map<String, PendingLegacyDirectory>? {
+        val pendingElement = element.getChild(PENDING_DIRECTORIES_ELEMENT) ?: return null
+        return pendingElement.getChildren(PENDING_ENTRY_ELEMENT).mapNotNull { entry ->
+            val profileId = entry.getAttributeValue(PROFILE_ID_ATTRIBUTE) ?: return@mapNotNull null
+            val directory = entry.getAttributeValue(DIRECTORY_ATTRIBUTE)?.takeUnless(String::isBlank)
+                ?: return@mapNotNull null
+            profileId to PendingLegacyDirectory(
+                toolkitId = entry.getAttributeValue(TOOLKIT_ID_ATTRIBUTE),
+                directory = directory,
+            )
+        }.toMap()
+    }
+
+    /** Persists pending legacy directories standalone, used while the profile list itself lives
+     *  outside the project file and there are no profile elements to attach the options to. */
+    fun writePendingLegacyDirectories(element: Element, pending: Map<String, PendingLegacyDirectory>) {
+        if (pending.isEmpty()) return
+        val pendingElement = Element(PENDING_DIRECTORIES_ELEMENT)
+        pending.forEach { (profileId, entry) ->
+            pendingElement.addContent(
+                Element(PENDING_ENTRY_ELEMENT)
+                    .setAttribute(PROFILE_ID_ATTRIBUTE, profileId)
+                    .also { child ->
+                        entry.toolkitId?.let { toolkitId -> child.setAttribute(TOOLKIT_ID_ATTRIBUTE, toolkitId) }
+                        child.setAttribute(DIRECTORY_ATTRIBUTE, entry.directory)
+                    },
+            )
+        }
+        element.addContent(pendingElement)
     }
 
     /** A legacy working directory whose toolkit could not be resolved yet. */
@@ -144,4 +177,9 @@ internal object XMakeBuildProfileXml {
     private const val ID_OPTION = "id"
     private const val TOOLKIT_ID_OPTION = "toolkitId"
     private const val WORKING_DIRECTORY_OPTION = "workingDirectory"
+    private const val PENDING_DIRECTORIES_ELEMENT = "pendingLegacyDirectories"
+    private const val PENDING_ENTRY_ELEMENT = "entry"
+    private const val PROFILE_ID_ATTRIBUTE = "profileId"
+    private const val TOOLKIT_ID_ATTRIBUTE = "toolkitId"
+    private const val DIRECTORY_ATTRIBUTE = "directory"
 }
