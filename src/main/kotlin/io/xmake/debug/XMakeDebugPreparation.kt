@@ -58,18 +58,31 @@ internal suspend fun prepareXMakeDebugLaunch(
         executablePath = debugTarget.executableFile.absolutePath,
         driver = driver,
         arguments = state.arguments,
-        environment = state.environment,
+        environment = state.processEnvironment,
         workingDirectory = state.launchWorkingDirectory
             ?: debugTarget.effectiveRunDirectory.absolutePath,
     )
 }
 
-private data class DebugTarget(
+/** A built xmake target as reported by `targetpath.lua`. */
+internal data class XMakeTargetLocation(
     val executableFile: File,
     val effectiveRunDirectory: File,
 )
 
-private fun resolveDebugTarget(state: XMakeDebugState, output: String): DebugTarget {
+private fun resolveDebugTarget(state: XMakeDebugState, output: String): XMakeTargetLocation =
+    resolveXMakeTargetLocation(state.targetName, output, state.targetPathCommand.workingDirectory)
+
+/**
+ * Parses the `targetpath.lua` query output: `__begin__`, the target file, optionally its
+ * effective run directory (`set_rundir()`, else the target file's directory), then `__end__`.
+ * Relative paths resolve against [workingDirectory].
+ */
+internal fun resolveXMakeTargetLocation(
+    targetName: String,
+    output: String,
+    workingDirectory: String,
+): XMakeTargetLocation {
     val targetOutputLines = "__begin__([\\s\\S]*?)__end__".toRegex()
         .find(output.trim())
         ?.groupValues
@@ -82,12 +95,12 @@ private fun resolveDebugTarget(state: XMakeDebugState, output: String): DebugTar
         .orEmpty()
 
     val targetPath = targetOutputLines.firstOrNull()
-        ?: throw ExecutionException("Could not determine the executable path for ${state.targetName}")
+        ?: throw ExecutionException("Could not determine the executable path for $targetName")
 
     val resolvedTargetPath = if (File(targetPath).isAbsolute) {
         targetPath
     } else {
-        File(state.targetPathCommand.workingDirectory, targetPath).absolutePath
+        File(workingDirectory, targetPath).absolutePath
     }
     val executableFile = File(resolvedTargetPath)
     if (!executableFile.isFile) throw ExecutionException("Target executable not found: $targetPath")
@@ -98,12 +111,12 @@ private fun resolveDebugTarget(state: XMakeDebugState, output: String): DebugTar
     } else if (File(effectiveRunDirectoryPath).isAbsolute) {
         File(effectiveRunDirectoryPath)
     } else {
-        File(state.targetPathCommand.workingDirectory, effectiveRunDirectoryPath).absoluteFile
+        File(workingDirectory, effectiveRunDirectoryPath).absoluteFile
     }
     if (!effectiveRunDirectory.isDirectory) {
         throw ExecutionException("Target run directory not found: ${effectiveRunDirectory.absolutePath}")
     }
-    return DebugTarget(executableFile.absoluteFile, effectiveRunDirectory)
+    return XMakeTargetLocation(executableFile.absoluteFile, effectiveRunDirectory)
 }
 
 private suspend fun resolveDapDriver(project: Project, state: XMakeDebugState): XMakeDebugDriver.Dap {

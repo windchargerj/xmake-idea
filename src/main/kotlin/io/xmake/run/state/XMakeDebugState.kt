@@ -17,9 +17,8 @@
 package io.xmake.run.state
 
 import com.intellij.execution.ExecutionException
-import com.intellij.execution.Executor
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.runners.ProgramRunner
+import com.intellij.execution.configurations.CommandLineState
+import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.util.execution.ParametersListUtil
 import io.xmake.run.XMakeRunConfiguration
@@ -29,6 +28,7 @@ import io.xmake.run.command.resolveLaunchWorkingDirectory
 import io.xmake.run.target.requireXMakeBuildProfileFor
 
 internal class XMakeDebugState private constructor(
+    environment: ExecutionEnvironment,
     val configureCommand: XMakeCommand,
     val buildCommand: XMakeCommand,
     val targetPathCommand: XMakeCommand,
@@ -40,11 +40,12 @@ internal class XMakeDebugState private constructor(
     val launchConfiguration: String,
     val launchWorkingDirectory: String?,
     val arguments: List<String>,
-    val environment: Map<String, String>,
-) : RunProfileState {
+    val processEnvironment: Map<String, String>,
+) : CommandLineState(environment) {
 
-    // XMakeRunner consumes this state asynchronously and returns the XDebugger descriptor.
-    override fun execute(executor: Executor, runner: ProgramRunner<*>) =
+    // XMakeRunner consumes this state asynchronously and returns the XDebugger descriptor;
+    // the platform's own start-process path must never run for it.
+    override fun startProcess(): ProcessHandler =
         throw ExecutionException("XMakeDebugState must be executed by XMakeRunner")
 
     companion object {
@@ -65,6 +66,7 @@ internal class XMakeDebugState private constructor(
             )
 
             return XMakeDebugState(
+                environment = environment,
                 configureCommand = commandFactory.createConfigure(),
                 buildCommand = buildCommand,
                 targetPathCommand = commandFactory.createTargetPathQuery(configuration.runTarget),
@@ -76,7 +78,7 @@ internal class XMakeDebugState private constructor(
                 launchConfiguration = configuration.launchConfiguration,
                 launchWorkingDirectory = launchWorkingDirectory,
                 arguments = ParametersListUtil.parse(configuration.runArguments),
-                environment = configuration.runEnvironment.envs.toMap(),
+                processEnvironment = configuration.runEnvironment.envs.toMap(),
             )
         }
     }
