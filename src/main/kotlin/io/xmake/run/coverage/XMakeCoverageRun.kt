@@ -16,6 +16,8 @@
  */
 package io.xmake.run.coverage
 
+import com.intellij.coverage.CoverageDataManager
+import com.intellij.coverage.CoverageFileProvider
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.project.Project
@@ -51,28 +53,42 @@ internal suspend fun prepareCoverageRun(
 }
 
 /**
- * Looks for gcov data under [project]'s root after a coverage run finished, and reports the
- * result. Exposed separately so the run path can call it once the target process has exited.
+ * Hands the gcov data a coverage run produced to the IDE, so the coverage view and the editor
+ * highlighting pick it up. Called once the target process has exited.
  */
 internal fun reportCoverageData(project: Project, console: XMakeConsole) {
-    val buildRoot = project.basePath?.let(::File) ?: return
-    val gcdaFiles = buildRoot.walkTopDown()
-        .filter { it.extension == GCDA_EXTENSION }
-        .take(MAX_DATA_FILES)
-        .toList()
-    if (gcdaFiles.isEmpty()) {
+    val dataRoot = project.basePath?.let(::File)?.takeIf(File::isDirectory) ?: return
+    val fileProvider = object : CoverageFileProvider {
+        override fun getCoverageDataFilePath(): String = dataRoot.path
+
+        override fun ensureFileExists(): Boolean = dataRoot.isDirectory
+
+        override fun isValid(): Boolean = dataRoot.isDirectory
+    }
+    if (dataRoot.walkTopDown().none { it.extension == GCDA_EXTENSION }) {
         console.print(
             "No coverage data (.gcda) was produced. Check that the target was built in coverage mode.",
             ConsoleViewContentType.ERROR_OUTPUT,
         )
         return
     }
-    console.print("Coverage data (${gcdaFiles.size} file(s)):", ConsoleViewContentType.SYSTEM_OUTPUT)
-    for (file in gcdaFiles) {
-        console.print("  ${file.relativeTo(buildRoot)}", ConsoleViewContentType.SYSTEM_OUTPUT)
-    }
+
+    val dataManager = CoverageDataManager.getInstance(project)
+    val suite = dataManager.addCoverageSuite(
+        COVERAGE_SUITE_NAME,
+        fileProvider,
+        emptyArray(),
+        System.currentTimeMillis(),
+        null,
+        XMakeCoverageRunner(),
+        false,
+        false,
+    ) ?: return
+    dataManager.coverageGathered(suite)
+
+    console.print("Coverage data collected; see the Coverage view.", ConsoleViewContentType.SYSTEM_OUTPUT)
 }
 
 private const val COVERAGE_MODE = "coverage"
 private const val GCDA_EXTENSION = "gcda"
-private const val MAX_DATA_FILES = 200
+private const val COVERAGE_SUITE_NAME = "XMake Coverage"

@@ -53,6 +53,7 @@ dependencies {
         clion(runIdeVersion)
         bundledPlugin("intellij.ssh.plugin")
         bundledModule("intellij.platform.coverage")
+        bundledModule("intellij.platform.coverage.agent")
         testFramework(TestFrameworkType.Platform)
         pluginModule(project(":clion-debug"))
     }

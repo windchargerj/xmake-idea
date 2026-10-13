@@ -55,6 +55,10 @@
         <executionTargetProvider implementation="io.xmake.run.target.XMakeBuildProfileExecutionTargetProvider"/>
         <projectTaskRunner implementation="io.xmake.build.XMakeProjectTaskRunner"/>
 
+        <!-- coverage -->
+        <coverageEngine implementation="io.xmake.run.coverage.XMakeCoverageEngine"/>
+        <coverageRunner implementation="io.xmake.run.coverage.XMakeCoverageRunner"/>
+
         <!-- notifications -->
         <notificationGroup id="XMake.NotificationGroup" displayType="BALLOON"/>
 
