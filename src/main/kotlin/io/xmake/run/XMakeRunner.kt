@@ -45,6 +45,7 @@ import io.xmake.project.console.xmakeConsoleService
 import io.xmake.run.command.XMakeExecutionService
 import io.xmake.run.command.xmakeExecutionService
 import io.xmake.run.state.XMakeDebugState
+import io.xmake.run.state.XMakePerfState
 import io.xmake.run.state.XMakeRunState
 import io.xmake.run.coverage.prepareCoverageRun
 import io.xmake.run.coverage.reportCoverageData
@@ -68,6 +69,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
             CoverageExecutor.EXECUTOR_ID -> true
             XMakeRunConfiguration.VALGRIND_EXECUTOR_ID -> true
+            XMakeRunConfiguration.PERF_EXECUTOR_ID -> true
             else -> false
         }
 
@@ -94,6 +96,10 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             is XMakeValgrindState -> execution.submit {
                 val console = prepareConsole(project)
                 executeValgrind(execution, state, environment, console)
+            }
+            is XMakePerfState -> execution.submit {
+                val console = prepareConsole(project)
+                executePerf(execution, state, environment, console)
             }
             else -> execution.submit {
                 throw ExecutionException("Unsupported XMake run profile state: ${state::class.java.name}")
@@ -192,6 +198,65 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         NotificationGroupManager.getInstance()
             .getNotificationGroup("XMake.NotificationGroup")
             .createNotification("XMake Valgrind run finished", detail, NotificationType.INFORMATION)
+            .notify(project)
+    }
+
+    /**
+     * Prepares a profile run: builds with the profile mode's symbols, then records the target
+     * with Linux `perf`. The resulting data file is announced on exit for `perf report`.
+     */
+    private suspend fun executePerf(
+        execution: XMakeExecutionService,
+        state: XMakePerfState,
+        environment: ExecutionEnvironment,
+        console: XMakeConsole,
+    ): RunContentDescriptor {
+        execution.execute(console, state.configureCommand)
+        execution.execute(
+            console,
+            state.buildCommand,
+            XMakeConsoleOptions(showConsole = false, showProblems = true),
+        )
+        val output = execution.captureStandardOutput(state.targetPathCommand)
+        state.resolvedTarget = resolveXMakeTargetLocation(
+            state.targetName,
+            output,
+            state.targetPathCommand.workingDirectory,
+        )
+
+        val processHandler = state.startProcess()
+        return try {
+            val content = withContext(Dispatchers.EDT) {
+                ensureProjectIsOpen(environment.project)
+                showRunContent(
+                    state.createExecutionResult(environment.executor, processHandler),
+                    environment,
+                ) ?: throw ExecutionException("Failed to create the XMake run descriptor")
+            }
+            processHandler.addProcessListener(object : ProcessListener {
+                override fun processTerminated(event: ProcessEvent) {
+                    notifyPerfProfile(environment.project, state.dataFile)
+                }
+            })
+            content
+        } catch (error: Throwable) {
+            processHandler.stopAfterFailedStart(error)
+            throw error
+        }
+    }
+
+    /** Points the user at the profile data; `perf report` renders it from a terminal. */
+    private fun notifyPerfProfile(project: Project, dataFile: java.io.File) {
+        val detail = if (dataFile.isFile) {
+            "Profile data: ${dataFile.absolutePath}\n" +
+                "Inspect it with: perf report -i \"${dataFile.absolutePath}\""
+        } else {
+            "perf produced no data. Check that perf is installed and permitted " +
+                "(see /proc/sys/kernel/perf_event_paranoid)."
+        }
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("XMake.NotificationGroup")
+            .createNotification("XMake profile run finished", detail, NotificationType.INFORMATION)
             .notify(project)
     }
 
