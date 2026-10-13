@@ -52,6 +52,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.concurrency.Promise
 import org.jetbrains.concurrency.toPromiseWithoutLogError
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessListener
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import io.xmake.debug.resolveXMakeTargetLocation
+import io.xmake.run.command.XMakeConsoleOptions
+import io.xmake.run.state.XMakeValgrindState
 
 class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
 
@@ -60,6 +67,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             DefaultRunExecutor.EXECUTOR_ID -> true
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
             CoverageExecutor.EXECUTOR_ID -> true
+            XMakeRunConfiguration.VALGRIND_EXECUTOR_ID -> true
             else -> false
         }
 
@@ -83,6 +91,10 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
                 before = { prepareXMakeDebugBuild(project, state) },
                 task = { executeDebug(execution, state, environment) },
             )
+            is XMakeValgrindState -> execution.submit {
+                val console = prepareConsole(project)
+                executeValgrind(execution, state, environment, console)
+            }
             else -> execution.submit {
                 throw ExecutionException("Unsupported XMake run profile state: ${state::class.java.name}")
             }
@@ -122,6 +134,65 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             processHandler.stopAfterFailedStart(error)
             throw error
         }
+    }
+
+    /**
+     * Prepares a Valgrind run: configures the profile in xmake's valgrind mode, builds, resolves
+     * the produced binary, then starts it under Valgrind. The report is announced on exit; the
+     * IDE's memory view picks it up through its import action.
+     */
+    private suspend fun executeValgrind(
+        execution: XMakeExecutionService,
+        state: XMakeValgrindState,
+        environment: ExecutionEnvironment,
+        console: XMakeConsole,
+    ): RunContentDescriptor {
+        execution.execute(console, state.configureCommand)
+        execution.execute(
+            console,
+            state.buildCommand,
+            XMakeConsoleOptions(showConsole = false, showProblems = true),
+        )
+        val output = execution.captureStandardOutput(state.targetPathCommand)
+        state.resolvedTarget = resolveXMakeTargetLocation(
+            state.targetName,
+            output,
+            state.targetPathCommand.workingDirectory,
+        )
+
+        val processHandler = state.startProcess()
+        return try {
+            val content = withContext(Dispatchers.EDT) {
+                ensureProjectIsOpen(environment.project)
+                showRunContent(
+                    state.createExecutionResult(environment.executor, processHandler),
+                    environment,
+                ) ?: throw ExecutionException("Failed to create the XMake run descriptor")
+            }
+            processHandler.addProcessListener(object : ProcessListener {
+                override fun processTerminated(event: ProcessEvent) {
+                    notifyValgrindReport(environment.project, state.reportFile)
+                }
+            })
+            content
+        } catch (error: Throwable) {
+            processHandler.stopAfterFailedStart(error)
+            throw error
+        }
+    }
+
+    /** Points the user at the report; the memory view reads it through its import action. */
+    private fun notifyValgrindReport(project: Project, reportFile: java.io.File) {
+        val detail = if (reportFile.isFile) {
+            "Valgrind report: ${reportFile.absolutePath}\n" +
+                "Open it with Run | Import Valgrind Results."
+        } else {
+            "Valgrind produced no report. Check that valgrind is installed and on the PATH."
+        }
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("XMake.NotificationGroup")
+            .createNotification("XMake Valgrind run finished", detail, NotificationType.INFORMATION)
+            .notify(project)
     }
 
     private suspend fun executeDebug(
