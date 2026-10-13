@@ -37,4 +37,6 @@ internal data class XMakeConsoleOptions(
     val showExitCode: Boolean = false,
     /** Leaves ANSI escapes for a downstream console that performs its own decoding. */
     val preserveAnsiEscapes: Boolean = false,
+    /** Gives the process a pseudo-terminal; only effective for local toolkits. */
+    val emulateTerminal: Boolean = false,
 )

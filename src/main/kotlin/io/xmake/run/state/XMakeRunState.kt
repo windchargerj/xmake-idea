@@ -39,7 +39,7 @@ internal class XMakeRunState private constructor(
         XMakeCommandProcessHandler(
             environment.project,
             runCommand,
-            XMakeConsoleOptions(showExitCode = true),
+            XMakeConsoleOptions(showExitCode = true, emulateTerminal = true),
         ).processHandler
 
     internal fun createExecutionResult(
