@@ -31,15 +31,23 @@ import io.xmake.run.target.requireXMakeBuildProfileFor
 
 internal class XMakeRunState private constructor(
     environment: ExecutionEnvironment,
+    val configuration: XMakeRunConfiguration,
     val configureCommand: XMakeCommand,
     private val runCommand: XMakeCommand,
 ) : CommandLineState(environment) {
 
-    public override fun startProcess(): ProcessHandler =
+    public override fun startProcess(): ProcessHandler = startProcess { }
+
+    /**
+     * [onTerminated] runs after the target process exits, used by coverage runs to collect the
+     * gcov data the process just wrote.
+     */
+    internal fun startProcess(onTerminated: () -> Unit): ProcessHandler =
         XMakeCommandProcessHandler(
             environment.project,
             runCommand,
             XMakeConsoleOptions(showExitCode = true, emulateTerminal = true),
+            onTerminated = onTerminated,
         ).processHandler
 
     internal fun createExecutionResult(
@@ -64,6 +72,7 @@ internal class XMakeRunState private constructor(
             val commandFactory = XMakeCommandFactory(configuration.project, profile)
             return XMakeRunState(
                 environment,
+                configuration,
                 commandFactory.createConfigure(),
                 commandFactory.createRun(
                     configuration.runTarget,

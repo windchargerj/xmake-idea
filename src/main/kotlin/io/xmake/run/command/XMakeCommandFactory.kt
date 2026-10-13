@@ -90,8 +90,16 @@ internal class XMakeCommandFactory(
         option("-o", profileSnapshot.buildDirectory.takeIf { it.isNotEmpty() })
     }
 
-    fun createConfigure(): XMakeCommand = createCommand {
+    /**
+     * Configures the profile's build. [modeOverride] replaces the profile's build mode for this
+     * invocation only, used by coverage runs to configure `-m coverage` without touching the
+     * profile the user edits.
+     */
+    fun createConfigure(modeOverride: String? = null): XMakeCommand = createCommand {
         args("config", "-y")
+        if (modeOverride != null) {
+            args("-m", modeOverride)
+        }
         args(configureArguments)
         flag("-v", profileSnapshot.verbose)
     }

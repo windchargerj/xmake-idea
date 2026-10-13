@@ -20,6 +20,7 @@
  */
 package io.xmake.run
 
+import com.intellij.coverage.CoverageExecutor
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunProfileState
@@ -45,6 +46,8 @@ import io.xmake.run.command.XMakeExecutionService
 import io.xmake.run.command.xmakeExecutionService
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
+import io.xmake.run.coverage.prepareCoverageRun
+import io.xmake.run.coverage.reportCoverageData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.concurrency.Promise
@@ -56,6 +59,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         profile is XMakeRunConfiguration && when (executorId) {
             DefaultRunExecutor.EXECUTOR_ID -> true
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
+            CoverageExecutor.EXECUTOR_ID -> true
             else -> false
         }
 
@@ -92,9 +96,20 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         environment: ExecutionEnvironment,
         console: XMakeConsole,
     ): RunContentDescriptor {
-        execution.execute(console, state.configureCommand)
+        // Coverage reconfigures with -m coverage and rebuilds before the normal run starts, then
+        // collects the gcov data once the target exits.
+        val isCoverage = environment.executor.id == CoverageExecutor.EXECUTOR_ID
+        if (isCoverage) {
+            prepareCoverageRun(state.configuration, environment, execution, console)
+        } else {
+            execution.execute(console, state.configureCommand)
+        }
 
-        val processHandler = state.startProcess()
+        val processHandler = state.startProcess {
+            if (isCoverage) {
+                reportCoverageData(environment.project, console)
+            }
+        }
         return try {
             withContext(Dispatchers.EDT) {
                 ensureProjectIsOpen(environment.project)
