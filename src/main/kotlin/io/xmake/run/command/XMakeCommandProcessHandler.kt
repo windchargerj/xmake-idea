@@ -26,6 +26,7 @@ import com.intellij.execution.process.KillableProcessHandler
 import com.intellij.execution.process.ProcessOutputType
 import com.intellij.execution.process.ProcessOutputTypes
 import com.intellij.execution.process.ProcessTerminatedListener
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.pty4j.PtyProcessBuilder
@@ -168,9 +169,16 @@ internal class XMakeCommandProcessHandler(
 
     private fun createPtyProcess(): Process {
         val commandLine = command.commandLine
+        // pty4j replaces the process environment wholesale, unlike GeneralCommandLine's
+        // toProcessBuilder (which updates the inherited map). Inherit the IDE's environment
+        // first, then overlay the variables configured on the run configuration; without this,
+        // USERPROFILE/HOME/PATH are missing and xmake resolves its config directory wrongly.
+        val environment = HashMap(System.getenv())
+        environment.putAll(commandLine.environment)
+        Log.info("Creating PTY process: ${commandLine.commandLineString} (cwd=${commandLine.workDirectory})")
         return PtyProcessBuilder()
             .setCommand(arrayOf(commandLine.exePath) + commandLine.parametersList.list.toTypedArray())
-            .setEnvironment(commandLine.environment)
+            .setEnvironment(environment)
             .setDirectory(commandLine.workDirectory?.path)
             .setConsole(false)
             .start()
@@ -180,3 +188,5 @@ internal class XMakeCommandProcessHandler(
         val LINE_BREAK_REGEX = Regex("\\r\\n|\\n|\\r")
     }
 }
+
+private val Log = logger<XMakeCommandProcessHandler>()
