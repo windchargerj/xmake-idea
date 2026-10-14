@@ -57,6 +57,10 @@ internal class XMakeRunParameters(
                 "No debug profile is selected. Pick a debugger in the toolbar profile switcher or " +
                     "Settings | Build, Execution, Deployment | Debugger | Debug Profiles.",
             )
+        // Debug sessions cannot emulate a terminal: passing isEmulateTerminal = true here is
+        // ignored, because the platform answers DebuggerDriverConfiguration
+        // .supportsTerminalEmulation() false on Windows. Verified experimentally — the debugged
+        // program saw pipes for both stdin and stdout despite the flag being set.
         profile.createDriverConfiguration(project, isElevated = false, isEmulateTerminal = false, cppEnvironment())
     } catch (error: LinkageError) {
         Log.warn("CLion debug profiles are unavailable, falling back to the bundled LLDB", error)
