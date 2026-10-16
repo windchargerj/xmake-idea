@@ -45,6 +45,7 @@ import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
+import io.xmake.run.valgrind.XMakeValgrindState
 import io.xmake.run.command.DEFAULT_BUILD_TARGET
 import io.xmake.run.target.findXMakeBuildProfileFor
 import java.io.File
@@ -183,10 +184,14 @@ class XMakeRunConfiguration(
             DefaultRunExecutor.EXECUTOR_ID,
             CoverageExecutor.EXECUTOR_ID,
             -> XMakeRunState.create(this, environment)
+            VALGRIND_EXECUTOR_ID -> XMakeValgrindState.create(this, environment)
             else -> throw ExecutionException("Unsupported XMake executor: ${executor.id}")
         }
 
     companion object {
+        /** CLion's Valgrind executor; matched by id so no internal class is referenced. */
+        const val VALGRIND_EXECUTOR_ID = "Valgrind"
+
         /** Only keys documented for gdb's DAP interpreter and lldb-dap belong here; the
          *  object-form cpptools leftovers (sourceMap objects, setupCommands, variables) are
          *  not read by either. lldb-dap's documented array-form sourceMap stays passable. */

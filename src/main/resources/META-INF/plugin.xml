@@ -6,6 +6,10 @@
 
     <extensionPoints>
         <extensionPoint name="debugSupport" interface="io.xmake.debug.XMakeDebugSupport"/>
+        <!-- The native Valgrind results UI; implemented by the optional CLion module, which
+             sees CLion's memory profiling classes. -->
+        <extensionPoint name="valgrindNativeSession"
+                        interface="io.xmake.run.valgrind.XMakeValgrindNativeSessionFactory"/>
         <extensionPoint name="toolkitHostExtension" interface="io.xmake.utils.extension.ToolkitHostExtension"
                         dynamic="true"/>
     </extensionPoints>
