@@ -24,8 +24,10 @@ import com.intellij.util.execution.ParametersListUtil
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.project.toolkit.Toolkit
+import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.project.xmakeSettings
 import io.xmake.utils.SystemUtils
+import java.nio.file.Path
 
 /** Builds commands from one project-owned build profile captured at construction time. The toolkit
  *  is optional; a preview may pass a selected installation before it is registered. */
@@ -95,8 +97,16 @@ internal class XMakeCommandFactory(
         option("-o", profileSnapshot.buildDirectory.takeIf { it.isNotEmpty() })
     }
 
-    fun createConfigure(): XMakeCommand = createCommand {
+    /**
+     * Configures the profile's build. [modeOverride] replaces the profile's build mode for this
+     * invocation only, used by coverage runs to configure `-m coverage` or
+     * `-m valgrind` without touching the profile the user edits.
+     */
+    fun createConfigure(modeOverride: String? = null): XMakeCommand = createCommand {
         args("config", "-y")
+        // xmake's mode is single-valued: an override must replace the profile's mode rather
+        // than be appended, because two -m flags silently keep only the last one.
+        args("-m", modeOverride ?: profileSnapshot.buildMode)
         args(configureArguments)
         flag("-v", profileSnapshot.verbose)
     }
@@ -172,7 +182,56 @@ internal class XMakeCommandFactory(
         }
     }
 
+
+    /**
+     * Runs a target under an external analysis tool through `xmake l runtool.lua`. The script
+     * resolves the target and launches the tool inside the environment xmake runs in, which
+     * keeps the executor free of host-specific launch logic; `{report}` and `{binary}` in
+     * [toolArguments] are substituted on the xmake side.
+     */
+    fun createToolRun(
+        targetName: String,
+        toolArguments: List<String>,
+        reportRelativePath: String,
+        environmentVariables: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT,
+        extraEnvironment: Map<String, String> = emptyMap(),
+    ): XMakeCommand {
+        val scriptArgument = scriptArgument("runtool.lua")
+        return createCommand(
+            environmentVariables = environmentVariables,
+            // The script resolves the path on the xmake side, where the separator is always
+            // forward; a Windows backslash would become part of the file name there.
+            environmentOverrides = extraEnvironment + mapOf(
+                RUNTOOL_REPORT_VARIABLE to reportRelativePath.replace('\\', '/'),
+            ),
+        ) {
+            args("l", scriptArgument)
+            targetName
+                .takeUnless { it == DEFAULT_BUILD_TARGET || it.isBlank() }
+                ?.let { args(it) }
+            args("--")
+            args(toolArguments)
+        }
+    }
+
+    /** The script is extracted to the Windows temp directory; a WSL-side xmake cannot read that
+     *  path, so it is handed over in the distribution's own form (the temp drive stays reachable
+     *  through the /mnt mount). */
+    private fun scriptArgument(scriptName: String): String {
+        val scriptPath = SystemUtils.getScriptPath(scriptName)
+            ?: throw ExecutionException("The $scriptName script was not found")
+        return if (toolkit.host.type == ToolkitHostType.WSL) {
+            toolkit.host.wslDistribution?.getWslPath(Path.of(scriptPath)) ?: scriptPath
+        } else {
+            scriptPath
+        }
+    }
+
     private companion object {
+        /** The environment variable the runtool script reads the report path from. */
+        const val RUNTOOL_REPORT_VARIABLE = "XMAKE_RUNTOOL_REPORT"
+
+
         private const val ANDROID_PLATFORM = "android"
 
         val INFO_QUERY_PATTERN = Regex("[a-z]+")
