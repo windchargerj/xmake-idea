@@ -20,6 +20,7 @@
  */
 package io.xmake.run
 
+import com.intellij.coverage.CoverageExecutor
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunProfileState
@@ -46,6 +47,8 @@ import io.xmake.project.console.XMakeConsoleManager
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.XMakeExecutor
 import io.xmake.run.command.xmakeExecutor
+import io.xmake.run.coverage.prepareCoverageRun
+import io.xmake.run.coverage.reportCoverageData
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +62,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         profile is XMakeRunConfiguration && when (executorId) {
             DefaultRunExecutor.EXECUTOR_ID -> true
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
+            CoverageExecutor.EXECUTOR_ID -> true
             else -> false
         }
 
@@ -92,12 +96,23 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         environment: ExecutionEnvironment,
         console: XMakeConsole,
     ): RunContentDescriptor {
-        executor.execute(
-            console, state.configureCommand,
-            XMakeConsoleOptions(showConsole = false, showOnFailure = true),
-        )
+        // Coverage reconfigures with -m coverage and rebuilds, attaches the suite to the
+        // configuration before the target starts, and activates it once the target exits.
+        val isCoverage = environment.executor.id == CoverageExecutor.EXECUTOR_ID
+        if (isCoverage) {
+            prepareCoverageRun(state.configuration, environment, executor, console)
+        } else {
+            executor.execute(
+                console, state.configureCommand,
+                XMakeConsoleOptions(showConsole = false, showOnFailure = true),
+            )
+        }
 
-        val processHandler = state.startProcess()
+        val processHandler = state.startProcess {
+            if (isCoverage) {
+                reportCoverageData(state.configuration, console)
+            }
+        }
         return try {
             withContext(Dispatchers.EDT) {
                 ensureProjectIsOpen(environment.project)

@@ -124,12 +124,18 @@ internal class XMakeCommandFactory(
     /**
      * Configures the profile's build. [modeOverride] replaces the profile's build mode for this
      * invocation only, used by coverage runs to configure `-m coverage` or
-     * `-m valgrind` without touching the profile the user edits.
+     * `-m valgrind` without touching the profile the user edits. [extraArguments]
+     * appends raw config-time options verbatim - the coverage build's `--coverage` flags go
+     * through here, merged by the caller so they cannot shadow the user's own flags of the
+     * same options (xmake keeps the last value of a repeated option).
      */
-    fun createConfigure(modeOverride: String? = null): XMakeCommand = createCommand {
+    fun createConfigure(
+        modeOverride: String? = null,
+        extraArguments: List<String> = emptyList(),
+    ): XMakeCommand = createCommand {
         config {
             yes = true
-            arguments = configureArgumentsWith(modeOverride ?: profile.buildMode)
+            arguments = configureArgumentsWith(modeOverride ?: profile.buildMode) + extraArguments
             verbose = profile.verbose
         }
     }
