@@ -26,8 +26,11 @@ import com.intellij.execution.process.KillableProcessHandler
 import com.intellij.execution.process.ProcessOutputType
 import com.intellij.execution.process.ProcessOutputTypes
 import com.intellij.execution.process.ProcessTerminatedListener
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
+import com.pty4j.PtyProcessBuilder
+import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.shared.XMakeProblem
 import io.xmake.utils.SystemUtils.parseProblem
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -99,7 +102,11 @@ internal class XMakeCommandProcessHandler(
 
     private fun createProcessHandler(): ProcessHandler {
         val process = try {
-            command.createProcess(project)
+            if (options.emulateTerminal && command.toolkit.host.type == ToolkitHostType.LOCAL) {
+                createPtyProcess()
+            } else {
+                command.createProcess(project)
+            }
         } catch (error: Exception) {
             throw ExecutionException("Failed to start XMake command: ${command.commandLine.commandLineString}", error)
         }
@@ -108,6 +115,9 @@ internal class XMakeCommandProcessHandler(
                 KillableProcessHandler(process, command.commandLine.commandLineString, Charsets.UTF_8)
             } else {
                 KillableColoredProcessHandler(process, command.commandLine.commandLineString, Charsets.UTF_8)
+            }
+            if (options.emulateTerminal && command.toolkit.host.type == ToolkitHostType.LOCAL) {
+                handler.setHasPty(true)
             }
 
             handler.addProcessListener(object : ProcessListener {
@@ -175,10 +185,29 @@ internal class XMakeCommandProcessHandler(
         return problem.copy(navigablePath = navigable)
     }
 
+    private fun createPtyProcess(): Process {
+        val commandLine = command.commandLine
+        // pty4j replaces the process environment wholesale, unlike GeneralCommandLine's
+        // toProcessBuilder (which updates the inherited map). Inherit the IDE's environment
+        // first, then overlay the variables configured on the run configuration; without this,
+        // USERPROFILE/HOME/PATH are missing and xmake resolves its config directory wrongly.
+        val environment = HashMap(System.getenv())
+        environment.putAll(commandLine.environment)
+        Log.info("Creating PTY process: ${commandLine.commandLineString} (cwd=${commandLine.workDirectory})")
+        return PtyProcessBuilder()
+            .setCommand(arrayOf(commandLine.exePath) + commandLine.parametersList.list.toTypedArray())
+            .setEnvironment(environment)
+            .setDirectory(commandLine.workDirectory?.path)
+            .setConsole(false)
+            .start()
+    }
+
     private companion object {
         val LINE_BREAK_REGEX = Regex("\\r\\n|\\n|\\r")
     }
 }
+
+private val Log = logger<XMakeCommandProcessHandler>()
 
 /** One failed XMake command; the message stays short because [output] was already streamed
  *  live by the console, except on the captured path, which reads [output] itself. */

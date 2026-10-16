@@ -32,6 +32,8 @@ import io.xmake.run.target.requireXMakeBuildProfileFor
 
 internal class XMakeRunState private constructor(
     environment: ExecutionEnvironment,
+    /** The run configuration the state was built from; its options drive the launch. */
+    val configuration: XMakeRunConfiguration,
     val configureCommand: XMakeCommand,
     private val runCommand: XMakeCommand,
 ) : CommandLineState(environment) {
@@ -40,7 +42,10 @@ internal class XMakeRunState private constructor(
         XMakeCommandProcessHandler(
             environment.project,
             runCommand,
-            XMakeConsoleOptions(showExitCode = true),
+            XMakeConsoleOptions(
+                showExitCode = true,
+                emulateTerminal = configuration.emulateTerminalInConsole,
+            ),
         ).processHandler
 
     init {
@@ -69,6 +74,7 @@ internal class XMakeRunState private constructor(
             val commandFactory = configuration.project.xmakeCommands(profile)
             return XMakeRunState(
                 environment,
+                configuration,
                 commandFactory.createConfigure(),
                 commandFactory.createRun(
                     configuration.runTarget,
