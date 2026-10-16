@@ -8,7 +8,7 @@ import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitHostType
 import java.nio.file.Path
 
-internal fun interface RemotePathMapper {
+fun interface RemotePathMapper {
     fun toLocal(remotePath: Path): Path?
 
     companion object {

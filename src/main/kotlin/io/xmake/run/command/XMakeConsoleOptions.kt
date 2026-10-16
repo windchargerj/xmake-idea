@@ -31,7 +31,7 @@ package io.xmake.run.command
  * not alter the command line or the selected run configuration, and they are
  * intentionally immutable for the lifetime of that process.
  */
-internal data class XMakeConsoleOptions(
+data class XMakeConsoleOptions(
     val showConsole: Boolean = true,
     val showProblems: Boolean = false,
     val showExitCode: Boolean = false,

@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.valgrind
+package io.xmake.debug.clion.valgrind
 
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.runners.ExecutionEnvironment
@@ -26,19 +26,19 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.util.concurrency.AppExecutorUtil
 import io.xmake.project.console.XMakeConsole
 import io.xmake.run.XMakeRunner
+import io.xmake.run.ensureProjectIsOpen
 import io.xmake.run.stopAfterFailedStart
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.XMakeExecutionService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.concurrent.TimeUnit
+import java.io.File
 
 /**
  * Prepares a Valgrind run: configures the profile in xmake's valgrind mode, builds, then
@@ -62,7 +62,7 @@ internal suspend fun executeValgrind(
     return try {
         var liveSession: XMakeValgrindNativeSession? = null
         val content = withContext(Dispatchers.EDT) {
-            XMakeRunner.ensureProjectIsOpen(environment.project)
+            ensureProjectIsOpen(environment.project)
             // The native composition: the panel and its model exist from the start of the
             // run, and the console is wrapped so the platform hosts both in one run content
             // with the results as their own tab, like the native runner does. Without the
@@ -82,7 +82,7 @@ internal suspend fun executeValgrind(
         }
         val session = liveSession
         val watcher = session?.let {
-            ValgrindReportWatcher(environment.project, state.reportFile) { errors ->
+            ValgrindReportWatcher(content, state.reportFile) { errors ->
                 it.addNewErrors(errors, state::toLocalPath)
             }
         }
@@ -113,8 +113,8 @@ internal suspend fun executeValgrind(
  * errors as valgrind finds them.
  */
 private class ValgrindReportWatcher(
-    project: Project,
-    private val reportFile: java.io.File,
+    parentDisposable: Disposable,
+    private val reportFile: File,
     private val onReport: (List<XMakeValgrindError>) -> Unit,
 ) : Disposable {
 
@@ -127,7 +127,9 @@ private class ValgrindReportWatcher(
         )
 
     init {
-        Disposer.register(project, this)
+        // The watcher rides on the run content: disposed when the run tab closes,
+        // not when the whole project does.
+        Disposer.register(parentDisposable, this)
     }
 
     override fun dispose() {
@@ -142,7 +144,7 @@ private class ValgrindReportWatcher(
 /** Summarizes what the run found; the full report stays on disk for deeper inspection. */
 private fun notifyValgrindReport(
     project: Project,
-    reportFile: java.io.File,
+    reportFile: File,
     errors: List<XMakeValgrindError>,
 ) {
     val detail = when {

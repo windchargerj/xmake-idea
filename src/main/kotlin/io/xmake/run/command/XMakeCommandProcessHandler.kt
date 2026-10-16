@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-internal class XMakeCommandProcessHandler(
+class XMakeCommandProcessHandler(
     private val project: Project,
     private val command: XMakeCommand,
     private val options: XMakeConsoleOptions = XMakeConsoleOptions(),

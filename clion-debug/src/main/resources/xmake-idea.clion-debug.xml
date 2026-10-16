@@ -9,11 +9,13 @@
              Valgrind panel reaches them through CLion's own class loader instead. -->
         <plugin id="com.intellij.modules.clion"/>
         <plugin id="com.intellij.nativeDebug"/>
+        <!-- The profiler dump API for the perf flame graph; a product module of its own. -->
+        <plugin id="com.intellij.modules.profiler"/>
     </dependencies>
 
     <extensions defaultExtensionNs="io.xmake">
         <debugSupport implementation="io.xmake.debug.clion.ClionDebugSupport"/>
-        <valgrindNativeSession implementation="io.xmake.debug.clion.valgrind.ClionValgrindNativeSessionFactory"/>
+        <analysisSupport implementation="io.xmake.debug.clion.ClionAnalysisSupport"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij.platform.dap">

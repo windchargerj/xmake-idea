@@ -17,6 +17,7 @@
 package io.xmake.run.coverage
 
 import com.intellij.coverage.CoverageDataManager
+import com.intellij.openapi.Disposable
 import com.intellij.coverage.CoverageSuiteListener
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
@@ -26,7 +27,6 @@ import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.markup.ActiveGutterRenderer
 import com.intellij.openapi.editor.markup.FillingLineMarkerRenderer
 import com.intellij.openapi.editor.markup.RangeHighlighter
-import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -36,9 +36,6 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.rt.coverage.data.LineData
 import com.intellij.rt.coverage.data.ProjectData
-import java.awt.Color
-import java.awt.Graphics
-import java.awt.Rectangle
 
 /**
  * Paints the coverage line highlights of the active suite into the open editors, with the
@@ -53,7 +50,8 @@ import java.awt.Rectangle
  * paints the lines the report counted. Editors opened later are painted when they open;
  * coverage switched off clears every editor again.
  */
-class XMakeCoverageEditorPainter(private val project: Project) {
+@com.intellij.openapi.components.Service(com.intellij.openapi.components.Service.Level.PROJECT)
+class XMakeCoverageEditorPainter(private val project: Project) : Disposable {
 
     init {
         val manager = CoverageDataManager.getInstance(project)
@@ -63,13 +61,17 @@ class XMakeCoverageEditorPainter(private val project: Project) {
             override fun afterSuiteChosen() = scheduleRepaint()
 
             override fun coverageDataCalculated(bundle: com.intellij.coverage.CoverageSuitesBundle) = scheduleRepaint()
-        }, project)
-        project.messageBus.connect(project).subscribe(
+        }, this)
+        project.messageBus.connect(this).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
                 override fun fileOpened(source: FileEditorManager, file: VirtualFile) = scheduleRepaint()
             },
         )
+    }
+
+    /** The platform disposes this service with the project; subscriptions ride on it. */
+    override fun dispose() {
     }
 
     /** Repaints on the EDT; a repaint without an active suite clears instead. */
@@ -108,14 +110,12 @@ class XMakeCoverageEditorPainter(private val project: Project) {
         val lines = classData.lines ?: return 0
         var paintedLines = 0
         val highlighters = mutableListOf<RangeHighlighter>()
-        for (lineNumber in 1..lines.size - 1) {
+        for (lineNumber in 1..<lines.size) {
             val lineData = classData.getLineData(lineNumber) ?: continue
             paintedLines++
             // The gutter bar, in the same marker layer the native range highlighter sits in.
             highlighters += editor.markupModel.addLineHighlighter(lineData.lineNumber - 1, 5999, null).apply {
-                setLineMarkerRenderer(
-                    CoverageBarRenderer(attributesKey(lineData), lineData),
-                )
+                lineMarkerRenderer = CoverageBarRenderer(attributesKey(lineData), lineData)
             }
             // The line background, for the schemes that paint one.
             val attributes = editor.colorsScheme.getAttributes(attributesKey(lineData))

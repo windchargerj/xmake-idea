@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.valgrind
+package io.xmake.debug.clion.valgrind
 
 import com.intellij.execution.filters.OpenFileHyperlinkInfo
 import com.intellij.execution.ui.ConsoleView

@@ -17,7 +17,6 @@
 package io.xmake.run.coverage
 
 import com.intellij.coverage.CoverageDataManager
-import com.intellij.coverage.CoverageFileProvider
 import com.intellij.coverage.CoverageRunnerData
 import com.intellij.coverage.view.CoverageViewManager
 import com.intellij.execution.configurations.coverage.CoverageEnabledConfiguration
@@ -27,13 +26,16 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import io.xmake.project.console.XMakeConsole
-import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.run.XMakeRunConfiguration
 import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.command.XMakeConsoleOptions
+import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.run.command.XMakeExecutionService
 import io.xmake.run.target.requireXMakeBuildProfileFor
 import java.io.File
+import com.intellij.openapi.application.EDT
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The CMake-aligned coverage lifecycle:
@@ -85,16 +87,16 @@ private fun cleanCoverageData(root: File) {
  * on the coverage-enabled configuration. After the run only [CoverageDataManager.processGatheredCoverage]
  * is needed to activate it.
  */
-private fun attachSuiteBeforeRun(configuration: XMakeRunConfiguration, dataRoot: File, toolkit: io.xmake.project.toolkit.Toolkit) {
+private suspend fun attachSuiteBeforeRun(configuration: XMakeRunConfiguration, dataRoot: File, toolkit: io.xmake.project.toolkit.Toolkit) {
     val project = configuration.project
-    ApplicationManager.getApplication().invokeAndWait({
-        if (project.isDisposed) return@invokeAndWait
+    withContext(Dispatchers.EDT) {
+        if (project.isDisposed) return@withContext
         val enabled = CoverageEnabledConfiguration.getOrCreateIfApplicable(configuration)
-        if (enabled !is XMakeCoverageEnabledConfiguration) return@invokeAndWait
+        if (enabled !is XMakeCoverageEnabledConfiguration) return@withContext
         val suite = enabled.createSuiteForRun(dataRoot, toolkit)
         enabled.currentCoverageSuite = suite
         Log.info("Coverage suite attached before the run (root=${dataRoot.path})")
-    })
+    }
 }
 
 /**
@@ -133,7 +135,7 @@ internal fun reportCoverageData(configuration: XMakeRunConfiguration, console: X
 
 /** The profile's build directory when it exists, the project root otherwise. xmake writes the
  *  instrumented objects, and with them the gcda data, under this directory. */
-internal fun coverageDataRoot(project: Project, profile: io.xmake.project.profile.XMakeBuildProfile): File? {
+internal fun coverageDataRoot(project: Project, profile: XMakeBuildProfile): File? {
     val basePath = project.basePath ?: return null
     val configured = profile.buildDirectory.takeIf(String::isNotBlank)?.let(::File)
     val buildDirectory = when {

@@ -16,6 +16,9 @@ kotlin {
 
 dependencies {
     compileOnly(project(":"))
+    // The profiler dump API for the flame graph; the IDE dependency arrives as an exploded
+    // directory, so the jar is mounted explicitly for compilation.
+    compileOnly(files(file("../.intellijPlatform/ides/CL-2026.2/lib/intellij.profiler.common.jar")))
 
     intellijPlatform {
         clion(providers.gradleProperty("runIdeVersion"))

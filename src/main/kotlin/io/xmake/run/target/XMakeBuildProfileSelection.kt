@@ -28,7 +28,7 @@ internal fun Project.findXMakeBuildProfileFor(target: ExecutionTarget): XMakeBui
     return xmakeBuildProfiles.findProfile(profileId)
 }
 
-internal fun Project.requireXMakeBuildProfileFor(target: ExecutionTarget): XMakeBuildProfile =
+fun Project.requireXMakeBuildProfileFor(target: ExecutionTarget): XMakeBuildProfile =
     findXMakeBuildProfileFor(target)
         ?: throw ExecutionException("Select an XMake build profile before running this configuration")
 

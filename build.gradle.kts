@@ -49,14 +49,6 @@ intellijPlatform {
 }
 
 dependencies {
-    // The IDE dependency arrives as an exploded directory; the profiler API lives in lib/*.jar
-    // which the platform classloader exposes to every plugin at runtime, but gradle needs the
-    // jar on the compile classpath explicitly.
-    compileOnly(
-        files(
-            file(".intellijPlatform/ides/CL-2026.2/lib/intellij.profiler.common.jar"),
-        ),
-    )
     intellijPlatform {
         clion(runIdeVersion)
         bundledPlugin("intellij.ssh.plugin")
@@ -66,7 +58,6 @@ dependencies {
         pluginModule(project(":clion-debug"))
     }
     testImplementation("junit:junit:4.13.2")
-    testCompileOnly(files(file(".intellijPlatform/ides/CL-2026.2/lib/intellij.profiler.common.jar")))
 }
 
 tasks {

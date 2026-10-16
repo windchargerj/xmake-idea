@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.perf
+package io.xmake.debug.clion.perf
 
 import com.intellij.execution.DefaultExecutionResult
 import com.intellij.execution.ExecutionException
@@ -29,6 +29,10 @@ import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.run.XMakeRunConfiguration
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeCommandFactory
+import io.xmake.run.XMakeAnalysisState
+import io.xmake.run.command.xmakeExecutionService
+import io.xmake.project.console.XMakeConsole
+import com.intellij.execution.ui.RunContentDescriptor
 import io.xmake.run.command.XMakeCommandProcessHandler
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.target.requireXMakeBuildProfileFor
@@ -50,7 +54,7 @@ internal class XMakePerfState private constructor(
     val toolCommand: XMakeCommand,
     val dataFile: File,
     val collapsedFile: File,
-) : CommandLineState(environment) {
+) : CommandLineState(environment), XMakeAnalysisState {
 
     public override fun startProcess(): ProcessHandler =
         XMakeCommandProcessHandler(
@@ -62,6 +66,12 @@ internal class XMakePerfState private constructor(
     /** The run console, kept so the recording guidance can print into it. */
     internal var runConsole: com.intellij.execution.ui.ConsoleView? = null
         private set
+
+    override suspend fun execute(
+        environment: ExecutionEnvironment,
+        console: XMakeConsole,
+    ): RunContentDescriptor =
+        executePerf(environment.project.xmakeExecutionService, this, environment, console)
 
     internal fun createExecutionResult(
         executor: Executor,

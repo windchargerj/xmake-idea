@@ -6,10 +6,9 @@
 
     <extensionPoints>
         <extensionPoint name="debugSupport" interface="io.xmake.debug.XMakeDebugSupport"/>
-        <!-- The native Valgrind results UI; implemented by the optional CLion module, which
-             sees CLion's memory profiling classes. -->
-        <extensionPoint name="valgrindNativeSession"
-                        interface="io.xmake.run.valgrind.XMakeValgrindNativeSessionFactory"/>
+        <!-- The analysis runs - Valgrind, perf - whose entries exist only in CLion;
+             the optional CLion module provides the implementations. -->
+        <extensionPoint name="analysisSupport" interface="io.xmake.run.XMakeAnalysisSupport"/>
         <extensionPoint name="toolkitHostExtension" interface="io.xmake.utils.extension.ToolkitHostExtension"
                         dynamic="true"/>
     </extensionPoints>
@@ -21,9 +20,6 @@
     <depends>com.intellij.modules.xdebugger</depends>
     <!-- The run path builds coverage suites and file providers from this module's classes. -->
     <depends>com.intellij.modules.coverage</depends>
-    <!-- The profiler dump API is a product module of its own; without the dependency its
-         classes are not visible to this plugin's class loader. -->
-    <depends>com.intellij.modules.profiler</depends>
 
     <depends optional="true" config-file="io.xmake-ssh.xml">
         com.intellij.modules.ssh
@@ -68,7 +64,6 @@
         <coverageEngine implementation="io.xmake.run.coverage.XMakeCoverageEngine"/>
         <coverageRunner implementation="io.xmake.run.coverage.XMakeCoverageRunner"/>
         <projectService serviceImplementation="io.xmake.run.coverage.XMakeCoverageAnnotator"/>
-        <projectService serviceImplementation="io.xmake.run.coverage.XMakeCoverageEditorPainter"/>
 
         <!-- notifications -->
         <notificationGroup id="XMake.NotificationGroup" displayType="BALLOON"/>

@@ -46,10 +46,6 @@ import io.xmake.run.command.XMakeExecutionService
 import io.xmake.run.command.xmakeExecutionService
 import io.xmake.run.coverage.prepareCoverageRun
 import io.xmake.run.coverage.reportCoverageData
-import io.xmake.run.valgrind.XMakeValgrindState
-import io.xmake.run.perf.XMakePerfState
-import io.xmake.run.perf.executePerf
-import io.xmake.run.valgrind.executeValgrind
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
 import kotlinx.coroutines.Dispatchers
@@ -64,9 +60,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             DefaultRunExecutor.EXECUTOR_ID -> true
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
             CoverageExecutor.EXECUTOR_ID -> true
-            XMakeRunConfiguration.VALGRIND_EXECUTOR_ID -> true
-            XMakeRunConfiguration.PERF_EXECUTOR_ID -> true
-            else -> false
+            else -> XMakeAnalysisSupport.forExecutor(executorId) != null
         }
 
     override fun getRunnerId(): String = "XMakeRunner"
@@ -89,13 +83,9 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
                 before = { prepareXMakeDebugBuild(project, state) },
                 task = { executeDebug(execution, state, environment) },
             )
-            is XMakeValgrindState -> execution.submit {
+            is XMakeAnalysisState -> execution.submit {
                 val console = prepareConsole(project)
-                executeValgrind(execution, state, environment, console)
-            }
-            is XMakePerfState -> execution.submit {
-                val console = prepareConsole(project)
-                executePerf(execution, state, environment, console)
+                state.execute(environment, console)
             }
             else -> execution.submit {
                 throw ExecutionException("Unsupported XMake run profile state: ${state::class.java.name}")
@@ -171,18 +161,13 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         }
         return console
     }
+}
 
-    internal companion object {
-        /** Feature executions run inside this runner and share its project guard. */
-        @JvmStatic
-        internal fun ensureProjectIsOpen(project: Project) {
-            if (project.isDisposed) {
-                throw ExecutionException("Project was disposed before XMake could start")
-            }
-        }
+/** Guards feature executions: the runner must not start work on a disposed project. */
+fun ensureProjectIsOpen(project: Project) {
+    if (project.isDisposed) {
+        throw ExecutionException("Project was disposed before XMake could start")
     }
-
-
 }
 
 private inline fun suppressCleanupError(primary: Throwable, cleanup: () -> Unit) {
@@ -195,7 +180,7 @@ private inline fun suppressCleanupError(primary: Throwable, cleanup: () -> Unit)
     }
 }
 
-internal fun ProcessHandler.stopAfterFailedStart(failure: Throwable) {
+fun ProcessHandler.stopAfterFailedStart(failure: Throwable) {
     if (!isStartNotified) {
         suppressCleanupError(failure) { startNotify() }
     }

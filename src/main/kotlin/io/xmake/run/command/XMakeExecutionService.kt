@@ -30,7 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 @Service(Service.Level.PROJECT)
-internal class XMakeExecutionService(
+class XMakeExecutionService(
     private val project: Project,
     private val coroutineScope: CoroutineScope,
 ) {
@@ -100,6 +100,6 @@ internal class XMakeExecutionService(
     }
 }
 
-internal val Project.xmakeExecutionService: XMakeExecutionService
+val Project.xmakeExecutionService: XMakeExecutionService
     get() = getService(XMakeExecutionService::class.java)
         ?: error("Failed to get XMakeExecutionService for $this")

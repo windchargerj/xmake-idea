@@ -14,34 +14,34 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.perf
+package io.xmake.debug.clion.perf
 
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.runners.showRunContent
+import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Computable
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
 import com.intellij.profiler.ProfilerDumpParserProviderFinder
 import com.intellij.profiler.api.ProfilerDumpParserProvider
 import com.intellij.profiler.api.ProfilerDumpDescriptor
 import com.intellij.profiler.api.getProfilerDumpParserProviders
 import io.xmake.project.console.XMakeConsole
 import io.xmake.run.XMakeRunner
+import io.xmake.run.ensureProjectIsOpen
 import io.xmake.run.stopAfterFailedStart
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.XMakeExecutionService
-import io.xmake.run.perf.XMakePerfState
 import io.xmake.utils.execute.createProcess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -74,7 +74,7 @@ internal suspend fun executePerf(
     val processHandler = state.startProcess()
     return try {
         val content = withContext(Dispatchers.EDT) {
-            XMakeRunner.ensureProjectIsOpen(environment.project)
+            ensureProjectIsOpen(environment.project)
             val descriptor = showRunContent(
                 state.createExecutionResult(environment.executor, processHandler),
                 environment,
@@ -111,7 +111,7 @@ internal suspend fun executePerf(
  * samples fold the same way the tool-side folding does. Returns null when the folded
  * file is already there or cannot be produced.
  */
-private fun foldPerfRecording(project: Project, state: XMakePerfState): java.io.File? {
+private fun foldPerfRecording(project: Project, state: XMakePerfState): File? {
     val collapsed = state.collapsedFile
     if (collapsed.isFile || !state.dataFile.isFile) return null
     Log.info("No folded stacks for ${state.dataFile.name}; folding the recording on the IDE side")
@@ -120,15 +120,15 @@ private fun foldPerfRecording(project: Project, state: XMakePerfState): java.io.
         .takeIf { toolkit.host.type == it }?.let { toolkit.host.wslDistribution }
     val recordingPath = distribution?.getWslPath(state.dataFile.toPath()) ?: state.dataFile.absolutePath
     return runCatching {
-        val command = com.intellij.execution.configurations.GeneralCommandLine("perf", "script", "-i", recordingPath)
+        val command = GeneralCommandLine("perf", "script", "-i", recordingPath)
         // The WSL command patching requires a progress indicator on the thread; the
         // process listener has none, so an empty indicator stands in for it.
-        val process = com.intellij.openapi.progress.ProgressManager.getInstance().runProcess(
-            com.intellij.openapi.util.Computable { command.createProcess(toolkit, project, null) },
-            com.intellij.openapi.progress.EmptyProgressIndicator(),
+        val process = ProgressManager.getInstance().runProcess(
+            Computable { command.createProcess(toolkit, project, null) },
+            EmptyProgressIndicator(),
         )
         val script = process.inputStream.bufferedReader().readText()
-        val finished = runCatching { process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS) }.getOrDefault(false)
+        val finished = runCatching { process.waitFor(60, TimeUnit.SECONDS) }.getOrDefault(false)
         if (!finished || process.exitValue() != 0) {
             Log.info("perf script failed on $recordingPath: $script")
             return null
@@ -182,7 +182,7 @@ private fun foldScriptSamples(script: String): Map<String, Int> {
  * profilers open. The profiler module is IDE-dependent, so a missing module only skips the
  * view and leaves the files on disk.
  */
-private fun openPerfSnapshot(project: Project, collapsedFile: java.io.File): Boolean =
+private fun openPerfSnapshot(project: Project, collapsedFile: File): Boolean =
     runCatching {
         if (!collapsedFile.isFile) return false
         val providers = getProfilerDumpParserProviders()
@@ -200,7 +200,7 @@ private fun openPerfSnapshot(project: Project, collapsedFile: java.io.File): Boo
         }
         true
     }.getOrElse { error ->
-        com.intellij.openapi.diagnostic.Logger.getInstance(XMakeRunner::class.java)
+        Log
             .info("The profiler view is unavailable: ${error.message}")
         false
     }
@@ -212,11 +212,11 @@ private fun openPerfSnapshot(project: Project, collapsedFile: java.io.File): Boo
  * running IDE has answers.
  */
 private fun findProfilerParser(
-    file: java.io.File,
+    file: File,
     providers: List<ProfilerDumpParserProvider>,
 ): ProfilerDumpParserProvider? {
     val finder = ProfilerDumpParserProviderFinder()
-    val result = invokeFinder(finder, java.io.File::class.java, file, providers)
+    val result = invokeFinder(finder, File::class.java, file, providers)
         ?: invokeFinder(finder, Path::class.java, file.toPath(), providers)
         ?: return null
     return (result as? ProfilerDumpParserProviderFinder.Result.Success)?.provider
@@ -234,7 +234,7 @@ private fun invokeFinder(
 }.getOrNull()
 
 /** Points the user at the profile data; the flame graph view opens alongside it. */
-private fun notifyPerfProfile(project: Project, dataFile: java.io.File, openedInView: Boolean) {
+private fun notifyPerfProfile(project: Project, dataFile: File, openedInView: Boolean) {
     val detail = when {
         openedInView ->
             "Flame graph opened in the Profiler view. " +

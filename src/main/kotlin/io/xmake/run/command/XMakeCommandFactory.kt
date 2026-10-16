@@ -31,7 +31,7 @@ import java.nio.file.Path
 
 /** Builds commands from one project-owned build profile captured at construction time. The toolkit
  *  is optional; a preview may pass a selected installation before it is registered. */
-internal class XMakeCommandFactory(
+class XMakeCommandFactory(
     private val project: Project,
     profile: XMakeBuildProfile,
     selectedToolkit: Toolkit? = null,
@@ -146,8 +146,7 @@ internal class XMakeCommandFactory(
     }
 
     fun createTargetPathQuery(targetName: String): XMakeCommand {
-        val scriptPath = SystemUtils.getScriptPath("targetpath.lua")
-            ?: throw ExecutionException("The target path script was not found")
+        val scriptPath = scriptArgument("targetpath.lua")
         return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             args("l", scriptPath)
             targetName
@@ -227,9 +226,12 @@ internal class XMakeCommandFactory(
         }
     }
 
-    private companion object {
+    companion object {
         /** The environment variable the runtool script reads the report path from. */
         const val RUNTOOL_REPORT_VARIABLE = "XMAKE_RUNTOOL_REPORT"
+
+        /** The environment variable the runtool script reads the collapsed-stacks path from. */
+        const val RUNTOOL_COLLAPSE_VARIABLE = "XMAKE_RUNTOOL_COLLAPSED"
 
 
         private const val ANDROID_PLATFORM = "android"
