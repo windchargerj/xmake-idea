@@ -96,4 +96,60 @@ function main(targetname, sep, tool, ...)
         print("[runtool] tool produced no report at " .. tostring(report_for_tool))
     end
 
+    -- optional: fold a perf recording into the collapsed-stacks format the IDE
+    -- profiler view consumes (XMAKE_RUNTOOL_COLLAPSE, project-relative)
+    local collapse_final = os.getenv("XMAKE_RUNTOOL_COLLAPSE")
+    if collapse_final and report_final and os.isfile(report_final) then
+        if not path.is_absolute(collapse_final) then
+            collapse_final = path.absolute(collapse_final, os.projectdir())
+        end
+        fold_perf_samples(report_final, collapse_final)
+        print("[runtool] folded stacks written: " .. tostring(collapse_final))
+    else
+        print(("[runtool] folding skipped: collapse=%s report=%s exists=%s"):format(
+            tostring(collapse_final), tostring(report_final),
+            tostring(report_final and os.isfile(report_final))))
+    end
+end
+
+-- Reads `perf script` output and writes folded stacks: one `frame;frame;... count`
+-- line per sample. Header lines (command pid/tid timestamp) start a sample, indented
+-- lines are frames with the leaf first, blank lines end the sample.
+function fold_perf_samples(datafile, outfile)
+    local counts = {}
+    local stack = {}
+    -- the xmake lua sandbox has no io.popen; os.iorun captures the output instead
+    -- (it returns stdout first, stderr/exit info second). gmatch splits the lines; a
+    -- gsub-with-callback silently produces nothing inside this sandbox.
+    local stdout = os.iorun("perf script -i " .. datafile)
+    for line in string.gmatch(stdout or "", "[^\r\n]+") do
+        if line:find("^[ \t]%S") then
+            local symbol = line:match("^[ \t]+%S+[ \t]+([^ \t]+)") or line:match("^[ \t]+([^ \t]+)")
+            if symbol then
+                table.insert(stack, 1, symbol)
+            end
+        else
+            -- a header line starts the next sample: fold what collected before it. The
+            -- blank separator is optional in some perf script builds, so the header and
+            -- a blank line end the sample the same way.
+            if #stack > 0 then
+                local key = table.concat(stack, ";")
+                counts[key] = (counts[key] or 0) + 1
+                stack = {}
+            end
+        end
+    end
+    if #stack > 0 then
+        local key = table.concat(stack, ";")
+        counts[key] = (counts[key] or 0) + 1
+    end
+    local out = io.open(outfile, "w")
+    if out then
+        for key, count in pairs(counts) do
+            out:write(key, " ", count, "\n")
+        end
+        out:close()
+    end
+    local total = 0
+    for _ in pairs(counts) do total = total + 1 end
 end

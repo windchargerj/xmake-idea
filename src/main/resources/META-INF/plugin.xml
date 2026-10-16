@@ -21,6 +21,9 @@
     <depends>com.intellij.modules.xdebugger</depends>
     <!-- The run path builds coverage suites and file providers from this module's classes. -->
     <depends>com.intellij.modules.coverage</depends>
+    <!-- The profiler dump API is a product module of its own; without the dependency its
+         classes are not visible to this plugin's class loader. -->
+    <depends>com.intellij.modules.profiler</depends>
 
     <depends optional="true" config-file="io.xmake-ssh.xml">
         com.intellij.modules.ssh

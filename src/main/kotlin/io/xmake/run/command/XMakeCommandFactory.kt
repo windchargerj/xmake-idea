@@ -250,10 +250,12 @@ internal class XMakeCommandFactory(
         }
     }
 
-    private companion object {
+    companion object {
         /** The environment variable the runtool script reads the report path from. */
         const val RUNTOOL_REPORT_VARIABLE = "XMAKE_RUNTOOL_REPORT"
 
+        /** The environment variable the runtool script reads the collapsed-stacks path from. */
+        const val RUNTOOL_COLLAPSE_VARIABLE = "XMAKE_RUNTOOL_COLLAPSED"
 
         private const val ANDROID_PLATFORM = "android"
 
