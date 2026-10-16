@@ -4,6 +4,9 @@
         <!-- Contains CPPEnvironment directly and exposes the internal cidr.debugger.profiles
              module (the debug profile manager) transitively. -->
         <module name="intellij.clion.toolchains"/>
+        <!-- The capability alias gates this module's loading: loaded where CLion exists,
+             absent where it does not; it does NOT make CLion classes visible - the native
+             Valgrind panel reaches them through CLion's own class loader instead. -->
         <plugin id="com.intellij.modules.clion"/>
         <plugin id="com.intellij.nativeDebug"/>
     </dependencies>

@@ -174,7 +174,10 @@ private fun foldScriptSamples(script: String): Map<String, Int> {
 }
 
 /**
- * Hands the folded stacks to the IDE profiler view: the platform finds the registered dump
+ * Hands the folded stacks to the IDE profiler view. The collapsed-stacks parser is CLion's
+ * own; IDEA Ultimate registers only its Java-format parsers, so there the call degrades to
+ * the notification that names the perf report command, which is the right outcome for a
+ * C/C++ profiling tool outside the C/C++ IDE.: the platform finds the registered dump
  * parser, imports the snapshot and shows the flame graph — the same view the native
  * profilers open. The profiler module is IDE-dependent, so a missing module only skips the
  * view and leaves the files on disk.
