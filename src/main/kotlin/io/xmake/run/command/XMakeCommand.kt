@@ -32,7 +32,7 @@ internal const val XMAKE_CONFIG_DIRECTORY_ENV = "XMAKE_CONFIGDIR"
  * beside the command line lets later execution and file-sync stages reuse the
  * same context without consulting mutable project or run-manager state.
  */
-internal class XMakeCommand(
+class XMakeCommand(
     val commandLine: GeneralCommandLine,
     val toolkit: Toolkit,
     val workingDirectory: String,

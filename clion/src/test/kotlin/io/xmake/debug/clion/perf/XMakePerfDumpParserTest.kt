@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.perf
+package io.xmake.debug.clion.perf
 
 import com.intellij.profiler.ProfilerDumpParserProviderFinder
 import com.intellij.profiler.api.getProfilerDumpParserProviders

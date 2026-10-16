@@ -43,7 +43,7 @@ import kotlin.time.Duration.Companion.minutes
 @Service(Service.Level.PROJECT)
 /** The one xmake command runner of this project. Every public entry other than [submit],
  *  [submitAfter], and [runExclusive] assumes the caller is inside one of those three. */
-internal class XMakeExecutor(
+class XMakeExecutor(
     private val project: Project,
     private val coroutineScope: CoroutineScope,
 ) {
@@ -167,7 +167,7 @@ internal class XMakeExecutor(
     }
 }
 
-internal val Project.xmakeExecutor: XMakeExecutor
+val Project.xmakeExecutor: XMakeExecutor
     get() = serviceOrNull() ?: error("Failed to get XMakeExecutor for $this")
 
 // xmake's interpreter refuses the whole project script when its set_xmakever exceeds the

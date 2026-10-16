@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.valgrind
+package io.xmake.debug.clion.valgrind
 
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.openapi.extensions.ExtensionPointName
@@ -23,9 +23,9 @@ import com.intellij.openapi.project.Project
 /**
  * The door to CLion's own Valgrind results panel: the panel, its tree, the console wrapper and
  * the data model live in CLion's memory profiling module, whose classes only a plugin that
- * depends on CLion can see. The optional `xmake-idea.clion` module implements this
- * factory there; everywhere else, or when CLion does not provide the panel, the caller falls
- * the run presents its findings in the console instead.
+ * depends on CLion can see. The factory is contributed through this module's own extension
+ * point; where CLion does not provide the panel, [open] returns null and the run presents its
+ * findings in the console instead.
  */
 interface XMakeValgrindNativeSessionFactory {
 
@@ -34,7 +34,7 @@ interface XMakeValgrindNativeSessionFactory {
 
     companion object {
         @JvmField
-        val EP = ExtensionPointName<XMakeValgrindNativeSessionFactory>("io.xmake.valgrindNativeSession")
+        val EP = ExtensionPointName<XMakeValgrindNativeSessionFactory>("xmake-idea.clion.valgrindNativeSession")
     }
 }
 

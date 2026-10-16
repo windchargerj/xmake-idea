@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.valgrind
+package io.xmake.debug.clion.valgrind
 
 import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.ui.ExecutionConsoleEx
@@ -22,8 +22,6 @@ import com.intellij.execution.ui.RunnerLayoutUi
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.testFramework.PlatformTestUtil
 import io.xmake.XMakePlatformTestCase
-import io.xmake.run.valgrind.openXMakeValgrindNativeSession
-import io.xmake.run.valgrind.parseValgrindReport
 import java.io.File
 import java.nio.file.Files
 import javax.swing.JTree
@@ -31,7 +29,7 @@ import javax.swing.tree.TreeNode
 
 /**
  * The native results panel and the console wrapper live in CLion's memory profiling module and
- * are reached through the plugin's extension point, implemented by the optional CLion module.
+ * are reached through the CLion module's own extension point.
  * This drives the whole path against the CLion the plugin actually runs on, through the same
  * extension lookup the runner uses, so a CLion release that moves the API fails here first.
  */

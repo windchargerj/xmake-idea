@@ -45,7 +45,7 @@ import kotlin.coroutines.resumeWithException
  * and may throw ExecutionException, so callers must consume the handler right away,
  * through [awaitSuccessfulCompletion] or the platform's `startProcess` lifecycle.
  */
-internal class XMakeCommandProcessHandler(
+class XMakeCommandProcessHandler(
     private val project: Project,
     private val command: XMakeCommand,
     private val options: XMakeConsoleOptions = XMakeConsoleOptions(),

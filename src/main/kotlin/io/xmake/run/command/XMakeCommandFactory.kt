@@ -39,7 +39,7 @@ import java.security.MessageDigest
 import java.util.HexFormat
 
 /** Builds commands from one project-owned build profile captured at construction time. */
-internal class XMakeCommandFactory(
+class XMakeCommandFactory(
     private val project: Project,
     private val profile: XMakeBuildProfile,
     toolkit: Toolkit? = null,
@@ -310,7 +310,7 @@ internal class XMakeCommandFactory(
 
 /** The project-scoped entry for building xmake commands outside the command context of
  *  one build profile ([withProfileCommands]). */
-internal fun Project.xmakeCommands(profile: XMakeBuildProfile): XMakeCommandFactory =
+fun Project.xmakeCommands(profile: XMakeBuildProfile): XMakeCommandFactory =
     XMakeCommandFactory(this, profile)
 
 /** Generated file path relative to the project directory; xmake always names the file

@@ -14,7 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 
-class XMakeConsole internal constructor(
+class XMakeConsole constructor(
     private val project: Project,
     private val toolWindow: ToolWindow,
     private val outputPanel: XMakeToolWindowOutputPanel,

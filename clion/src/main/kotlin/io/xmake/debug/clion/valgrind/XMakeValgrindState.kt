@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.valgrind
+package io.xmake.debug.clion.valgrind
 
 import com.intellij.execution.DefaultExecutionResult
 import com.intellij.execution.ExecutionException
@@ -28,6 +28,10 @@ import com.intellij.util.execution.ParametersListUtil
 import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.run.XMakeRunConfiguration
 import io.xmake.run.command.XMakeCommand
+import io.xmake.run.XMakeAnalysisState
+import io.xmake.run.command.xmakeExecutor
+import io.xmake.project.console.XMakeConsole
+import com.intellij.execution.ui.RunContentDescriptor
 import io.xmake.run.command.XMakeCommandProcessHandler
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.RemotePathMapper
@@ -50,7 +54,7 @@ internal class XMakeValgrindState private constructor(
     val buildCommand: XMakeCommand,
     val toolCommand: XMakeCommand,
     val reportFile: File,
-) : CommandLineState(environment) {
+) : CommandLineState(environment), XMakeAnalysisState {
 
     public override fun startProcess(): ProcessHandler =
         XMakeCommandProcessHandler(
@@ -58,6 +62,12 @@ internal class XMakeValgrindState private constructor(
             toolCommand,
             XMakeConsoleOptions(showExitCode = true),
         ).processHandler
+
+    override suspend fun execute(
+        environment: ExecutionEnvironment,
+        console: XMakeConsole,
+    ): RunContentDescriptor =
+        executeValgrind(environment.project.xmakeExecutor, this, environment, console)
 
     /** The run console, kept so the findings summary can print clickable locations into it. */
     internal var runConsole: com.intellij.execution.ui.ConsoleView? = null

@@ -49,14 +49,6 @@ intellijPlatform {
 }
 
 dependencies {
-    // The IDE dependency arrives as an exploded directory; the profiler API lives in lib/*.jar
-    // which the platform classloader exposes to every plugin at runtime, but gradle needs the
-    // jar on the compile classpath explicitly.
-    compileOnly(
-        files(
-            file(".intellijPlatform/ides/CL-2026.2/lib/intellij.profiler.common.jar"),
-        ),
-    )
     intellijPlatform {
         clion(runIdeVersion)
         bundledPlugin("intellij.ssh.plugin")
@@ -66,8 +58,20 @@ dependencies {
         pluginModule(project(":clion"))
     }
     testImplementation("junit:junit:4.13.2")
-    testCompileOnly(files(file(".intellijPlatform/ides/CL-2026.2/lib/intellij.profiler.common.jar")))
 }
+
+// The optional CLion module's tests reuse this module's platform fixture base
+// (XMakePlatformTestCase), so the compiled test classes are published as a consumable
+// artifact instead of duplicating the fixture in the module.
+val testArtifacts by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+val testJar by tasks.registering(Jar::class) {
+    archiveClassifier = "test"
+    from(sourceSets.test.get().output)
+}
+artifacts.add("testArtifacts", testJar)
 
 tasks {
     test {

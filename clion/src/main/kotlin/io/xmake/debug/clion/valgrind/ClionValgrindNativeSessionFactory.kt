@@ -23,10 +23,10 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import io.xmake.run.valgrind.XMakeValgrindError
-import io.xmake.run.valgrind.XMakeValgrindFrame
-import io.xmake.run.valgrind.XMakeValgrindNativeSession
-import io.xmake.run.valgrind.XMakeValgrindNativeSessionFactory
+import io.xmake.debug.clion.valgrind.XMakeValgrindError
+import io.xmake.debug.clion.valgrind.XMakeValgrindFrame
+import io.xmake.debug.clion.valgrind.XMakeValgrindNativeSession
+import io.xmake.debug.clion.valgrind.XMakeValgrindNativeSessionFactory
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import javax.swing.Icon
