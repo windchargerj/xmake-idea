@@ -20,6 +20,7 @@
  */
 package io.xmake.run
 
+import com.intellij.coverage.CoverageExecutor
 import com.intellij.execution.Executor
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.ExecutionTarget
@@ -177,7 +178,11 @@ class XMakeRunConfiguration(
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState =
         when (executor.id) {
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugState.create(this, environment)
-            DefaultRunExecutor.EXECUTOR_ID -> XMakeRunState.create(this, environment)
+            // Coverage shares the run state: XMakeRunner reconfigures with -m coverage and
+            // collects the gcov data around the same execution.
+            DefaultRunExecutor.EXECUTOR_ID,
+            CoverageExecutor.EXECUTOR_ID,
+            -> XMakeRunState.create(this, environment)
             else -> throw ExecutionException("Unsupported XMake executor: ${executor.id}")
         }
 

@@ -15,6 +15,8 @@
     <depends>com.intellij.modules.lang</depends>
     <depends>com.intellij.modules.xml</depends>
     <depends>com.intellij.modules.xdebugger</depends>
+    <!-- The run path builds coverage suites and file providers from this module's classes. -->
+    <depends>com.intellij.modules.coverage</depends>
 
     <depends optional="true" config-file="io.xmake-ssh.xml">
         com.intellij.modules.ssh
@@ -54,6 +56,12 @@
         <runConfigurationProducer implementation="io.xmake.run.XMakeRunConfigurationProducer"/>
         <executionTargetProvider implementation="io.xmake.run.target.XMakeBuildProfileExecutionTargetProvider"/>
         <projectTaskRunner implementation="io.xmake.build.XMakeProjectTaskRunner"/>
+
+        <!-- coverage -->
+        <coverageEngine implementation="io.xmake.run.coverage.XMakeCoverageEngine"/>
+        <coverageRunner implementation="io.xmake.run.coverage.XMakeCoverageRunner"/>
+        <projectService serviceImplementation="io.xmake.run.coverage.XMakeCoverageAnnotator"/>
+        <projectService serviceImplementation="io.xmake.run.coverage.XMakeCoverageEditorPainter"/>
 
         <!-- notifications -->
         <notificationGroup id="XMake.NotificationGroup" displayType="BALLOON"/>
