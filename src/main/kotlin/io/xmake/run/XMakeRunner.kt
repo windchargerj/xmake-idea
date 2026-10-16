@@ -49,6 +49,8 @@ import io.xmake.run.command.XMakeExecutor
 import io.xmake.run.command.xmakeExecutor
 import io.xmake.run.coverage.prepareCoverageRun
 import io.xmake.run.coverage.reportCoverageData
+import io.xmake.run.valgrind.XMakeValgrindState
+import io.xmake.run.valgrind.executeValgrind
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +65,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             DefaultRunExecutor.EXECUTOR_ID -> true
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
             CoverageExecutor.EXECUTOR_ID -> true
+            XMakeRunConfiguration.VALGRIND_EXECUTOR_ID -> true
             else -> false
         }
 
@@ -83,6 +86,10 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
                 before = { prepareXMakeDebugBuild(project, state) },
                 task = { executeDebug(executor, state, environment) },
             )
+            is XMakeValgrindState -> executor.submit {
+                val console = prepareConsole(project)
+                executeValgrind(executor, state, environment, console)
+            }
             else -> executor.submit {
                 throw ExecutionException("Unsupported XMake run profile state: ${state::class.java.name}")
             }
@@ -167,20 +174,17 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         return console
     }
 
-    private fun ensureProjectIsOpen(project: Project) {
-        if (project.isDisposed) {
-            throw ExecutionException("Project was disposed before XMake could start")
+    internal companion object {
+        /** Feature executions run inside this runner and share its project guard. */
+        @JvmStatic
+        internal fun ensureProjectIsOpen(project: Project) {
+            if (project.isDisposed) {
+                throw ExecutionException("Project was disposed before XMake could start")
+            }
         }
     }
 
-    private fun ProcessHandler.stopAfterFailedStart(failure: Throwable) {
-        if (!isStartNotified) {
-            suppressCleanupError(failure) { startNotify() }
-        }
-        if (!isProcessTerminated && !isProcessTerminating) {
-            suppressCleanupError(failure) { destroyProcess() }
-        }
-    }
+
 }
 
 private inline fun suppressCleanupError(primary: Throwable, cleanup: () -> Unit) {
@@ -190,5 +194,14 @@ private inline fun suppressCleanupError(primary: Throwable, cleanup: () -> Unit)
         throw error
     } catch (error: Throwable) {
         primary.addSuppressed(error)
+    }
+}
+
+internal fun ProcessHandler.stopAfterFailedStart(failure: Throwable) {
+    if (!isStartNotified) {
+        suppressCleanupError(failure) { startNotify() }
+    }
+    if (!isProcessTerminated && !isProcessTerminating) {
+        suppressCleanupError(failure) { destroyProcess() }
     }
 }
