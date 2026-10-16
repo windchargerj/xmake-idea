@@ -62,6 +62,8 @@ class XMakeRunConfigurationEditor(
         browseDescription = "Select the target process working directory",
     )
 
+    private val emulateTerminalInConsole = JBCheckBox("Emulate terminal in the output console")
+
     private val useDapDriver = JBCheckBox(
         "Use an external DAP driver instead of CLion's active debug profile",
     )
@@ -159,6 +161,7 @@ class XMakeRunConfigurationEditor(
             runArguments.text = configuration.runArguments
             launchWorkingDirectory.text = configuration.launchWorkingDirectory
             environmentVariables.envData = configuration.runEnvironment
+            emulateTerminalInConsole.isSelected = configuration.emulateTerminalInConsole
             useDapDriver.isSelected = configuration.useDapDriver
             dapDriverAutoDetect.isSelected = configuration.dapDriverAutoDetect
             dapDriverPath.text = configuration.dapDriverPath
@@ -178,6 +181,7 @@ class XMakeRunConfigurationEditor(
         configuration.runArguments = runArguments.text
         configuration.launchWorkingDirectory = launchWorkingDirectory.text
         configuration.runEnvironment = environmentVariables.envData
+        configuration.emulateTerminalInConsole = emulateTerminalInConsole.isSelected
         configuration.useDapDriver = useDapDriver.isSelected
         configuration.dapDriverAutoDetect = dapDriverAutoDetect.isSelected
         configuration.dapDriverPath = dapDriverPath.text
@@ -199,6 +203,10 @@ class XMakeRunConfigurationEditor(
 
         row("Environment variables:") {
             cell(environmentVariables.component).align(AlignX.FILL)
+        }
+
+        row {
+            cell(emulateTerminalInConsole)
         }
 
         collapsibleGroup("Debug Configuration") {

@@ -80,6 +80,11 @@ class XMakeRunConfiguration(
     @get:Transient
     var runEnvironment: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT
 
+    /** Runs the target with a pseudo-terminal, so interactive programs work in the console;
+     *  the option mirrors the native runners' terminal emulation toggle. */
+    @OptionTag(tag = "emulateTerminalInConsole")
+    var emulateTerminalInConsole: Boolean = true
+
     /** false (default): debug via CLion's own native GDB/LLDB driver. true: spawn an external DAP driver process. */
     @OptionTag(tag = "useDapDriver")
     var useDapDriver: Boolean = false
