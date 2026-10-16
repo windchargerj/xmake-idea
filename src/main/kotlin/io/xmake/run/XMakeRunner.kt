@@ -47,6 +47,8 @@ import io.xmake.run.command.xmakeExecutionService
 import io.xmake.run.coverage.prepareCoverageRun
 import io.xmake.run.coverage.reportCoverageData
 import io.xmake.run.valgrind.XMakeValgrindState
+import io.xmake.run.perf.XMakePerfState
+import io.xmake.run.perf.executePerf
 import io.xmake.run.valgrind.executeValgrind
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
@@ -63,6 +65,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
             CoverageExecutor.EXECUTOR_ID -> true
             XMakeRunConfiguration.VALGRIND_EXECUTOR_ID -> true
+            XMakeRunConfiguration.PERF_EXECUTOR_ID -> true
             else -> false
         }
 
@@ -89,6 +92,10 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             is XMakeValgrindState -> execution.submit {
                 val console = prepareConsole(project)
                 executeValgrind(execution, state, environment, console)
+            }
+            is XMakePerfState -> execution.submit {
+                val console = prepareConsole(project)
+                executePerf(execution, state, environment, console)
             }
             else -> execution.submit {
                 throw ExecutionException("Unsupported XMake run profile state: ${state::class.java.name}")
