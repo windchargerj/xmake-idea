@@ -44,6 +44,9 @@ internal class ProfileCommands internal constructor(
         return runCancellable {
             executor.captureStandardOutput(factory.createInfoQuery(name, jsonOutput = true))
         }.getOrElse { error ->
+            // A version refusal of the project script fails the plain form the same way, so
+            // the retry would only repeat it.
+            if (error is XMakeProjectVersionError) throw error
             Log.debug(
                 "XMake ${factory.toolkit.version} listing '$name' failed, retrying without --json",
                 error,

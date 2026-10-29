@@ -102,8 +102,13 @@ internal class XMakeExecutor(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
-            throw error.message?.takeIf(VERSION_REQUIREMENT::containsMatchIn)
-                ?.let(::XMakeProjectVersionError) ?: error
+            val report = error.message
+            val refusal = report?.let(VERSION_REQUIREMENT::find)
+            throw if (refusal != null) {
+                XMakeProjectVersionError(report.orEmpty(), refusal.groupValues[2])
+            } else {
+                error
+            }
         }
         return output.toString()
     }
@@ -159,15 +164,19 @@ internal class XMakeExecutor(
 internal val Project.xmakeExecutor: XMakeExecutor
     get() = serviceOrNull() ?: error("Failed to get XMakeExecutor for $this")
 
-/** The project script refused this xmake version; the message is the failed command's
- *  report and carries xmake's own refusal text. */
-internal class XMakeProjectVersionError(message: String) : RuntimeException(message)
+/** The project script refused this xmake version; [requiredVersion] is the version it asks
+ *  for, parsed from xmake's own refusal text, and the message keeps the raw report. */
+internal class XMakeProjectVersionError(
+    message: String,
+    val requiredVersion: String,
+) : RuntimeException(message)
 
 /** The one wording of a version refusal, for logs and UI alike: the toolkit the project
- *  refused, and the failure xmake itself reported. */
+ *  refused and the version the project requires. */
 internal fun XMakeProjectVersionError.userMessage(toolkit: Toolkit): String =
-    "The project refused xmake ${toolkit.version} on ${toolkit.name}: $message"
+    "The project refused xmake ${toolkit.version.substringBefore('+')} on ${toolkit.name} " +
+        "because it requires xmake $requiredVersion or newer"
 
 // xmake's interpreter refuses the whole project script when its set_xmakever exceeds the
 // running version; this text is identical on 2.8.7 and 3.x.
-private val VERSION_REQUIREMENT = Regex("xmake v\\S+ < v\\S+, please run")
+private val VERSION_REQUIREMENT = Regex("xmake v(\\S+) < v(\\S+), please run")
