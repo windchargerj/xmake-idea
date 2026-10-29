@@ -23,11 +23,16 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComponentValidator
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.platform.ide.progress.withBackgroundProgress
+import com.intellij.ui.JBColor
 import com.intellij.ui.RawCommandLineEditor
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.AlignY
 import com.intellij.ui.dsl.builder.IntelliJSpacingConfiguration
@@ -72,6 +77,7 @@ internal class XMakeBuildProfileForm(
     private var selectedToolkit: Toolkit? = null
     private var profileOptions = XMakeBuildOptions()
     private var loadedOptionsKey: ToolkitInstallationKey? = null
+    private val toolkitValidator = ComponentValidator(this)
     private val loadOptions = loader<Toolkit>(scope) { toolkit ->
         val options = runCancellable {
             infoManager.loadBuildOptions(profile, toolkit)
@@ -103,9 +109,20 @@ internal class XMakeBuildProfileForm(
     private val verbose = JBCheckBox("Enable verbose output")
     private val configureArguments = RawCommandLineEditor()
 
+    private val versionErrorLabel = JBLabel().apply {
+        foreground = JBColor.RED
+        isVisible = false
+    }
+
     val component: JComponent = panel {
         row("XMake toolkit:") {
             cell(toolkitComboBox).align(AlignX.FILL)
+        }
+
+        // The empty label keeps the line in the component column, right under the toolkit
+        // dropdown it belongs to.
+        row("") {
+            cell(versionErrorLabel).align(AlignX.FILL)
         }
 
         row {
@@ -163,11 +180,27 @@ internal class XMakeBuildProfileForm(
         if ((event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) == 0L) {
             return@HierarchyListener
         }
-        if (component.isShowing) requestProfileOptions()
+        if (component.isShowing) {
+            refreshProjectScript()
+            requestProfileOptions()
+        }
+    }
+
+    /** An external edit of the project script reaches the cached options only after a VFS
+     *  refresh, so the file is refreshed when the form shows; a real change then invalidates
+     *  the caches and the topic listener re-queries, an unchanged file keeps the cache. */
+    private fun refreshProjectScript() {
+        val script = project.basePath
+            ?.let { LocalFileSystem.getInstance().findFileByPath(it) }
+            ?.findChild("xmake.lua")
+            ?: return
+        LocalFileSystem.getInstance()
+            .refreshFiles(mutableListOf(script), /* async = */ true, /* recursive = */ false) {}
     }
 
     init {
         Disposer.register(this, toolkitComboBox)
+        toolkitValidator.installOn(toolkitComboBox)
         cachesConnection.subscribe(
             XMakeInfoManager.TOPIC,
             XMakeInfoManager.Listener {
@@ -289,12 +322,26 @@ internal class XMakeBuildProfileForm(
         updateOptionModels()
     }
 
+
     private fun canQueryOptions(toolkit: Toolkit): Boolean =
         // Only an installation with a usable host can run the query; the query itself validates
         // the project directory for a selection that is not registered yet.
         toolkit.isAvailable && toolkitRunErrorMessage(toolkit) == null
 
     private fun updateOptionModels() {
+        val refused = profileOptions.versionRefusal != null
+        toolkitValidator.updateInfo(profileOptions.versionRefusal?.let { ValidationInfo(it, toolkitComboBox) })
+        // The line keeps only the requirement; the selected toolkit sits in the dropdown above
+        // and the full sentence goes to the log and the balloon.
+        versionErrorLabel.text = profileOptions.requiredVersion
+            ?.let { "The project requires xmake $it or newer." }
+            .orEmpty()
+        versionErrorLabel.isVisible = refused
+        // No choice under a refused toolkit can build, so the dropdowns give up editing.
+        platformComboBox.isEnabled = !refused
+        architectureComboBox.isEnabled = !refused
+        toolchainComboBox.isEnabled = !refused
+        buildModeComboBox.isEnabled = !refused
         isUpdatingOptions = true
         try {
             platformComboBox.updateOptions(

@@ -39,6 +39,7 @@ import com.intellij.util.xmlb.XmlSerializer
 import com.intellij.util.xmlb.annotations.OptionTag
 import com.intellij.util.xmlb.annotations.Transient
 import io.xmake.debug.EMPTY_DAP_DRIVER_PATH_MESSAGE
+import io.xmake.utils.info.XMakeInfoManager
 import io.xmake.migration.readLegacyBuildSettings
 import io.xmake.migration.removeLegacyBuildSettings
 import io.xmake.project.profile.xmakeBuildProfiles
@@ -155,6 +156,15 @@ class XMakeRunConfiguration(
                 Json.decodeFromString<JsonObject>(launchConfiguration)
             } catch (error: SerializationException) {
                 throw RuntimeConfigurationError("Launch configuration is not a valid JSON object: ${error.message}")
+            }
+        }
+        // The run needs a resolvable profile toolkit; a remembered version refusal fails the
+        // check without a fresh query, with the wording the last query answered with.
+        (this as? XMakeProfileRunConfiguration)?.resolveBuildProfile(project)?.let { profile ->
+            val toolkit = profile.resolveToolkit(project)
+                ?: throw RuntimeConfigurationError("Build profile '${profile.name}' has no XMake toolkit selected")
+            XMakeInfoManager.getInstance(project).versionRefusalOf(toolkit)?.let {
+                throw RuntimeConfigurationError(it)
             }
         }
     }
