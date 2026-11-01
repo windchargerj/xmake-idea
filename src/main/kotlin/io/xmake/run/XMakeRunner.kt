@@ -49,6 +49,12 @@ import io.xmake.run.command.XMakeExecutor
 import io.xmake.run.command.xmakeExecutor
 import io.xmake.run.coverage.prepareCoverageRun
 import io.xmake.run.coverage.reportCoverageData
+import io.xmake.run.sanitizer.SanitizerOutputCollector
+import io.xmake.run.sanitizer.clearSanitizerFindings
+import io.xmake.run.sanitizer.prepareSanitizerRun
+import io.xmake.run.sanitizer.publishSanitizerReport
+import io.xmake.run.sanitizer.rememberSanitizedRun
+import io.xmake.run.sanitizer.sanitizer
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
 import kotlinx.coroutines.Dispatchers
@@ -103,20 +109,47 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
         // Coverage reconfigures with -m coverage and rebuilds, attaches the suite to the
         // configuration before the target starts, and activates it once the target exits.
         val isCoverage = environment.executor.id == CoverageExecutor.EXECUTOR_ID
-        if (isCoverage) {
-            prepareCoverageRun(state.configuration, environment, executor, console)
-        } else {
-            executor.execute(
+        // A sanitized run reconfigures with its xmake mode, rebuilds, then collects the
+        // runtime's stderr findings while the target runs.
+        val sanitizer = state.configuration.sanitizer
+        when {
+            isCoverage -> prepareCoverageRun(state.configuration, environment, executor, console)
+            sanitizer != null -> {
+                prepareSanitizerRun(executor, state, environment, console, sanitizer)
+                environment.runnerAndConfigurationSettings?.let {
+                    rememberSanitizedRun(environment.project, it)
+                }
+            }
+            else -> executor.execute(
                 console, state.configureCommand,
                 XMakeConsoleOptions(showConsole = false, showOnFailure = true),
             )
         }
-
-        val processHandler = state.startProcess {
-            if (isCoverage) {
-                reportCoverageData(state.configuration, console)
-            }
+        if (sanitizer == null) {
+            // A plain run clears the analysis view: its findings describe the last run.
+            clearSanitizerFindings(environment.project)
         }
+
+        val findings = sanitizer?.let(::SanitizerOutputCollector)
+        val processHandler = state.startProcess(
+            onTextAvailable = { text, outputType ->
+                if (com.intellij.execution.process.ProcessOutputType.isStderr(outputType)) findings?.append(text)
+            },
+            onTerminated = {
+                if (isCoverage) {
+                    reportCoverageData(state.configuration, console)
+                }
+                if (sanitizer != null && findings != null) {
+                    publishSanitizerReport(
+                        environment.project,
+                        state.configuration,
+                        state.runCommand,
+                        sanitizer,
+                        findings.stderr(),
+                    )
+                }
+            },
+        )
         return try {
             withContext(Dispatchers.EDT) {
                 ensureProjectIsOpen(environment.project)

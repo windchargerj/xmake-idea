@@ -89,6 +89,14 @@ class XMakeRunConfiguration(
     @OptionTag(tag = "emulateTerminalInConsole")
     var emulateTerminalInConsole: Boolean = true
 
+    /**
+     * The sanitizer the run instruments with, as a [io.xmake.run.sanitizer.SanitizerKind]
+     * name; empty runs the target plain. A sanitized run configures and rebuilds with the
+     * sanitizer's xmake mode, then presents the runtime's findings in the analysis view.
+     */
+    @OptionTag(tag = "sanitizerKind")
+    var sanitizerKind: String = ""
+
     /** false (default): debug via CLion's own native GDB/LLDB driver. true: spawn an external DAP driver process. */
     @OptionTag(tag = "useDapDriver")
     var useDapDriver: Boolean = false

@@ -79,6 +79,14 @@ class XMakeCommandFactory(
         }
     }.arguments
 
+    /** `--policies=name:value,...`; empty policies add nothing. */
+    private fun policyArguments(policies: Map<String, String>): List<String> =
+        if (policies.isEmpty()) {
+            emptyList()
+        } else {
+            listOf("--policies=" + policies.entries.joinToString(",") { "${it.key}:${it.value}" })
+        }
+
     private val projectDirectory: String = project.xmakeProjectDirectories.resolveProjectDirectory(this.toolkit)
     private val configurationDirectory: String = profileConfigurationDirectory(
         profile.id,
@@ -123,19 +131,22 @@ class XMakeCommandFactory(
 
     /**
      * Configures the profile's build. [modeOverride] replaces the profile's build mode for this
-     * invocation only, used by coverage runs to configure `-m coverage` or
-     * `-m valgrind` without touching the profile the user edits. [extraArguments]
+     * invocation only, used by coverage runs to configure `-m coverage` or a sanitized run's
+     * `-m debug`, without touching the profile the user edits. [policies] sets config-time
+     * `--policies=name:value` options - the sanitizer instrumentation rides on those, not on
+     * the `mode.*` rules, which only fire when the project attached them. [extraArguments]
      * appends raw config-time options verbatim - the coverage build's `--coverage` flags go
      * through here, merged by the caller so they cannot shadow the user's own flags of the
      * same options (xmake keeps the last value of a repeated option).
      */
     fun createConfigure(
         modeOverride: String? = null,
+        policies: Map<String, String> = emptyMap(),
         extraArguments: List<String> = emptyList(),
     ): XMakeCommand = createCommand {
         config {
             yes = true
-            arguments = configureArgumentsWith(modeOverride ?: profile.buildMode) + extraArguments
+            arguments = configureArgumentsWith(modeOverride ?: profile.buildMode) + policyArguments(policies) + extraArguments
             verbose = profile.verbose
         }
     }

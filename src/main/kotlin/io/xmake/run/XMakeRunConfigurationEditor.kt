@@ -34,6 +34,7 @@ import io.xmake.debug.DapDriverDetector
 import io.xmake.utils.ui.coroutineScope
 import io.xmake.debug.DapDriverType
 import io.xmake.project.directory.ui.DirectoryBrowser
+import io.xmake.run.sanitizer.SanitizerKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -58,6 +59,11 @@ class XMakeRunConfigurationEditor(
     )
 
     private val emulateTerminalInConsole = JBCheckBox("Emulate terminal in the output console")
+
+    /** None plus one entry per sanitizer; the selection drives the sanitized run. */
+    private val sanitizerKind = com.intellij.openapi.ui.ComboBox(
+        arrayOf(NO_SANITIZER) + SanitizerKind.entries.map(SanitizerKind::displayName).toTypedArray(),
+    ).apply { renderer = com.intellij.ui.SimpleListCellRenderer.create("") { it } }
 
     private val useDapDriver = JBCheckBox(
         "Use an external DAP driver instead of CLion's active debug profile",
@@ -151,6 +157,8 @@ class XMakeRunConfigurationEditor(
             launchWorkingDirectory.text = configuration.launchWorkingDirectory
             environmentVariables.envData = configuration.runEnvironment
             emulateTerminalInConsole.isSelected = configuration.emulateTerminalInConsole
+            sanitizerKind.selectedItem = SanitizerKind.entries
+                .firstOrNull { it.name == configuration.sanitizerKind }?.displayName ?: NO_SANITIZER
             useDapDriver.isSelected = configuration.useDapDriver
             dapDriverAutoDetect.isSelected = configuration.dapDriverAutoDetect
             dapDriverPath.text = configuration.dapDriverPath
@@ -171,6 +179,8 @@ class XMakeRunConfigurationEditor(
         configuration.launchWorkingDirectory = launchWorkingDirectory.text
         configuration.runEnvironment = environmentVariables.envData
         configuration.emulateTerminalInConsole = emulateTerminalInConsole.isSelected
+        configuration.sanitizerKind = SanitizerKind.entries
+            .firstOrNull { it.displayName == sanitizerKind.selectedItem }?.name.orEmpty()
         configuration.useDapDriver = useDapDriver.isSelected
         configuration.dapDriverAutoDetect = dapDriverAutoDetect.isSelected
         configuration.dapDriverPath = dapDriverPath.text
@@ -196,6 +206,11 @@ class XMakeRunConfigurationEditor(
 
         row {
             cell(emulateTerminalInConsole)
+        }
+
+        row("Sanitizer:") {
+            cell(sanitizerKind)
+                .comment("Rebuilds with the sanitizer's xmake mode and shows the findings in the XMake Analysis view")
         }
 
         collapsibleGroup("Debug Configuration") {
@@ -237,5 +252,8 @@ class XMakeRunConfigurationEditor(
 
     private companion object {
         val launchConfigurationSize = Dimension(400, 140)
+
+        /** The sanitizer combo's plain-run entry. */
+        const val NO_SANITIZER = "None"
     }
 }
