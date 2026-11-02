@@ -21,6 +21,12 @@
     <!-- The run path builds coverage suites and file providers from this module's classes. -->
     <depends>com.intellij.modules.coverage</depends>
 
+    <!-- The test run's tree, statistics, and export come from the platform's test runner. -->
+    <dependencies>
+        <module name="intellij.platform.smRunner"/>
+    </dependencies>
+
+
     <depends optional="true" config-file="io.xmake-ssh.xml">
         com.intellij.modules.ssh
     </depends>
