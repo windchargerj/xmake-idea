@@ -71,12 +71,17 @@
         <!-- Without this filter the problem solver ignores findings for files whose
              language another plugin owns; the plugin claims the C/C++ sources it builds. -->
         <problemFileHighlightFilter implementation="io.xmake.run.analysis.AnalysisProblemFileFilter"/>
-
+        <!-- xrepo packages -->
+        <toolWindow id="XMake Packages" anchor="bottom" secondary="true"
+                    factoryClass="io.xmake.run.packages.ui.XMakePackagesToolWindowFactory"
+                    icon="/icons/xmake-dark.svg"/>
+>
         <!-- run configurations -->
         <programRunner implementation="io.xmake.run.XMakeRunner"/>
         <configurationType implementation="io.xmake.run.XMakeRunConfigurationType"/>
         <configurationType implementation="io.xmake.run.test.XMakeTestRunConfigurationType"/>
-        <runConfigurationProducer implementation="io.xmake.run.XMakeRunConfigurationProducer"/>
+        <configurationType implementation="io.xmake.run.pack.XMakePackRunConfigurationType"/>
+>        <runConfigurationProducer implementation="io.xmake.run.XMakeRunConfigurationProducer"/>
         <executionTargetProvider implementation="io.xmake.run.target.XMakeBuildProfileExecutionTargetProvider"/>
         <projectTaskRunner implementation="io.xmake.build.XMakeProjectTaskRunner"/>
 

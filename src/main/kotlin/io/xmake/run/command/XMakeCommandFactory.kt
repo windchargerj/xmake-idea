@@ -32,6 +32,8 @@ import io.xmake.utils.SystemUtils
 import io.xmake.utils.cli.XMakeCommandLine
 import io.xmake.utils.cli.DEFAULT_TARGET
 import io.xmake.utils.cli.QUERY_ENVIRONMENT
+import io.xmake.utils.cli.XMakeServiceKind
+import io.xmake.utils.cli.XMakeServiceVerb
 import io.xmake.utils.cli.xmake
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Path
@@ -208,7 +210,64 @@ class XMakeCommandFactory(
                 script = scriptArgument("enumtests.lua")
             }
         }
-    fun createInfoQuery(queryName: String, jsonOutput: Boolean = true): XMakeCommand =
+     * One snapshot probe of the build cache and the project's xmake services, answering
+     * machine-readably between `__begin__`/`__end__` markers. Runs the probeservices.lua
+     * script on the toolkit's own host - the state it reads (the persisted cache option,
+     * the resolved cache program, the per-service status files) lives in the profile's
+     * config directory, which on WSL/SSH toolkits is on the other host. The script header
+     * documents the record grammar; the panel parses only the marked payload.
+     */
+    fun createBuildServicesProbe(): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            lua {
+                script = scriptArgument("probeservices.lua")
+            }
+        }
+
+    /**
+     * Lists the project's declared xpack() packages, one `name<TAB>formats` line each - the
+     * pack editor's pickers read it. Runs the xpacks.lua script, which reads
+     * `project.scope("xpack")`: `xmake show -l xpacks` does not exist on the verified
+     * xmake 3.1.2 (docs/roadmap-designs/packaging.md, F12), and the declarations may live in
+     * included files only the interpreter resolves.
+     */
+    fun createXpackQuery(): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            lua {
+                script = scriptArgument("xpacks.lua")
+            }
+        }
+
+    /**
+     * Flips the persisted `ccache` option with `xmake f --ccache=y|n`, re-running the
+     * profile's configure pass with only this option changed (the rest of the config is
+     * sticky). xmake owns the configuration file - the panel never writes it. Whether
+     * objects rebuild afterwards depends on tool presence: with a cache program found the
+     * compiler gets wrapped, so the next build rebuilds affected targets.
+     */
+    fun createCcacheToggle(enabled: Boolean): XMakeCommand = createCommand {
+        config {
+            yes = true
+            arguments = configureArguments + listOf("--ccache=" + if (enabled) "y" else "n")
+            verbose = profile.verbose
+        }
+    }
+
+    /**
+     * One `xmake service` verb, e.g. `xmake service --connect --remote`. Its
+     * human-readable output (including xmake's own connect failures) belongs in the
+     * visible console, and callers must re-probe afterwards: the command exit code says
+     * nothing about the listener, and the connection state is persisted by the client.
+     */
+    fun createServiceAction(verb: XMakeServiceVerb, kind: XMakeServiceKind): XMakeCommand =
+        createCommand {
+            service {
+                this.verb = verb
+                this.kind = kind
+            }
+        }
+
+>    fun createInfoQuery(queryName: String, jsonOutput: Boolean = true): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             show(queryName, json = jsonOutput)
         }
@@ -242,7 +301,87 @@ class XMakeCommandFactory(
             },
         )
     }
-    private fun createCommand(
+     * One `xmake require --list`: the packages the project declares. Plain text by design -
+     * this xmake accepts `--format=json` on the listing and silently ignores it
+     * (docs/roadmap-designs/xrepo-packages.md, verified on 3.1.2) - so no json flag goes out.
+     */
+    fun createRequireList(): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { list = true }
+        }
+
+    /**
+     * One `xmake require --info --format=json <package>`: the package's resolved data, whose
+     * `references` key exists exactly when the package is installed. The JSON flag needs
+     * xmake 3.1.2; older toolkits reject it, the query fails, and the caller degrades to
+     * "no info" rather than falling back to the listing's lying `-> ` detail lines.
+     */
+    fun createRequireInfo(packageName: String): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { info = true; json = true; packages = listOf(packageName) }
+        }
+
+    /** One `xmake require --search <term>`: the repository hits, plain text only. */
+    fun createRequireSearch(term: String): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { search = true; packages = listOf(term) }
+        }
+
+    /** One `xmake require --depgraph --format=json`: which declared package needs which. */
+    fun createRequireDepgraph(): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { depgraph = true; json = true }
+        }
+
+    /**
+     * Installs [packageName] with `xmake require -y`. The `-y` is baked in so callers cannot
+     * forget it: xmake's own prompt waits on a TTY that never answers, and the command would
+     * hang until the executor timeout.
+     */
+    fun createRequireInstall(packageName: String): XMakeCommand =
+        createCommand {
+            require { yes = true; packages = listOf(packageName) }
+        }
+
+    /** Upgrades every installed package with `xmake require --upgrade -y`. */
+    fun createRequireUpgrade(): XMakeCommand =
+        createCommand {
+            require { yes = true; upgrade = true }
+        }
+
+    /** Removes [packageName] with `xmake require --uninstall -y`. */
+    fun createRequireUninstall(packageName: String): XMakeCommand =
+        createCommand {
+            require { yes = true; uninstall = true; packages = listOf(packageName) }
+        }
+
+    /**
+     * One `xmake pack` pass over the project's xpack packages. [formats] filters what the
+     * xpacks already declare (`-f` intersects, it cannot add - an undeclared format is
+     * silently skipped by xmake, docs/roadmap-designs/packaging.md, F7); empty packs every
+     * declared format. [packName] empty packs every declared xpack. [extraArguments] must be
+     * pre-parsed (the user's `ParametersListUtil` fields). The PackScope emits every option
+     * ahead of the names, which the pack plugin's parser requires (F8).
+     */
+    fun createPack(
+        packName: String = "",
+        formats: List<String> = emptyList(),
+        outputDirectory: String = "",
+        basename: String = "",
+        autoBuild: Boolean = true,
+        extraArguments: List<String> = emptyList(),
+    ): XMakeCommand = createCommand {
+        pack {
+            this.formats = formats.joinToString(",").takeIf { it.isNotEmpty() }
+            this.outputDirectory = outputDirectory.takeIf { it.isNotEmpty() }
+            this.basename = basename.takeIf { it.isNotEmpty() }
+            this.autoBuild = autoBuild
+            this.extraArguments = extraArguments
+            this.names = listOfNotNull(packName.trim().takeIf { it.isNotEmpty() })
+        }
+    }
+
+>    private fun createCommand(
         environmentVariables: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT,
         environmentOverrides: Map<String, String> = emptyMap(),
         configure: XMakeCommandLine.() -> Unit,
