@@ -96,9 +96,17 @@ private val WINDOWS_UNSUPPORTED = setOf(SanitizerKind.MEMORY, SanitizerKind.THRE
  */
 internal fun sanitizerEnvironment(configuration: XMakeRunConfiguration): EnvironmentVariablesData {
     val kind = configuration.sanitizer ?: return configuration.runEnvironment
-    if (kind.optionVariable in configuration.runEnvironment.envs) return configuration.runEnvironment
+    val userOptions = configuration.runEnvironment.envs[kind.optionVariable] ?: kind.defaultOptions
+    // The runtime's options read one `key:value` list; the user's own keys win, and the
+    // defaults fill only the keys their value does not carry.
+    val merged = kind.defaultOptions
+        .split(':')
+        .filter { option -> !userOptions.contains("${option.substringBefore('=')}=") }
+        .plus(userOptions)
+        .joinToString(":")
+        .ifEmpty { userOptions }
     return EnvironmentVariablesData.create(
-        configuration.runEnvironment.envs + (kind.optionVariable to kind.defaultOptions),
+        configuration.runEnvironment.envs + (kind.optionVariable to merged),
         configuration.runEnvironment.isPassParentEnvs,
     )
 }
