@@ -196,6 +196,18 @@ class XMakeCommandFactory(
             }
         }
 
+    /**
+     * Lists every test the project defines, one `target/test<TAB>group` line each - the
+     * editor's test picker reads it. Runs the enumtests.lua project script, which loads
+     * the cached configuration, so it needs no target and reports tests from every
+     * target in project order.
+     */
+    fun createTestListQuery(): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            lua {
+                script = scriptArgument("enumtests.lua")
+            }
+        }
     fun createInfoQuery(queryName: String, jsonOutput: Boolean = true): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             show(queryName, json = jsonOutput)
