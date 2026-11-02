@@ -136,6 +136,11 @@
                     text="Build Project"
                     icon="AllIcons.Actions.Compile"
                     description="Build the current project."/>
+            <action id="XMake.CheckClangTidy"
+                    class="io.xmake.actions.CheckClangTidyAction"
+                    text="Run Clang-Tidy"
+                    icon="AllIcons.Actions.Find"
+                    description="Check the project through xmake check clang.tidy and show the findings in the XMake Analysis view."/>
             <action id="XMake.Rebuild"
                     class="io.xmake.actions.RebuildAction"
                     text="Rebuild Project"
@@ -203,6 +208,15 @@
                           anchor="before"
                           relative-to-action="compositeResumeGroup"/>
         </action>
+
+        <!-- The check's context-menu entry, its own sub-popup so the editor and project view
+             menus grow one row, not one loose action. The analysis view's toolbar keeps its
+             own copy of the same run. -->
+        <group id="XMake.EditorPopup" popup="true" text="XMake" description="XMake actions">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <reference ref="XMake.CheckClangTidy"/>
+        </group>
     </actions>
 
     <projectListeners>

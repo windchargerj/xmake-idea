@@ -249,6 +249,10 @@ class XMakeRunConfigurationEditor(
      * so those entries leave the model instead of failing the build later, and the comment
      * says where to find them. An unresolved toolkit has no verdict, so the combo keeps
      * every entry; WSL and SSH toolkits and non-Windows hosts are not restricted either.
+     *
+     * When the rebuild drops the selection the configuration has stored, the comment names
+     * it explicitly: apply writes back whatever the combo shows, so a silently reset row
+     * would turn "OK" into rewriting a saved sanitizer into a plain run.
      */
     private fun updateSanitizerAvailability(toolkit: Toolkit?) {
         val windowsLocal = SystemInfo.isWindows && toolkit?.host?.type == ToolkitHostType.LOCAL
@@ -258,11 +262,21 @@ class XMakeRunConfigurationEditor(
             SanitizerKind.entries
         }
         val items = (listOf(NO_SANITIZER) + offered.map(SanitizerKind::displayName)).toTypedArray()
-        val selection = sanitizerKind.selectedItem
+        val selection = sanitizerKind.selectedItem as? String
         sanitizerKind.model = DefaultComboBoxModel(items)
         sanitizerKind.selectedItem = selection.takeIf(items::contains) ?: NO_SANITIZER
+        val dropped = selection?.takeIf { it != NO_SANITIZER && !items.contains(it) }
         sanitizerComment(
-            if (windowsLocal) "$SANITIZER_ROW_COMMENT. $WINDOWS_LOCAL_SANITIZER_NOTE" else SANITIZER_ROW_COMMENT,
+            when {
+                // Only the restricted rebuild can drop a selection; name the lost value so
+                // the reset is a sentence on the row, not something OK does in passing.
+                dropped != null ->
+                    "$SANITIZER_ROW_COMMENT. The configuration's $dropped is unavailable on this toolkit " +
+                            "and is reset to $NO_SANITIZER - applying now stores a plain run; switch to a WSL or " +
+                            "SSH toolkit to keep it. $WINDOWS_LOCAL_SANITIZER_NOTE"
+                windowsLocal -> "$SANITIZER_ROW_COMMENT. $WINDOWS_LOCAL_SANITIZER_NOTE"
+                else -> SANITIZER_ROW_COMMENT
+            },
         )
     }
 

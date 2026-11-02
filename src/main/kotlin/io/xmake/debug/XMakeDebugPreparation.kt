@@ -20,6 +20,7 @@ import com.intellij.execution.ExecutionException
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.StringUtil
+import io.xmake.utils.cli.markerPayload
 import io.xmake.utils.notify
 import io.xmake.build.XMakeBuildTask
 import io.xmake.build.XMakeBuildTaskExecution
@@ -69,10 +70,7 @@ private data class DebugTarget(
 )
 
 private fun resolveDebugTarget(state: XMakeDebugState, output: String): DebugTarget {
-    val targetOutputLines = "__begin__([\\s\\S]*?)__end__".toRegex()
-        .find(output.trim())
-        ?.groupValues
-        ?.get(1)
+    val targetOutputLines = markerPayload(output)
         ?.trim()
         ?.lineSequence()
         ?.map(String::trim)

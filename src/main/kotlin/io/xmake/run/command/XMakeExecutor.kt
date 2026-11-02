@@ -36,6 +36,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
@@ -49,9 +50,17 @@ class XMakeExecutor(
 ) {
     private val lane = Dispatchers.Default.limitedParallelism(1)
 
+    /** The operations that have started - queued on the lane or running against it. */
+    private val started = AtomicInteger(0)
+
+    /** Whether an operation has started and not finished yet: a caller about to submit
+     *  words its wait message with this - the probe it queues may sit behind a whole build. */
+    val laneBusy: Boolean
+        get() = started.get() > 0
+
     /** Keeps the commands in one submitted operation from interleaving with another operation. */
     fun <T> submit(task: suspend () -> T): Deferred<T> =
-        coroutineScope.async { runExclusive(task) }
+        coroutineScope.async { runTracked { runExclusive(task) } }
 
     /**
      * Runs [before] first (outside the exclusive section — typically another separately
@@ -62,9 +71,22 @@ class XMakeExecutor(
      */
     fun <T> submitAfter(before: suspend () -> Unit, task: suspend () -> T): Deferred<T> =
         coroutineScope.async {
-            before()
-            runExclusive(task)
+            runTracked {
+                before()
+                runExclusive(task)
+            }
         }
+
+    /** Counts the operation for [laneBusy] for as long as its task runs - from the first
+     *  dispatch to the last line of cleanup, cancellation included. */
+    private suspend fun <T> runTracked(task: suspend () -> T): T {
+        started.incrementAndGet()
+        try {
+            return task()
+        } finally {
+            started.decrementAndGet()
+        }
+    }
 
     /** Runs a command operation without interleaving it with another XMake operation. */
     suspend fun <T> runExclusive(task: suspend () -> T): T = withContext(lane) { task() }
