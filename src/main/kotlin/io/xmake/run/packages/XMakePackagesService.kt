@@ -62,24 +62,47 @@ internal class XMakePackagesService(private val project: Project) {
         private set
 
     /**
+     * What the pipeline is doing while [busy]: null names an info fetch - the details
+     * pane's own "Loading" - anything else is the operation the grayed actions wait for,
+     * so a long install reads as a reason, not as a stuck panel.
+     */
+    @Volatile
+    var currentOperation: String? = null
+        private set
+
+    /**
      * Reloads the declared packages and the dependency graph. The graph is a nicety: a
      * failed graph only leaves the rows childless, while a failed listing is the failure
      * the view reports. A refresh also leaves search mode - it is the way out of it.
      */
     fun refresh() {
         if (busy) return
-        runQuery { factory -> loadSnapshot(factory) }
+        runQuery("refreshing the package list") { factory -> loadSnapshot(factory) }
     }
 
-    /** Searches the configured repositories; the results replace the tree until a refresh. */
+    /** Searches the configured repositories; the results replace the tree until a refresh
+     *  or [exitSearch]. */
     fun search(term: String) {
         if (busy) return
-        runQuery { factory ->
+        runQuery("searching the repositories for '$term'") { factory ->
             val results = XMakePackageParsers.parseSearchResults(
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireSearch(term)),
             )
             (snapshot ?: XMakePackagesSnapshot(emptyList(), null)).copy(searchResults = results)
         }
+    }
+
+    /**
+     * Leaves search mode without re-querying: the declared packages come back from the
+     * snapshot the search rode on, so an empty search box plus Enter costs no lane time.
+     * No-op while an operation holds the pipeline or search mode is not on.
+     */
+    fun exitSearch() {
+        if (busy) return
+        val current = snapshot ?: return
+        if (current.searchResults == null) return
+        snapshot = current.copy(searchResults = null)
+        project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)
     }
 
     /**
@@ -93,6 +116,7 @@ internal class XMakePackagesService(private val project: Project) {
         val current = snapshot ?: return
         if (current.infos.containsKey(packageName)) return
         busy = true
+        currentOperation = null
         project.xmakeExecutor.submit {
             try {
                 val factory = packageFactory()
@@ -104,6 +128,7 @@ internal class XMakePackagesService(private val project: Project) {
                 finish(current.copy(infos = current.infos + (packageName to info)), null)
             } catch (cancellation: CancellationException) {
                 busy = false
+                currentOperation = null
                 throw cancellation
             } catch (error: Exception) {
                 Log.warn("XMake package info query failed for '$packageName'", error)
@@ -121,6 +146,7 @@ internal class XMakePackagesService(private val project: Project) {
     fun prepareCommand(prepare: XMakeCommandFactory.() -> XMakeCommand, onReady: (XMakeCommand) -> Unit) {
         if (busy) return
         busy = true
+        currentOperation = "preparing the package command"
         project.xmakeExecutor.submit {
             var command: XMakeCommand? = null
             var failure: String? = null
@@ -128,6 +154,7 @@ internal class XMakePackagesService(private val project: Project) {
                 command = packageFactory().prepare()
             } catch (cancellation: CancellationException) {
                 busy = false
+                currentOperation = null
                 throw cancellation
             } catch (error: Exception) {
                 Log.warn("XMake package command preparation failed", error)
@@ -136,6 +163,7 @@ internal class XMakePackagesService(private val project: Project) {
             invokeLater {
                 if (project.isDisposed) return@invokeLater
                 busy = false
+                currentOperation = null
                 failure?.let { project.notify("XMake packages: $it") }
                 command?.let(onReady)
             }
@@ -151,6 +179,7 @@ internal class XMakePackagesService(private val project: Project) {
     fun runPackageCommand(command: XMakeCommand, description: String) {
         if (busy) return
         busy = true
+        currentOperation = description
         project.xmakeExecutor.submit {
             var failed: Exception? = null
             try {
@@ -160,6 +189,7 @@ internal class XMakePackagesService(private val project: Project) {
                 project.xmakeExecutor.execute(console, command, XMakeConsoleOptions(showConsole = true))
             } catch (cancellation: CancellationException) {
                 busy = false
+                currentOperation = null
                 throw cancellation
             } catch (error: Exception) {
                 failed = error
@@ -172,19 +202,26 @@ internal class XMakePackagesService(private val project: Project) {
                 failed?.let { error ->
                     project.notify("xmake $description failed: ${error.message}", title = "XMake packages")
                 }
-                runQuery { factory -> loadSnapshot(factory) }
+                runQuery("refreshing the package list") { factory -> loadSnapshot(factory) }
             }
         }
     }
 
-    /** One read-only pipeline run: profile in, snapshot out, failure into [lastError]. */
-    private fun runQuery(operation: suspend (factory: XMakeCommandFactory) -> XMakePackagesSnapshot) {
+    /** One read-only pipeline run: profile in, snapshot out, failure into [lastError].
+     *  [doing] names the run for the view, which has no other way to tell a grayed
+     *  refresh from a grayed install. */
+    private fun runQuery(
+        doing: String,
+        operation: suspend (factory: XMakeCommandFactory) -> XMakePackagesSnapshot,
+    ) {
         busy = true
+        currentOperation = doing
         project.xmakeExecutor.submit {
             try {
                 finish(operation(packageFactory()), null)
             } catch (cancellation: CancellationException) {
                 busy = false
+                currentOperation = null
                 throw cancellation
             } catch (error: Exception) {
                 Log.warn("XMake packages query failed", error)
@@ -215,6 +252,7 @@ internal class XMakePackagesService(private val project: Project) {
 
     private fun finish(newSnapshot: XMakePackagesSnapshot?, error: String?) {
         busy = false
+        currentOperation = null
         snapshot = newSnapshot
         lastError = error
         project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)

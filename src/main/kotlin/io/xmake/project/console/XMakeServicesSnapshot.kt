@@ -17,6 +17,7 @@
 package io.xmake.project.console
 
 import io.xmake.utils.cli.XMakeServiceKind
+import io.xmake.utils.cli.markerPayload
 
 /** How a service endpoint answered the probe's short TCP connect. */
 enum class XMakeReachability {
@@ -62,14 +63,13 @@ data class XMakeServicesSnapshot(
  *  compatibility, and an output without markers answers null - the probe produced nothing. */
 object XMakeServicesProbeParser {
 
-    private val PAYLOAD = Regex("__begin__([\\s\\S]*?)__end__")
     private val CACHE_ENABLED_LINE = Regex("ccache-enabled:\\s*(\\S+)")
     private val CACHE_PROGRAM_LINE = Regex("cache-program:\\s*(\\S.*)")
     private val SERVICE_LINE =
         Regex("service:\\s*kind=(\\S+)\\s+endpoint=(\\S+)\\s+connected=(\\S+)\\s+reachable=(\\S+)\\s+token=(\\S+)")
 
     fun parse(output: String): XMakeServicesSnapshot? {
-        val payload = PAYLOAD.find(output.trim())?.groupValues?.get(1) ?: return null
+        val payload = markerPayload(output) ?: return null
         val cache = XMakeCacheState(
             enabled = CACHE_ENABLED_LINE.find(payload)?.groupValues?.get(1) == "true",
             program = CACHE_PROGRAM_LINE.find(payload)?.groupValues?.get(1)
