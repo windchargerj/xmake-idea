@@ -56,6 +56,12 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         args(checker)
     }
 
+    /** Adds `test`; [arguments] are the test filters and options the action takes. */
+    fun test(arguments: List<String> = emptyList()): XMakeCommandLine = apply {
+        beginAction("test")
+        args(arguments)
+    }
+
     /** Adds `show`; [listing] selects one `-l` listing and [json] asks for the JSON form. */
     fun show(listing: String? = null, json: Boolean = false): XMakeCommandLine = apply {
         listing?.let {

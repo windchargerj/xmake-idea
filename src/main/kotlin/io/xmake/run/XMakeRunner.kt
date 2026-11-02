@@ -57,6 +57,8 @@ import io.xmake.run.sanitizer.rememberSanitizedRun
 import io.xmake.run.sanitizer.sanitizer
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
+import io.xmake.run.test.XMakeTestRunConfiguration
+import io.xmake.run.test.XMakeTestState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.concurrency.Promise
@@ -64,13 +66,16 @@ import org.jetbrains.concurrency.toPromiseWithoutLogError
 
 class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
 
-    override fun canRun(executorId: String, profile: RunProfile): Boolean =
-        profile is XMakeRunConfiguration && when (executorId) {
+    override fun canRun(executorId: String, profile: RunProfile): Boolean = when (profile) {
+        is XMakeTestRunConfiguration -> executorId == DefaultRunExecutor.EXECUTOR_ID
+        is XMakeRunConfiguration -> when (executorId) {
             DefaultRunExecutor.EXECUTOR_ID -> true
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
             CoverageExecutor.EXECUTOR_ID -> true
             else -> XMakeAnalysisSupport.forExecutor(executorId) != null
         }
+        else -> false
+    }
 
     override fun getRunnerId(): String = "XMakeRunner"
 
