@@ -146,6 +146,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
                         state.runCommand,
                         sanitizer,
                         findings.stderr(),
+                        console,
                     )
                 }
             },

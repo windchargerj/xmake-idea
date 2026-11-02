@@ -47,6 +47,7 @@ import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
+import io.xmake.run.sanitizer.sanitizer
 import io.xmake.utils.cli.DEFAULT_TARGET
 import io.xmake.run.target.findXMakeBuildProfileFor
 import io.xmake.utils.cli.ALL_TARGET
@@ -197,8 +198,17 @@ class XMakeRunConfiguration(
     override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration> =
         XMakeRunConfigurationEditor(project)
 
-    override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState =
-        when (executor.id) {
+    override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
+        // Every other executor builds for its own analysis - debug, coverage, Valgrind, perf -
+        // so a sanitizer selection under them would silently not instrument anything.
+        val selected = sanitizer
+        if (selected != null && executor.id != DefaultRunExecutor.EXECUTOR_ID) {
+            throw ExecutionException(
+                "${selected.displayName} runs through the Run executor - clear the sanitizer " +
+                        "or use Run",
+            )
+        }
+        return when (executor.id) {
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugState.create(this, environment)
             // Coverage shares the run state: XMakeRunner reconfigures with -m coverage and
             // collects the gcov data around the same execution.
@@ -209,6 +219,7 @@ class XMakeRunConfiguration(
                 ?.createState(executor.id, this, environment)
                 ?: throw ExecutionException("Unsupported XMake executor: ${executor.id}")
         }
+    }
 
     companion object {
         /** Only keys documented for gdb's DAP interpreter and lldb-dap belong here; the

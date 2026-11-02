@@ -16,7 +16,9 @@
  */
 package io.xmake.run.sanitizer
 
+import com.intellij.execution.ExecutionException
 import com.intellij.execution.configuration.EnvironmentVariablesData
+import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.application.invokeLater
@@ -24,6 +26,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import io.xmake.project.console.XMakeConsole
+import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.run.XMakeRunConfiguration
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeConsoleOptions
@@ -54,6 +57,18 @@ internal suspend fun prepareSanitizerRun(
     val project = state.configuration.project
     val profile = project.requireXMakeBuildProfileFor(environment.executionTarget)
     val factory = project.xmakeCommands(profile)
+    // The toolchains, not the plugin, decide availability; xmake force-adds the flags and
+    // the compile would fail cryptically, so the runs that cannot work anywhere on this
+    // host say so up front.
+    val host = factory.toolkit.host
+    if (host.type == ToolkitHostType.LOCAL && com.intellij.openapi.util.SystemInfo.isWindows &&
+        kind in WINDOWS_UNSUPPORTED
+    ) {
+        throw ExecutionException(
+            "${kind.displayName} needs Linux or macOS - run it through a WSL toolkit, " +
+                    "or use AddressSanitizer under MSVC or clang",
+        )
+    }
     executor.execute(
         console,
         factory.createConfigure(modeOverride = DEBUG_MODE, policies = mapOf(kind.policy to "y")),
@@ -68,6 +83,9 @@ internal suspend fun prepareSanitizerRun(
 
 /** The sanitizer builds keep full debug information and stay unoptimized: accurate stacks. */
 private const val DEBUG_MODE = "debug"
+
+/** The runtimes no Windows toolchain carries; AddressSanitizer runs under MSVC or clang. */
+private val WINDOWS_UNSUPPORTED = setOf(SanitizerKind.MEMORY, SanitizerKind.THREAD, SanitizerKind.LEAK)
 
 /**
  * The environment the sanitized target runs with: the configuration's own variables, plus
@@ -86,7 +104,7 @@ internal fun sanitizerEnvironment(configuration: XMakeRunConfiguration): Environ
 /**
  * Parses the collected stderr of one sanitized run into findings and hands them to the
  * analysis view. A run without findings still replaces the view's content - absence is
- * the result too - and the tool window comes forward only when there is something to see.
+ * the result too - and both outcomes leave a line in the run console pointing at the view.
  */
 internal fun publishSanitizerReport(
     project: Project,
@@ -94,6 +112,7 @@ internal fun publishSanitizerReport(
     runCommand: XMakeCommand,
     kind: SanitizerKind,
     stderr: String,
+    console: XMakeConsole? = null,
 ) {
     val report = SanitizerReportParser(kind)
         .apply { feed(stderr) }
@@ -102,6 +121,15 @@ internal fun publishSanitizerReport(
     invokeLater {
         if (project.isDisposed) return@invokeLater
         SanitizerAnalysisService.getInstance(project).publish(report)
+        console?.print(
+            if (report.issues.isEmpty()) {
+                "${kind.displayName}: no findings\n"
+            } else {
+                "${kind.displayName}: ${report.totalFindings} finding(s) at " +
+                        "${report.issues.size} unique place(s) - see the XMake Analysis view\n"
+            },
+            ConsoleViewContentType.SYSTEM_OUTPUT,
+        )
         if (report.issues.isNotEmpty()) {
             ToolWindowManager.getInstance(project)
                 .getToolWindow(SANITIZER_TOOL_WINDOW_ID)
