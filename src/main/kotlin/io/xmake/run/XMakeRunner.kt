@@ -40,6 +40,7 @@ import com.intellij.xdebugger.XDebuggerManager
 import io.xmake.debug.XMakeDebugSupport
 import io.xmake.debug.prepareXMakeDebugBuild
 import io.xmake.debug.prepareXMakeDebugLaunch
+import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.project.toolkit.XMakeVersionRefusalException
 import io.xmake.utils.info.XMakeInfoManager
 import io.xmake.project.console.XMakeConsole
@@ -53,6 +54,7 @@ import io.xmake.run.sanitizer.SanitizerOutputCollector
 import io.xmake.run.sanitizer.clearSanitizerFindings
 import io.xmake.run.sanitizer.prepareSanitizerRun
 import io.xmake.run.sanitizer.publishAnalysisReport
+import io.xmake.run.sanitizer.readSanitizerLogFiles
 import io.xmake.run.sanitizer.rememberSanitizedRun
 import io.xmake.run.sanitizer.sanitizer
 import io.xmake.run.state.XMakeDebugState
@@ -145,12 +147,21 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
                     reportCoverageData(state.configuration, console)
                 }
                 if (sanitizer != null && findings != null) {
+                    // The mirror files exist only where the plugin could read them back:
+                    // a local run's files complete what the live stderr lost to
+                    // interleaving or to its cap; WSL and SSH runs stay stderr-only.
+                    val logFiles = if (state.runCommand.toolkit.host.type == ToolkitHostType.LOCAL) {
+                        readSanitizerLogFiles(environment.project, sanitizer)
+                    } else {
+                        ""
+                    }
                     publishAnalysisReport(
                         environment.project,
                         state.configuration,
                         state.runCommand,
                         sanitizer,
                         findings.stderr(),
+                        logFiles,
                         console,
                     )
                 }
