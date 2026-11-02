@@ -52,7 +52,7 @@ import io.xmake.run.coverage.reportCoverageData
 import io.xmake.run.sanitizer.SanitizerOutputCollector
 import io.xmake.run.sanitizer.clearSanitizerFindings
 import io.xmake.run.sanitizer.prepareSanitizerRun
-import io.xmake.run.sanitizer.publishSanitizerReport
+import io.xmake.run.sanitizer.publishAnalysisReport
 import io.xmake.run.sanitizer.rememberSanitizedRun
 import io.xmake.run.sanitizer.sanitizer
 import io.xmake.run.state.XMakeDebugState
@@ -140,7 +140,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
                     reportCoverageData(state.configuration, console)
                 }
                 if (sanitizer != null && findings != null) {
-                    publishSanitizerReport(
+                    publishAnalysisReport(
                         environment.project,
                         state.configuration,
                         state.runCommand,

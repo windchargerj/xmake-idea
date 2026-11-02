@@ -16,8 +16,13 @@
  */
 package io.xmake.run.sanitizer
 
+import io.xmake.run.analysis.AnalysisFrame
+import io.xmake.run.analysis.AnalysisIssue
+import io.xmake.run.analysis.AnalysisReport
+import io.xmake.run.analysis.AnalysisSeverity
+import io.xmake.run.analysis.AnalysisStack
 /**
- * Reads the stderr of one sanitized run and turns it into [SanitizerReport] findings.
+ * Reads the stderr of one sanitized run and turns it into [AnalysisReport] findings.
  *
  * The four runtimes share one shape - a report header, stacks of frames under role
  * captions, and a SUMMARY line closing the report - so one state machine covers them;
@@ -39,7 +44,7 @@ package io.xmake.run.sanitizer
 internal class SanitizerReportParser(private val kind: SanitizerKind) {
 
     private val buffer = StringBuilder()
-    private val issues = mutableListOf<SanitizerIssue>()
+    private val issues = mutableListOf<AnalysisIssue>()
     private val strayLines = ArrayDeque<String>()
 
     /** The report being collected, if a header was seen and its SUMMARY is still missing. */
@@ -58,15 +63,15 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
     }
 
     /** Closes the stream; a report whose SUMMARY never arrived still counts. */
-    fun finish(targetName: String): SanitizerReport {
+    fun finish(targetName: String): AnalysisReport {
         if (buffer.isNotEmpty()) {
             consumeLine(cleanLine(buffer.toString()))
             buffer.setLength(0)
         }
         pending?.let { if (it.hasContent) issues += it.toIssue() }
         pending = null
-        return SanitizerReport(
-            kind = kind,
+        return AnalysisReport(
+            source = kind.displayName,
             targetName = targetName,
             issues = merge(issues),
             unparsed = strayLines.toList(),
@@ -167,12 +172,12 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
         else -> null
     }
 
-    private fun parseFrame(line: String): SanitizerFrame {
+    private fun parseFrame(line: String): AnalysisFrame {
         COMMON_FRAME.matchEntire(line)?.let { match ->
             val (function, location) = match.destructured
             return when {
-                location.isEmpty() -> SanitizerFrame(function)
-                UNSYMBOLIZED.matches(location) -> SanitizerFrame(function = location)
+                location.isEmpty() -> AnalysisFrame(function)
+                UNSYMBOLIZED.matches(location) -> AnalysisFrame(function = location)
                 else -> parseFrameLocation(function, location)
             }
         }
@@ -180,14 +185,14 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
             val (function, location) = match.destructured
             return parseFrameLocation(function, location)
         }
-        return SanitizerFrame(function = line.trim())
+        return AnalysisFrame(function = line.trim())
     }
 
     /** Splits `file:line[:col]` - the column is optional and gcc often omits it. */
-    private fun parseFrameLocation(function: String, location: String): SanitizerFrame {
-        val match = FRAME_LOCATION.matchEntire(location) ?: return SanitizerFrame(function)
+    private fun parseFrameLocation(function: String, location: String): AnalysisFrame {
+        val match = FRAME_LOCATION.matchEntire(location) ?: return AnalysisFrame(function)
         val (file, line, column) = match.destructured
-        return SanitizerFrame(function, file, line.toIntOrNull(), column.toIntOrNull())
+        return AnalysisFrame(function, file, line.toIntOrNull(), column.toIntOrNull())
     }
 
     private fun cleanLine(line: String): String = ANSI.replace(line.trim(), "")
@@ -208,15 +213,15 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
             .ifEmpty { "runtime error" }
 
     /** UBSan reports carry their location in the line itself: `file:line:col: runtime error:`. */
-    private fun ubsanLocation(line: String): SanitizerFrame? {
+    private fun ubsanLocation(line: String): AnalysisFrame? {
         val match = UBSAN_LOCATION.find(line) ?: return null
         val (file, line1, column) = match.destructured
-        return SanitizerFrame("", file, line1.toIntOrNull() ?: 0, column.toIntOrNull() ?: 0)
+        return AnalysisFrame("", file, line1.toIntOrNull() ?: 0, column.toIntOrNull() ?: 0)
     }
 
     /** Merges identical issues, keeping first-seen order and summing counts. */
-    private fun merge(found: List<SanitizerIssue>): List<SanitizerIssue> {
-        val merged = LinkedHashMap<String, SanitizerIssue>()
+    private fun merge(found: List<AnalysisIssue>): List<AnalysisIssue> {
+        val merged = LinkedHashMap<String, AnalysisIssue>()
         for (issue in found) {
             val existing = merged[issue.signature]
             merged[issue.signature] =
@@ -233,16 +238,16 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
         val kind: PendingKind,
         val type: String,
         val message: String,
-        val at: SanitizerFrame? = null,
+        val at: AnalysisFrame? = null,
     ) {
-        val stacks = mutableListOf<SanitizerStack>()
+        val stacks = mutableListOf<AnalysisStack>()
         val trailer = mutableListOf<String>()
 
         fun openStack(title: String) {
-            stacks += SanitizerStack(title, mutableListOf())
+            stacks += AnalysisStack(title, mutableListOf())
         }
 
-        fun currentStack(): MutableList<SanitizerFrame> {
+        fun currentStack(): MutableList<AnalysisFrame> {
             if (stacks.isEmpty()) openStack("stack trace")
             return stacks.last().frames as MutableList
         }
@@ -251,12 +256,12 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
         val hasContent: Boolean
             get() = stacks.any { it.frames.isNotEmpty() } || at != null
 
-        fun toIssue(): SanitizerIssue {
+        fun toIssue(): AnalysisIssue {
             val kept = stacks.filter { it.frames.isNotEmpty() }
                 .ifEmpty {
-                    at?.let { listOf(SanitizerStack("location", listOf(it))) } ?: emptyList()
+                    at?.let { listOf(AnalysisStack("location", listOf(it))) } ?: emptyList()
                 }
-            return SanitizerIssue(
+            return AnalysisIssue(
                 type = type,
                 message = message,
                 severity = severityOf(),
@@ -266,14 +271,14 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
         }
 
         /** UBSan findings are warnings - the runtime keeps running; the rest are errors. */
-        private fun severityOf(): SanitizerSeverity = when {
-            kind == PendingKind.LEAK_GROUP || kind == PendingKind.LEAK -> SanitizerSeverity.WARNING
-            this@SanitizerReportParser.kind == SanitizerKind.UNDEFINED -> SanitizerSeverity.WARNING
-            else -> SanitizerSeverity.ERROR
+        private fun severityOf(): AnalysisSeverity = when {
+            kind == PendingKind.LEAK_GROUP || kind == PendingKind.LEAK -> AnalysisSeverity.WARNING
+            this@SanitizerReportParser.kind == SanitizerKind.UNDEFINED -> AnalysisSeverity.WARNING
+            else -> AnalysisSeverity.ERROR
         }
 
         /** Same type pointing at the same code: the first frames of the first stack. */
-        private fun signature(kept: List<SanitizerStack>): String = buildString {
+        private fun signature(kept: List<AnalysisStack>): String = buildString {
             append(type)
             kept.firstOrNull()?.frames?.take(SIGNATURE_FRAMES)?.forEach {
                 append('|').append(it.signature)

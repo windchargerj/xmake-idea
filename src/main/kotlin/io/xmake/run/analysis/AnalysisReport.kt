@@ -14,13 +14,13 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.sanitizer
+package io.xmake.run.analysis
 
 import io.xmake.project.toolkit.Toolkit
 import java.time.Instant
 
 /** One stack frame of a sanitizer report, as the runtime symbolized it. */
-data class SanitizerFrame(
+data class AnalysisFrame(
     /** The symbolized function name, or the raw address when symbolization failed. */
     val function: String,
     /** The source file the frame points into, in host form; null when unsymbolized. */
@@ -37,15 +37,15 @@ data class SanitizerFrame(
  * AddressSanitizer, the racing read and the previous write for ThreadSanitizer, the
  * store that created an uninitialized value for MemorySanitizer.
  */
-data class SanitizerStack(
+data class AnalysisStack(
     /** What the runtime called this stack: "Read of size 4", "Previous write of size 4",
      *  "allocated by thread T0 here", or the plain "stack trace" of a one-stack report. */
     val title: String,
-    val frames: List<SanitizerFrame>,
+    val frames: List<AnalysisFrame>,
 )
 
 /** How serious a finding is: errors corrupt memory or data, notes are advisory. */
-enum class SanitizerSeverity {
+enum class AnalysisSeverity {
     ERROR,
     WARNING,
     NOTE,
@@ -55,29 +55,33 @@ enum class SanitizerSeverity {
  * One sanitizer finding, parsed from the run's stderr: the runtime's type and message,
  * every stack it recorded, and - after merging - how many identical findings occurred.
  */
-data class SanitizerIssue(
+data class AnalysisIssue(
     /** The runtime's classification: "heap-buffer-overflow", "data race", "use-of-uninitialized-value", ... */
     val type: String,
     /** The first line of the report without the pid header; the caption the view shows. */
     val message: String,
-    val severity: SanitizerSeverity,
-    val stacks: List<SanitizerStack>,
+    val severity: AnalysisSeverity,
+    val stacks: List<AnalysisStack>,
     /** Identical reports merge on this key: same type pointing at the same code. */
     val signature: String,
     /** How many times this report occurred; identical findings merge into one issue. */
     val count: Int = 1,
 ) {
     /** The first frame that names a source file, the location the finding is reported at. */
-    val primaryFrame: SanitizerFrame?
+    val primaryFrame: AnalysisFrame?
         get() = stacks.firstOrNull()?.frames?.firstOrNull { it.file != null }
 }
 
-/** The parsed findings of one sanitized run, ready for the analysis view. */
-data class SanitizerReport(
-    val kind: SanitizerKind,
+/**
+ * The findings of one analysis run, ready for the analysis view. The sanitizers and
+ * clang-tidy both produce one; [source] names the run that found them.
+ */
+data class AnalysisReport(
+    /** What produced the findings: the sanitizer's or clang-tidy's display name. */
+    val source: String,
     /** The target the findings came from, as the run configuration named it. */
     val targetName: String,
-    val issues: List<SanitizerIssue>,
+    val issues: List<AnalysisIssue>,
     /** The toolkit the run used; maps the frames' host paths into local ones. */
     val toolkit: Toolkit? = null,
     /** The host-side working directory the run started in, for that mapping. */
@@ -86,8 +90,8 @@ data class SanitizerReport(
     val unparsed: List<String> = emptyList(),
     val timestamp: Instant = Instant.now(),
 ) {
-    val totalFindings: Int get() = issues.sumOf(SanitizerIssue::count)
+    val totalFindings: Int get() = issues.sumOf(AnalysisIssue::count)
 
-    val errorCount: Int get() = issues.count { it.severity == SanitizerSeverity.ERROR }
-    val warningCount: Int get() = issues.count { it.severity == SanitizerSeverity.WARNING }
+    val errorCount: Int get() = issues.count { it.severity == AnalysisSeverity.ERROR }
+    val warningCount: Int get() = issues.count { it.severity == AnalysisSeverity.WARNING }
 }

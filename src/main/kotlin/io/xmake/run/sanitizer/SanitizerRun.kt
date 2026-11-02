@@ -28,6 +28,8 @@ import com.intellij.openapi.wm.ToolWindowManager
 import io.xmake.project.console.XMakeConsole
 import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.run.XMakeRunConfiguration
+import io.xmake.run.analysis.ANALYSIS_TOOL_WINDOW_ID
+import io.xmake.run.analysis.AnalysisService
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.XMakeExecutor
@@ -106,7 +108,7 @@ internal fun sanitizerEnvironment(configuration: XMakeRunConfiguration): Environ
  * analysis view. A run without findings still replaces the view's content - absence is
  * the result too - and both outcomes leave a line in the run console pointing at the view.
  */
-internal fun publishSanitizerReport(
+internal fun publishAnalysisReport(
     project: Project,
     configuration: RunConfiguration,
     runCommand: XMakeCommand,
@@ -120,7 +122,7 @@ internal fun publishSanitizerReport(
         .copy(toolkit = runCommand.toolkit, hostWorkingDirectory = runCommand.workingDirectory)
     invokeLater {
         if (project.isDisposed) return@invokeLater
-        SanitizerAnalysisService.getInstance(project).publish(report)
+        AnalysisService.getInstance(project).publish(report)
         console?.print(
             if (report.issues.isEmpty()) {
                 "${kind.displayName}: no findings\n"
@@ -132,7 +134,7 @@ internal fun publishSanitizerReport(
         )
         if (report.issues.isNotEmpty()) {
             ToolWindowManager.getInstance(project)
-                .getToolWindow(SANITIZER_TOOL_WINDOW_ID)
+                .getToolWindow(ANALYSIS_TOOL_WINDOW_ID)
                 ?.activate(null)
         } else {
             Log.info("Sanitizer run of '${configuration.name}' under ${kind.displayName} reported no findings")
@@ -143,14 +145,14 @@ internal fun publishSanitizerReport(
 /** Drops the findings of the previous run when a plain run starts. */
 internal fun clearSanitizerFindings(project: Project) {
     invokeLater {
-        if (!project.isDisposed) SanitizerAnalysisService.getInstance(project).publish(null)
+        if (!project.isDisposed) AnalysisService.getInstance(project).publish(null)
     }
 }
 
 /** Remembers the configuration a sanitized run used, for the view's rerun button. */
 internal fun rememberSanitizedRun(project: Project, settings: com.intellij.execution.RunnerAndConfigurationSettings) {
     invokeLater {
-        if (!project.isDisposed) SanitizerAnalysisService.getInstance(project).rememberSanitizedSettings(settings)
+        if (!project.isDisposed) AnalysisService.getInstance(project).rememberSanitizedSettings(settings)
     }
 }
 

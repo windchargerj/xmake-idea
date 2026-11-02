@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.sanitizer.ui
+package io.xmake.run.analysis.ui
 
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
@@ -27,11 +27,11 @@ import com.intellij.ui.content.ContentFactory
  * every IDE the plugin runs in - the sanitizers need no CLion API, only a run and its
  * stderr - so the view lives in the main module beside the run configuration it serves.
  */
-internal class SanitizerToolWindowFactory : ToolWindowFactory, DumbAware {
+internal class AnalysisToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val content = ContentFactory.getInstance().createContent(null, "Findings", false)
-        val panel = SanitizerPanel(project, content)
+        val panel = AnalysisPanel(project, content)
         content.component = panel
         content.setDisposer(panel)
         toolWindow.contentManager.addContent(content)

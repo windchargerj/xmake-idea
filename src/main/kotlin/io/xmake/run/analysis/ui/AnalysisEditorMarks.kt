@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.sanitizer.ui
+package io.xmake.run.analysis.ui
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
@@ -30,9 +30,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.VirtualFile
 import io.xmake.run.command.RemotePathMapper
-import io.xmake.run.sanitizer.SanitizerAnalysisService
-import io.xmake.run.sanitizer.SanitizerReport
-import io.xmake.run.sanitizer.SanitizerSeverity
+import io.xmake.run.analysis.AnalysisService
+import io.xmake.run.analysis.AnalysisReport
+import io.xmake.run.analysis.AnalysisSeverity
 import java.io.File
 
 /**
@@ -42,12 +42,12 @@ import java.io.File
  * marked when they open; a cleared report clears every editor again.
  */
 @com.intellij.openapi.components.Service(com.intellij.openapi.components.Service.Level.PROJECT)
-internal class SanitizerEditorMarks(private val project: Project) : Disposable {
+internal class AnalysisEditorMarks(private val project: Project) : Disposable {
 
     init {
         project.messageBus.connect(this).subscribe(
-            SanitizerAnalysisService.TOPIC,
-            SanitizerAnalysisService.Listener { scheduleRepaint() },
+            AnalysisService.TOPIC,
+            AnalysisService.Listener { scheduleRepaint() },
         )
         project.messageBus.connect(this).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
@@ -66,7 +66,7 @@ internal class SanitizerEditorMarks(private val project: Project) : Disposable {
     }
 
     private fun repaint() {
-        val report = SanitizerAnalysisService.getInstance(project).report
+        val report = AnalysisService.getInstance(project).report
         FileEditorManager.getInstance(project).allEditors
             .filterIsInstance<TextEditor>()
             .map(TextEditor::getEditor)
@@ -75,7 +75,7 @@ internal class SanitizerEditorMarks(private val project: Project) : Disposable {
             }
     }
 
-    private fun paint(editor: Editor, report: SanitizerReport) {
+    private fun paint(editor: Editor, report: AnalysisReport) {
         clear(editor)
         val virtualFile = FileDocumentManager.getInstance().getFile(editor.document) ?: return
         val marks = blamedLines(virtualFile, report)
@@ -84,7 +84,7 @@ internal class SanitizerEditorMarks(private val project: Project) : Disposable {
         for ((line, severity, _) in marks) {
             if (line >= editor.document.lineCount) continue
             val attributesKey = when (severity) {
-                SanitizerSeverity.ERROR -> CodeInsightColors.ERRORS_ATTRIBUTES
+                AnalysisSeverity.ERROR -> CodeInsightColors.ERRORS_ATTRIBUTES
                 else -> CodeInsightColors.WARNINGS_ATTRIBUTES
             }
             val attributes = editor.colorsScheme.getAttributes(attributesKey)
@@ -101,7 +101,7 @@ internal class SanitizerEditorMarks(private val project: Project) : Disposable {
     }
 
     /** The one-based report lines that fall into [virtualFile], as zero-based editor lines. */
-    private fun blamedLines(virtualFile: VirtualFile, report: SanitizerReport): List<Triple<Int, SanitizerSeverity, String>> {
+    private fun blamedLines(virtualFile: VirtualFile, report: AnalysisReport): List<Triple<Int, AnalysisSeverity, String>> {
         val mapper = report.toolkit?.let { toolkit ->
             report.hostWorkingDirectory?.let { RemotePathMapper.forToolkit(toolkit, it, project) }
         }
@@ -122,6 +122,6 @@ internal class SanitizerEditorMarks(private val project: Project) : Disposable {
     }
 
     private companion object {
-        private val MARKS: Key<MutableList<RangeHighlighter>> = Key.create("XMake.SanitizerEditorMarks")
+        private val MARKS: Key<MutableList<RangeHighlighter>> = Key.create("XMake.AnalysisEditorMarks")
     }
 }

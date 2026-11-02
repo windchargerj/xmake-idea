@@ -16,6 +16,7 @@
  */
 package io.xmake.run.sanitizer
 
+import io.xmake.run.analysis.AnalysisSeverity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -50,7 +51,7 @@ class SanitizerReportParserTest {
         assertEquals(1, report.issues.size)
         val issue = report.issues[0]
         assertEquals("heap-buffer-overflow", issue.type)
-        assertEquals(SanitizerSeverity.ERROR, issue.severity)
+        assertEquals(AnalysisSeverity.ERROR, issue.severity)
         assertEquals(2, issue.stacks.size)
         assertEquals("READ of size 4 at 0x602000000034 thread T0", issue.stacks[0].title)
         assertEquals("main", issue.stacks[0].frames[0].function)
@@ -107,7 +108,7 @@ class SanitizerReportParserTest {
 
         assertEquals(2, report.issues.size)
         assertEquals("direct leak", report.issues[0].type)
-        assertEquals(SanitizerSeverity.WARNING, report.issues[0].severity)
+        assertEquals(AnalysisSeverity.WARNING, report.issues[0].severity)
         assertEquals("indirect leak", report.issues[1].type)
         assertTrue(report.issues[1].stacks.first().frames.isNotEmpty())
     }
@@ -137,7 +138,7 @@ class SanitizerReportParserTest {
         assertEquals(1, report.issues.size)
         val issue = report.issues[0]
         assertEquals("data race", issue.type)
-        assertEquals(SanitizerSeverity.ERROR, issue.severity)
+        assertEquals(AnalysisSeverity.ERROR, issue.severity)
         assertTrue(issue.stacks[0].title.contains("Write of size 4"))
         assertEquals("Thread1(void*)", issue.stacks[0].frames[0].function)
         assertEquals("simple_race.cc", issue.stacks[0].frames[0].file)
@@ -192,7 +193,7 @@ class SanitizerReportParserTest {
         val divisions = report.issues.filter { it.message.contains("division by zero") }
         assertEquals(1, divisions.size)
         assertEquals(2, divisions[0].count)
-        assertEquals(SanitizerSeverity.WARNING, divisions[0].severity)
+        assertEquals(AnalysisSeverity.WARNING, divisions[0].severity)
         assertNotNull(divisions[0].primaryFrame)
         assertEquals("/home/dev/proj/src/math.cpp", divisions[0].primaryFrame!!.file)
         assertEquals(8, divisions[0].primaryFrame!!.line)

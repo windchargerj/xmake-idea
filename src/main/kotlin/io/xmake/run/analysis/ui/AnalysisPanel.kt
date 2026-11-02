@@ -14,7 +14,7 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.run.sanitizer.ui
+package io.xmake.run.analysis.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
@@ -35,12 +35,12 @@ import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.JBUI
 import io.xmake.run.command.RemotePathMapper
-import io.xmake.run.sanitizer.SanitizerAnalysisService
-import io.xmake.run.sanitizer.SanitizerFrame
-import io.xmake.run.sanitizer.SanitizerIssue
-import io.xmake.run.sanitizer.SanitizerReport
-import io.xmake.run.sanitizer.SanitizerSeverity
-import io.xmake.run.sanitizer.SanitizerStack
+import io.xmake.run.analysis.AnalysisService
+import io.xmake.run.analysis.AnalysisFrame
+import io.xmake.run.analysis.AnalysisIssue
+import io.xmake.run.analysis.AnalysisReport
+import io.xmake.run.analysis.AnalysisSeverity
+import io.xmake.run.analysis.AnalysisStack
 import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -61,7 +61,7 @@ import javax.swing.tree.TreeSelectionModel
  * words for the selected finding. It is the runtime's console report, restructured - the
  * same information, readable without scrolling through interleaved program output.
  */
-internal class SanitizerPanel(
+internal class AnalysisPanel(
     private val project: Project,
     parentDisposable: com.intellij.openapi.Disposable,
 ) : SimpleToolWindowPanel(true, true), com.intellij.openapi.Disposable {
@@ -100,10 +100,10 @@ internal class SanitizerPanel(
             addToBottom(detailsPanel())
         })
 
-        refresh(SanitizerAnalysisService.getInstance(project).report)
+        refresh(AnalysisService.getInstance(project).report)
         project.messageBus.connect(parentDisposable).subscribe(
-            SanitizerAnalysisService.TOPIC,
-            SanitizerAnalysisService.Listener { report ->
+            AnalysisService.TOPIC,
+            AnalysisService.Listener { report ->
                 com.intellij.openapi.application.invokeLater { if (!project.isDisposed) refresh(report) }
             },
         )
@@ -115,7 +115,7 @@ internal class SanitizerPanel(
     private fun toolbar(): ActionToolbar {        val group = DefaultActionGroup(RerunAction(), ClearAction(), ErrorsOnlyAction(), CopyReportAction())
         return ActionManager.getInstance()
             .createActionToolbar("XMakeSanitizerView", group, true)
-            .apply { targetComponent = this@SanitizerPanel }
+            .apply { targetComponent = this@AnalysisPanel }
     }
 
     private fun detailsPanel(): JComponent = JBUI.Panels.simplePanel().apply {
@@ -125,21 +125,21 @@ internal class SanitizerPanel(
     }
 
     /** Rebuilds the tree from [report]; null shows the empty hint instead. */
-    fun refresh(report: SanitizerReport?) {
+    fun refresh(report: AnalysisReport?) {
         val root = DefaultMutableTreeNode("root")
         if (report == null) {
-            summaryLabel.text = "No sanitizer findings - run a configuration with a sanitizer selected"
+            summaryLabel.text = "No findings - run sanitized, or run clang-tidy from the toolbar"
             details.text = ""
         } else {
             val visible = report.issues
-                .filter { !errorsOnly || it.severity == SanitizerSeverity.ERROR }
+                .filter { !errorsOnly || it.severity == AnalysisSeverity.ERROR }
                 .sortedWith(
-                    compareByDescending<SanitizerIssue> { it.severity }
+                    compareByDescending<AnalysisIssue> { it.severity }
                         .thenByDescending { it.count },
                 )
             visible.forEach { root.add(IssueNode(it)) }
             summaryLabel.text =
-                "${report.kind.displayName} on '${report.targetName}': " +
+                "${report.source} on '${report.targetName}': " +
                         "${report.errorCount} error(s), ${report.warningCount} warning(s) - " +
                         "${report.totalFindings} finding(s) at ${report.issues.size} unique place(s)"
         }
@@ -166,7 +166,7 @@ internal class SanitizerPanel(
     }
 
     /** Opens the source line one frame names, mapping host paths to local files first. */
-    private fun navigate(frame: SanitizerFrame) {
+    private fun navigate(frame: AnalysisFrame) {
         val file = frame.file ?: return
         val local = resolveLocalFile(file) ?: return
         val virtual = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(local) ?: return
@@ -175,7 +175,7 @@ internal class SanitizerPanel(
 
     /** Host form first, then project-relative, matching how the toolchain compiles sources. */
     private fun resolveLocalFile(file: String): File? {
-        val report = SanitizerAnalysisService.getInstance(project).report
+        val report = AnalysisService.getInstance(project).report
         val mapper = report?.toolkit?.let { toolkit ->
             report.hostWorkingDirectory?.let {
                 RemotePathMapper.forToolkit(toolkit, it, project)
@@ -187,7 +187,7 @@ internal class SanitizerPanel(
         return File(basePath, file).takeIf(File::isFile) ?: File(file).takeIf(File::isFile)
     }
 
-    private fun renderDetails(issue: SanitizerIssue): String = buildString {
+    private fun renderDetails(issue: AnalysisIssue): String = buildString {
         append(issue.severity).append(": ").append(issue.type).append('\n')
         append(issue.message).append('\n')
         if (issue.count > 1) append("occurrences: ").append(issue.count).append('\n')
@@ -212,18 +212,18 @@ internal class SanitizerPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = SanitizerAnalysisService.getInstance(project).lastSanitizedSettings != null
+            event.presentation.isEnabled = AnalysisService.getInstance(project).lastSanitizedSettings != null
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            SanitizerAnalysisService.getInstance(project).rerunLast()
+            AnalysisService.getInstance(project).rerunLast()
         }
     }
 
     private inner class ClearAction : DumbAwareAction("Clear", "Drop the current findings", AllIcons.Actions.GC) {
 
         override fun actionPerformed(event: AnActionEvent) {
-            SanitizerAnalysisService.getInstance(project).publish(null)
+            AnalysisService.getInstance(project).publish(null)
         }
     }
 
@@ -241,7 +241,7 @@ internal class SanitizerPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             errorsOnly = !errorsOnly
-            refresh(SanitizerAnalysisService.getInstance(project).report)
+            refresh(AnalysisService.getInstance(project).report)
         }
     }
 
@@ -252,13 +252,13 @@ internal class SanitizerPanel(
     ) {
 
         override fun actionPerformed(event: AnActionEvent) {
-            val report = SanitizerAnalysisService.getInstance(project).report ?: return
+            val report = AnalysisService.getInstance(project).report ?: return
             val text = report.issues.joinToString("\n\n", postfix = "\n") { renderDetails(it) }
             CopyPasteManager.getInstance().setContents(StringSelection(text))
         }
     }
 
-    private class IssueNode(val issue: SanitizerIssue) : DefaultMutableTreeNode(issue) {
+    private class IssueNode(val issue: AnalysisIssue) : DefaultMutableTreeNode(issue) {
         init {
             issue.stacks.forEach { stack -> add(StackNode(stack)) }
         }
@@ -266,7 +266,7 @@ internal class SanitizerPanel(
         override fun toString(): String = issue.type
     }
 
-    private class StackNode(val stack: SanitizerStack) : DefaultMutableTreeNode(stack) {
+    private class StackNode(val stack: AnalysisStack) : DefaultMutableTreeNode(stack) {
         init {
             stack.frames.forEach { frame -> add(FrameNode(frame)) }
         }
@@ -274,7 +274,7 @@ internal class SanitizerPanel(
         override fun toString(): String = stack.title
     }
 
-    private class FrameNode(val frame: SanitizerFrame) : DefaultMutableTreeNode(frame) {
+    private class FrameNode(val frame: AnalysisFrame) : DefaultMutableTreeNode(frame) {
         override fun toString(): String = frame.function
     }
 
@@ -292,9 +292,9 @@ internal class SanitizerPanel(
             when (value) {
                 is IssueNode -> {
                     icon = when (value.issue.severity) {
-                        SanitizerSeverity.ERROR -> AllIcons.General.Error
-                        SanitizerSeverity.WARNING -> AllIcons.General.Warning
-                        SanitizerSeverity.NOTE -> AllIcons.General.Information
+                        AnalysisSeverity.ERROR -> AllIcons.General.Error
+                        AnalysisSeverity.WARNING -> AllIcons.General.Warning
+                        AnalysisSeverity.NOTE -> AllIcons.General.Information
                     }
                     append(value.issue.type, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     append("  ${value.issue.message.lineSequence().firstOrNull().orEmpty()}", SimpleTextAttributes.REGULAR_ATTRIBUTES)

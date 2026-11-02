@@ -57,9 +57,9 @@
 
         <!-- sanitizer analysis -->
         <toolWindow id="XMake Analysis" anchor="bottom" secondary="true"
-                    factoryClass="io.xmake.run.sanitizer.ui.SanitizerToolWindowFactory"
+                    factoryClass="io.xmake.run.analysis.ui.AnalysisToolWindowFactory"
                     icon="/icons/xmake-dark.svg"/>
-        <projectService serviceImplementation="io.xmake.run.sanitizer.ui.SanitizerEditorMarks"/>
+        <projectService serviceImplementation="io.xmake.run.analysis.ui.AnalysisEditorMarks"/>
 
         <!-- run configurations -->
         <programRunner implementation="io.xmake.run.XMakeRunner"/>
