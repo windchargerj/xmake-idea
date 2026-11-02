@@ -199,13 +199,15 @@ class XMakeRunConfiguration(
         XMakeRunConfigurationEditor(project)
 
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
-        // Every other executor builds for its own analysis - debug, coverage, Valgrind, perf -
-        // so a sanitizer selection under them would silently not instrument anything.
+        // Coverage, Valgrind, and perf build for their own analysis, so a sanitizer
+        // selection under them would silently not instrument anything. Debug builds with
+        // the sanitizer's instrumentation on purpose - break points inside a sanitized
+        // binary are the point.
         val selected = sanitizer
-        if (selected != null && executor.id != DefaultRunExecutor.EXECUTOR_ID) {
+        if (selected != null && executor.id !in SANITIZED_EXECUTORS) {
             throw ExecutionException(
-                "${selected.displayName} runs through the Run executor - clear the sanitizer " +
-                        "or use Run",
+                "${selected.displayName} runs through the Run and Debug executors - clear " +
+                        "the sanitizer or use Run",
             )
         }
         return when (executor.id) {
@@ -222,6 +224,10 @@ class XMakeRunConfiguration(
     }
 
     companion object {
+        /** The executors a sanitizer selection may build for. */
+        private val SANITIZED_EXECUTORS =
+            setOf(DefaultRunExecutor.EXECUTOR_ID, DefaultDebugExecutor.EXECUTOR_ID)
+
         /** Only keys documented for gdb's DAP interpreter and lldb-dap belong here; the
          *  object-form cpptools leftovers (sourceMap objects, setupCommands, variables) are
          *  not read by either. lldb-dap's documented array-form sourceMap stays passable. */

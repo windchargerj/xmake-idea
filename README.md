@@ -162,6 +162,9 @@ as it does when the finished build holds no instrumented objects.
    line, the full report text in the details pane, and the blamed lines marked in the
    open editors. WSL and SSH runs map the reported paths back to your local files.
 
+Debug runs build sanitized too: the debugger starts inside the instrumented binary, and
+the sanitizer's findings still land in the analysis view after the session.
+
 The runtime options the plugin sets (symbolization, UBSan stack traces and error types,
 dedup tokens) apply only when the run configuration sets none of its own - your
 `ASAN_OPTIONS` and friends always win. Platform support is the compilers', not the
