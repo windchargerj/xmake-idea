@@ -130,6 +130,43 @@ XMake now supports native debugging via the Debug Adapter Protocol (DAP). This a
 2. Click "File > open..." to choose this file.
 3. Choose "Run > Debug..." or "Run > Debug 'project name'" into debug mode.
 
+## Analysis
+
+The run configuration and CLion's own toolbars carry the analysis entries. Every analysis
+run configures and rebuilds the target itself - the build profile you edit keeps its own
+mode - and each one presents its results in a viewer built for that kind of data.
+
+Coverage needs no project setup: the run configures `-m coverage` and injects gcc's
+`--coverage` into the compiler, linker, and shared-library flags itself, so a project
+without `add_rules("mode.coverage")` is instrumented all the same. Toolchains without
+gcov (MSVC) fall back to the mode plus the project's own rule, and the console says so -
+as it does when the finished build holds no instrumented objects.
+
+| Feature | Entry | Results in | IDE |
+|---|---|---|---|
+| Coverage (`-m coverage`, gcov) | Run with coverage | Coverage view + line highlighting | any |
+| Valgrind memcheck (`-m valgrind`) | Valgrind executor | CLion memory view | CLion |
+| perf profiling (`-m profile`) | Profiler executor | Flame graph | CLion |
+| Sanitizers (ASan/LSan/MSan/TSan/UBSan) | Run configuration | XMake Analysis view + editor marks | any |
+
+### Sanitizers
+
+1. Open the target's run configuration and pick a sanitizer - Address, Leak, Memory,
+   Thread, or UndefinedBehavior.
+2. Run as usual. The run reconfigures with the sanitizer's `build.sanitizer.*` policy
+   (not the deprecated `mode.asan`-style rules, so it works on every project), rebuilds
+   with full debug information, and runs the target.
+3. The findings land in the **XMake Analysis** tool window: grouped by error type,
+   identical reports merged with a count, every stack frame clickable back to its source
+   line, the full report text in the details pane, and the blamed lines marked in the
+   open editors. WSL and SSH runs map the reported paths back to your local files.
+
+The runtime options the plugin sets (symbolization, UBSan stack traces and error types,
+dedup tokens) apply only when the run configuration sets none of its own - your
+`ASAN_OPTIONS` and friends always win. Platform support is the compilers', not the
+plugin's: MemorySanitizer needs clang on Linux, Thread/LeakSanitizer need Linux or macOS,
+and on Windows AddressSanitizer runs under MSVC or clang.
+
 ## How to contribute?
 
 Due to limited personal time, I cannot maintain this plug-in all the time. If you encounter problems, you are welcome to download the plug-in source code to debug it yourself and open pr to contribute.
