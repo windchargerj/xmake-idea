@@ -210,6 +210,18 @@ class XMakeCommandFactory(
         check("clang.tidy")
     }
 
+    /** One `xmake test` pass; [filters] are the group and name patterns the action takes. */
+    fun createTestRun(
+        filters: List<String> = emptyList(),
+        outputOnFailure: Boolean = true,
+    ): XMakeCommand = createCommand {
+        test(
+            buildList {
+                addAll(filters)
+                if (outputOnFailure) add("--output-on-failure")
+            },
+        )
+    }
     private fun createCommand(
         environmentVariables: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT,
         environmentOverrides: Map<String, String> = emptyMap(),
