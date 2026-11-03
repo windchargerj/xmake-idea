@@ -22,8 +22,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The fixtures are the outputs docs/roadmap-designs/xrepo-packages.md captured on xmake
- *  3.1.2, prologue lines and Windows paths included. */
+/** The fixtures are the outputs docs/roadmap-designs/xrepo-packages.md and
+ *  docs/roadmap-designs/audit-packages.md captured on xmake - 3.1.2 on Windows, 2.8.7 on
+ *  WSL - prologue lines, ANSI coloring, and CRLF endings included. */
 class XMakePackageParsersTest {
 
     @Test
@@ -150,10 +151,60 @@ class XMakePackageParsersTest {
 
         val results = XMakePackageParsers.parseSearchResults(output)
 
-        assertEquals(listOf("tinytest", "tinytest"), results.map { it.name })
-        assertEquals(listOf("1.0.0", "0.9.0"), results.map { it.version })
-        assertEquals("A tiny test framework", results[0].description)
-        assertEquals("localrepo", results[0].repo)
+        assertEquals(listOf("tinytest", "tinytest"), results.hits.map { it.name })
+        assertEquals(listOf("1.0.0", "0.9.0"), results.hits.map { it.version })
+        assertEquals("A tiny test framework", results.hits[0].description)
+        assertEquals("localrepo", results.hits[0].repo)
+    }
+
+    /** The byte-level capture of docs/roadmap-designs/audit-packages.md, section 1.1:
+     *  full SGR coloring on piped output, CRLF endings, the `The package names:` header,
+     *  and hit tokens that keep the repository's raw `add_versions` strings. The zlib and
+     *  zlib-ng hit lines are verbatim; the zopfli line carries the `zopfli-2021.06.14`
+     *  token that capture's section 2 table parsed, with a stand-in description. */
+    @Test
+    fun `parses the real 3_1_2 capture with v-prefixed dashed and dated versions`() {
+        val output = "\u001B[0mchecking for platform ... \u001B[38;5;2;1mmingw (x86_64)\u001B[0m\r\n" +
+            "\u001B[0mchecking for Mingw SDK ... \u001B[38;5;2;1mC:\\Program Files\\Git\\mingw64 (nil)\u001B[0m\r\n" +
+            "The package names:\r\n" +
+            "    zlib: \r\n" +
+            "\u001B[0m      -> \u001B[38;5;5;1mzlib-v1.3.2\u001B[0m: A Massively Spiffy Yet Delicately " +
+            "Unobtrusive Compression Library (in xmake-repo)\u001B[0m\r\n" +
+            "\u001B[0m      -> \u001B[38;5;5;1mzlib-ng-2.3.3\u001B[0m: \u001B[1mzlib\u001B[0m replacement " +
+            "with optimizations for next generation systems. (in xmake-repo)\u001B[0m\r\n" +
+            "\u001B[0m      -> \u001B[38;5;5;1mzopfli-2021.06.14\u001B[0m: Compression for further " +
+            "compression. (in xmake-repo)\u001B[0m\r\n"
+
+        val results = XMakePackageParsers.parseSearchResults(output)
+
+        assertEquals(
+            listOf(
+                XMakePackageSearchEntry(
+                    "zlib", "v1.3.2",
+                    "A Massively Spiffy Yet Delicately Unobtrusive Compression Library", "xmake-repo",
+                ),
+                XMakePackageSearchEntry(
+                    "zlib-ng", "2.3.3",
+                    "zlib replacement with optimizations for next generation systems.", "xmake-repo",
+                ),
+                XMakePackageSearchEntry("zopfli", "2021.06.14", "Compression for further compression.", "xmake-repo"),
+            ),
+            results.hits,
+        )
+        // The `checking for ...` prologue is noise, never a diagnosis.
+        assertTrue(results.diagnostics.isEmpty())
+    }
+
+    /** The fix for the audit's section 2 misalignment: a `v`-prefixed version token splits
+     *  off the name instead of gluing to it, so an install built from the hit asks xmake
+     *  for `minizip`, not for the nonexistent `minizip-v1.3.2`. */
+    @Test
+    fun `v-prefixed versions split from the name`() {
+        val results = XMakePackageParsers.parseSearchResults("    -> minizip-v1.3.2: Minizip. (in xmake-repo)\n")
+
+        val hit = results.hits.single()
+        assertEquals("minizip", hit.name)
+        assertEquals("v1.3.2", hit.version)
     }
 
     @Test
@@ -162,15 +213,47 @@ class XMakePackageParsersTest {
 
         val results = XMakePackageParsers.parseSearchResults(output)
 
-        assertEquals(1, results.size)
-        assertEquals("mongo-c-driver", results[0].name)
-        assertEquals("1.2.3-beta1", results[0].version)
-        assertNull(results[0].description)
+        assertEquals(1, results.hits.size)
+        assertEquals("mongo-c-driver", results.hits[0].name)
+        assertEquals("1.2.3-beta1", results.hits[0].version)
+        assertNull(results.hits[0].description)
+    }
+
+    /** The WSL 2.8.7 capture of docs/roadmap-designs/audit-packages.md, section 1.6: no
+     *  unzip/7zip, the error on stdout, exit code 0 - the toolchain's own diagnosis, which
+     *  the view must receive instead of reading the answer as a misspelled term. */
+    @Test
+    fun `a diagnostics-only answer carries the xmake error with zero hits`() {
+        val output = "\u001B[0mchecking for platform ... \u001B[38;5;2;1mlinux\u001B[0m\r\n" +
+            "\u001B[0mchecking for architecture ... \u001B[38;5;5;1;1mx86_64\u001B[0m\r\n" +
+            "\u001B[0m\u001B[1;38;5;1;1merror: \u001B[0mfailed to find unzip or 7zip! please install " +
+            "one of them first\u001B[0m\r\n"
+
+        val results = XMakePackageParsers.parseSearchResults(output)
+
+        assertTrue(results.hits.isEmpty())
+        assertEquals(
+            listOf("error: failed to find unzip or 7zip! please install one of them first"),
+            results.diagnostics,
+        )
+    }
+
+    @Test
+    fun `note lines ride out as search diagnostics`() {
+        val results = XMakePackageParsers.parseSearchResults(
+            "note: try updating the repositories\n    -> tinytest-1.0.0: A tiny test framework (in localrepo)\n",
+        )
+
+        assertEquals(listOf("note: try updating the repositories"), results.diagnostics)
+        assertEquals(listOf("tinytest"), results.hits.map { it.name })
     }
 
     @Test
     fun `search junk answers no hits`() {
-        assertTrue(XMakePackageParsers.parseSearchResults("nothing matched\n").isEmpty())
+        val results = XMakePackageParsers.parseSearchResults("nothing matched\n")
+
+        assertTrue(results.hits.isEmpty())
+        assertTrue(results.diagnostics.isEmpty())
     }
 
     @Test
