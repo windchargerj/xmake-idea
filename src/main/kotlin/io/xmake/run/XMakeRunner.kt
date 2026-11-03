@@ -57,6 +57,8 @@ import io.xmake.run.sanitizer.publishAnalysisReport
 import io.xmake.run.sanitizer.readSanitizerLogFiles
 import io.xmake.run.sanitizer.rememberSanitizedRun
 import io.xmake.run.sanitizer.sanitizer
+import io.xmake.run.pack.XMakePackRunConfiguration
+import io.xmake.run.pack.XMakePackState
 import io.xmake.run.state.XMakeDebugState
 import io.xmake.run.state.XMakeRunState
 import io.xmake.run.test.XMakeTestRunConfiguration
@@ -70,6 +72,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
 
     override fun canRun(executorId: String, profile: RunProfile): Boolean = when (profile) {
         is XMakeTestRunConfiguration -> executorId == DefaultRunExecutor.EXECUTOR_ID
+        is XMakePackRunConfiguration -> executorId == DefaultRunExecutor.EXECUTOR_ID
         is XMakeRunConfiguration -> when (executorId) {
             DefaultRunExecutor.EXECUTOR_ID -> true
             DefaultDebugExecutor.EXECUTOR_ID -> XMakeDebugSupport.isAvailable()
@@ -91,6 +94,14 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             is XMakeRunState -> executor.submit {
                 val console = prepareConsole(project)
                 executeRun(executor, state, environment, console)
+            }
+            is XMakeTestState -> executor.submit {
+                val console = prepareConsole(project)
+                executeTestRun(state, environment, console)
+            }
+            is XMakePackState -> executor.submit {
+                val console = prepareConsole(project)
+                executePackRun(executor, state, environment, console)
             }
             is XMakeDebugState -> executor.submitAfter(
                 before = { prepareXMakeDebugBuild(project, state) },
@@ -176,6 +187,58 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
                     state.createExecutionResult(environment.executor, processHandler),
                     environment,
                 ) ?: throw ExecutionException("Failed to create the XMake run descriptor")
+            }
+        } catch (error: Throwable) {
+            processHandler.stopAfterFailedStart(error)
+            throw error
+        }
+    }
+
+    /** The test run: the console prints xmake test's own results, paths hyperlinked. */
+    private suspend fun executeTestRun(
+        state: XMakeTestState,
+        environment: ExecutionEnvironment,
+        console: XMakeConsole,
+    ): RunContentDescriptor {
+        val processHandler = state.startProcess()
+        return try {
+            withContext(Dispatchers.EDT) {
+                ensureProjectIsOpen(environment.project)
+                showRunContent(
+                    state.createExecutionResult(environment.executor, processHandler),
+                    environment,
+                ) ?: throw ExecutionException("Failed to create the XMake test descriptor")
+            }
+        } catch (error: Throwable) {
+            processHandler.stopAfterFailedStart(error)
+            throw error
+        }
+    }
+
+    /** The pack run: the console prints xmake pack's own output, every `packing <path> ..`
+     *  line hyperlinked. With `--autobuild=n` the pack builds nothing itself, so the
+     *  profile's configure pass runs first - the same two-step the launch state pairs -
+     *  keeping the pack on the profile's mode/platform/toolchain. */
+    private suspend fun executePackRun(
+        executor: XMakeExecutor,
+        state: XMakePackState,
+        environment: ExecutionEnvironment,
+        console: XMakeConsole,
+    ): RunContentDescriptor {
+        if (!state.configuration.autoBuild) {
+            executor.execute(
+                console, state.configureCommand,
+                XMakeConsoleOptions(showConsole = false, showOnFailure = true),
+            )
+        }
+        val processHandler = state.startProcess()
+        return try {
+            withContext(Dispatchers.EDT) {
+                ensureProjectIsOpen(environment.project)
+                showRunContent(
+                    state.createExecutionResult(environment.executor, processHandler),
+                    environment,
+                ) ?: throw ExecutionException("Failed to create the XMake pack descriptor")
             }
         } catch (error: Throwable) {
             processHandler.stopAfterFailedStart(error)
