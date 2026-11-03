@@ -61,6 +61,13 @@
         <toolWindow id="XMake" anchor="bottom" factoryClass="io.xmake.project.console.XMakeToolWindowFactory"
                     icon="/icons/xmake-dark.svg"/>
 
+        <!-- The XMake services also surface as a node in the platform Services tool
+             window (public EP, actively used by the Run Dashboard / Clouds / SSH
+             contributors in CLion 2026.2 - docs/roadmap-designs/audit-services.md).
+             The bundled Services View plugin registers the window itself once the
+             extension exists. -->
+        <serviceViewContributor implementation="io.xmake.project.console.XMakeServicesContributor"/>
+
         <!-- sanitizer analysis -->
         <toolWindow id="XMake Analysis" anchor="bottom" secondary="true"
                     factoryClass="io.xmake.run.analysis.ui.AnalysisToolWindowFactory"
@@ -75,13 +82,12 @@
         <toolWindow id="XMake Packages" anchor="bottom" secondary="true"
                     factoryClass="io.xmake.run.packages.ui.XMakePackagesToolWindowFactory"
                     icon="/icons/xmake-dark.svg"/>
->
         <!-- run configurations -->
         <programRunner implementation="io.xmake.run.XMakeRunner"/>
         <configurationType implementation="io.xmake.run.XMakeRunConfigurationType"/>
         <configurationType implementation="io.xmake.run.test.XMakeTestRunConfigurationType"/>
         <configurationType implementation="io.xmake.run.pack.XMakePackRunConfigurationType"/>
->        <runConfigurationProducer implementation="io.xmake.run.XMakeRunConfigurationProducer"/>
+        <runConfigurationProducer implementation="io.xmake.run.XMakeRunConfigurationProducer"/>
         <executionTargetProvider implementation="io.xmake.run.target.XMakeBuildProfileExecutionTargetProvider"/>
         <projectTaskRunner implementation="io.xmake.build.XMakeProjectTaskRunner"/>
 
@@ -144,8 +150,8 @@
             <action id="XMake.CheckClangTidy"
                     class="io.xmake.actions.CheckClangTidyAction"
                     text="Run Clang-Tidy"
-                    icon="AllIcons.Actions.Find"
-                    description="Check the project through xmake check clang.tidy and show the findings in the XMake Analysis view."/>
+                    icon="AllIcons.Actions.Execute"
+                    description="Run the Clang-Tidy check on the project (xmake check clang.tidy) and show the findings in the XMake Analysis view."/>
             <action id="XMake.Rebuild"
                     class="io.xmake.actions.RebuildAction"
                     text="Rebuild Project"

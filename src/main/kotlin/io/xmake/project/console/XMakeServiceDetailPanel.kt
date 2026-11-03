@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, XMake Open Source Community.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  */
 package io.xmake.project.console
 
@@ -26,6 +26,8 @@ import io.xmake.utils.cli.XMakeServiceKind
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.Icon
+import java.awt.GridLayout
+import java.awt.event.KeyEvent
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -52,6 +54,18 @@ internal fun serviceStatusText(state: XMakeServiceState, probed: Boolean): Strin
 /** The status icon of one service kind: green connected, yellow connected-but-server-
  *  down, red unreachable, gray idle/not configured. The colors carry the state the
  *  text spells out, so a Services tree scan answers "is my build server up?". */
+/** The short state words the summary line shows: two words at most - the full
+ *  sentence (what is persisted vs what is live) rides the tooltip. */
+internal fun XMakeServiceState.shortStatus(probed: Boolean): String = when {
+    !probed -> "probing"
+    endpoint == null -> "not configured"
+    connected && reachable == XMakeReachability.YES -> "connected"
+    connected && reachable == XMakeReachability.NO -> "unreachable"
+    connected -> "connected"
+    reachable == XMakeReachability.YES -> "server reachable"
+    else -> "not connected"
+}
+
 internal fun serviceStatusIcon(state: XMakeServiceState, probed: Boolean): Icon = when {
     !probed || state.endpoint == null -> AllIcons.General.InspectionsOKEmpty
     state.connected && state.reachable != XMakeReachability.NO -> AllIcons.General.InspectionsOK
@@ -76,13 +90,9 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
     private val endpointField = JBTextField(18).apply { emptyText.text = "host:port" }
     private val applyButton = JButton("Apply")
     private val clearButton = JButton("Clear")
-    private val connectButton = JButton("Connect").apply {
-        toolTipText = "Connect through xmake service --connect, then re-probe the status"
-    }
-    private val disconnectButton = JButton("Disconnect").apply {
-        toolTipText = "Disconnect through xmake service --disconnect, then re-probe the status"
-    }
-    private val hintLabel = JBLabel().apply { font = JBFont.label() }
+    private val connectButton = JButton("Connect")
+    private val disconnectButton = JButton("Disconnect")
+    private val hintLabel = JBLabel()
 
     /** The last snapshot's state and the busy flag, so every control's enablement is
      *  recomputed from exactly what the probe allowed instead of guessed. */
@@ -91,12 +101,18 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
 
     init {
         isOpaque = false
-        val kindLabel = JBLabel(kindName(kind)).apply { font = JBFont.label().biggerOn(2f).deriveFont(java.awt.Font.BOLD) }
-        addRow(0, kindLabel)
-        addRow(1, JBLabel("Status:"), statusLabel)
-        addRow(2, JBLabel("Endpoint:"), endpointField, applyButton, clearButton)
-        addRow(3, connectButton, disconnectButton)
-        addRow(4, hintLabel)
+
+        // Row 0: the summary line - name, status icon, short state. The full state
+        // sentence rides the tooltip, the way the Services tree nodes do.
+        addRow(
+            0,
+            JBLabel(kindName(kind)).apply { font = JBFont.label().biggerOn(1f).deriveFont(java.awt.Font.BOLD) },
+            statusLabel,
+        )
+
+        // Row 1: the endpoint field stretches; Connect and Disconnect are mutually
+        // exclusive on show (serial-monitor's button rows), Apply stays for mouse users.
+        addRow(1, endpointField, applyButton, clearButton, connectButton, disconnectButton)
 
         applyButton.addActionListener {
             project.xmakeServicesSnapshots.applyEndpoint(kind, endpointField.text)
@@ -110,9 +126,22 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
         disconnectButton.addActionListener {
             project.xmakeServicesSnapshots.disconnectService(kind)
         }
+        // Enter in the field applies - the field is the primary input, the Apply button
+        // stays for mouse users.
+        endpointField.addActionListener {
+            project.xmakeServicesSnapshots.applyEndpoint(kind, endpointField.text)
+        }
     }
 
     private fun addRow(row: Int, vararg components: JComponent) {
+        val constraints = GridBagConstraints().apply {
+            gridy = row
+            gridx = 0
+            weightx = 1.0
+            anchor = GridBagConstraints.WEST
+            fill = if (row == 0) GridBagConstraints.NONE else GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(2, 0)
+        }
         val line = JPanel(GridBagLayout()).apply { isOpaque = false }
         components.forEachIndexed { index, component ->
             line.add(
@@ -126,17 +155,7 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
                 },
             )
         }
-        add(
-            line,
-            GridBagConstraints().apply {
-                gridy = row
-                gridx = 0
-                weightx = 1.0
-                anchor = GridBagConstraints.WEST
-                fill = if (row == 0) GridBagConstraints.NONE else GridBagConstraints.HORIZONTAL
-                insets = JBUI.insets(3, 0)
-            },
-        )
+        add(line, constraints)
     }
 
     /** Renders one probe result. A focused endpoint field keeps the user's typing: the
@@ -144,8 +163,9 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
      *  with [setBusy] - the last call wins, which is what the tab's render path does. */
     fun show(state: XMakeServiceState, probed: Boolean) {
         lastState = state
-        statusLabel.text = serviceStatusText(state, probed)
+        statusLabel.text = state.shortStatus(probed)
         statusLabel.icon = serviceStatusIcon(state, probed)
+        statusLabel.toolTipText = serviceStatusText(state, probed)
         if (!endpointField.isFocusOwner) {
             endpointField.text = state.endpoint
                 ?: project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(kind)
@@ -173,7 +193,7 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
         endpointField.isEnabled = !busy
         applyButton.isEnabled = !busy
         clearButton.isEnabled = !busy && configured
-        connectButton.isEnabled = !busy && state?.endpoint != null
-        disconnectButton.isEnabled = !busy && state?.connected == true
+        connectButton.isVisible = !busy && state?.endpoint != null && state?.connected != true
+        disconnectButton.isVisible = !busy && state?.connected == true
     }
 }
