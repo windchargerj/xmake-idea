@@ -22,6 +22,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.util.messages.Topic
 import io.xmake.project.console.XMakeConsoleManager
 import io.xmake.run.command.XMakeCommand
@@ -29,6 +30,7 @@ import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.xmakeCommands
 import io.xmake.run.command.xmakeExecutor
+import io.xmake.run.target.SELECT_BUILD_PROFILE_FIRST
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
 import io.xmake.utils.notify
 import io.xmake.utils.runCancellable
@@ -73,15 +75,17 @@ internal class XMakePackagesService(private val project: Project) {
     /**
      * Reloads the declared packages and the dependency graph. The graph is a nicety: a
      * failed graph only leaves the rows childless, while a failed listing is the failure
-     * the view reports. A refresh also leaves search mode - it is the way out of it.
+     * the view reports. Search mode is not an exit here - the hits ride across a refresh
+     * as the tree's filtered view (an install started from a hit lands with the hits
+     * still shown); only Esc or an emptied search field leaves the view, via [exitSearch].
      */
     fun refresh() {
         if (busy) return
         runQuery("refreshing the package list") { factory -> loadSnapshot(factory) }
     }
 
-    /** Searches the configured repositories; the results replace the tree until a refresh
-     *  or [exitSearch]. */
+    /** Searches the configured repositories; the hits - and the `note:`/`error:` lines
+     *  xmake printed around them - replace the tree's rows until [exitSearch]. */
     fun search(term: String) {
         if (busy) return
         runQuery("searching the repositories for '$term'") { factory ->
@@ -94,8 +98,8 @@ internal class XMakePackagesService(private val project: Project) {
 
     /**
      * Leaves search mode without re-querying: the declared packages come back from the
-     * snapshot the search rode on, so an empty search box plus Enter costs no lane time.
-     * No-op while an operation holds the pipeline or search mode is not on.
+     * snapshot the search rode on, so Esc, or an empty search box plus Enter, costs no
+     * lane time. No-op while an operation holds the pipeline or search mode is not on.
      */
     fun exitSearch() {
         if (busy) return
@@ -164,7 +168,7 @@ internal class XMakePackagesService(private val project: Project) {
                 if (project.isDisposed) return@invokeLater
                 busy = false
                 currentOperation = null
-                failure?.let { project.notify("XMake packages: $it") }
+                failure?.let { project.notify("XMake packages", StringUtil.escapeXmlEntities(it)) }
                 command?.let(onReady)
             }
         }
@@ -200,7 +204,16 @@ internal class XMakePackagesService(private val project: Project) {
             invokeLater {
                 if (project.isDisposed) return@invokeLater
                 failed?.let { error ->
-                    project.notify("xmake $description failed: ${error.message}", title = "XMake packages")
+                    // The balloon names the exact command line, not the confirmation-flow
+                    // sentence: "$description" is the long "Installing 'x' - xmake fetches,
+                    // builds, and installs it." wording, which reads garbled after "failed".
+                    // The summary line and the console banner keep the sentence - it fits
+                    // those two.
+                    project.notify(
+                        "XMake packages",
+                        "xmake ${StringUtil.escapeXmlEntities(command.commandLine.commandLineString)} failed: " +
+                            StringUtil.escapeXmlEntities(error.message ?: "an unknown error"),
+                    )
                 }
                 runQuery("refreshing the package list") { factory -> loadSnapshot(factory) }
             }
@@ -231,7 +244,8 @@ internal class XMakePackagesService(private val project: Project) {
     }
 
     /** The fresh state one refresh answers: the declared packages, plus the dependency graph
-     *  when xmake produced one. */
+     *  when xmake produced one. The search results ride over unchanged - the hits stay the
+     *  tree's filtered view across a refresh; nothing but [exitSearch] clears them. */
     private suspend fun loadSnapshot(factory: XMakeCommandFactory): XMakePackagesSnapshot {
         val packages = XMakePackageParsers.parseRequireList(
             project.xmakeExecutor.captureStandardOutput(factory.createRequireList()),
@@ -241,12 +255,12 @@ internal class XMakePackagesService(private val project: Project) {
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireDepgraph()),
             )
         }.getOrNull()
-        return XMakePackagesSnapshot(packages, depgraph)
+        return XMakePackagesSnapshot(packages, depgraph, searchResults = snapshot?.searchResults)
     }
 
     private fun packageFactory(): XMakeCommandFactory {
         val profile = project.activeOrSingleXMakeBuildProfile
-            ?: throw IllegalStateException("Select an XMake build profile first")
+            ?: throw IllegalStateException(SELECT_BUILD_PROFILE_FIRST)
         return project.xmakeCommands(profile)
     }
 
