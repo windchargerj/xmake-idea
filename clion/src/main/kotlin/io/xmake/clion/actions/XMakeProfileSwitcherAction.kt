@@ -38,6 +38,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import io.xmake.run.XMakeProfileRunConfiguration
 import io.xmake.run.XMakeRunConfigurationType
+import io.xmake.run.test.XMakeTestRunConfiguration
 import io.xmake.run.target.XMakeBuildProfileExecutionTarget
 import javax.swing.JComponent
 
@@ -50,7 +51,8 @@ class XMakeProfileSwitcherAction : ComboBoxAction(), DumbAware {
         val configuration = selectedConfiguration(project)
         e.presentation.isEnabledAndVisible =
             !project.isDisposed && isXMakeProject(project) &&
-                    (configuration == null || configuration is XMakeProfileRunConfiguration)
+                    (configuration == null || configuration is XMakeProfileRunConfiguration ||
+                            configuration is XMakeTestRunConfiguration)
         if (e.presentation.isEnabledAndVisible) {
             e.presentation.text = switcherText(project, configuration)
         }
@@ -61,7 +63,7 @@ class XMakeProfileSwitcherAction : ComboBoxAction(), DumbAware {
         val group = DefaultActionGroup()
         group.add(Separator.create(XMAKE_SECTION))
         when (val configuration = selectedConfiguration(project)) {
-            is XMakeProfileRunConfiguration -> {
+            is XMakeProfileRunConfiguration, is XMakeTestRunConfiguration -> {
                 val targets = targetsFor(project, configuration)
                 if (targets.isEmpty()) {
                     group.add(SelectConfigurationHintAction())
@@ -86,7 +88,9 @@ class XMakeProfileSwitcherAction : ComboBoxAction(), DumbAware {
             ?.displayName
         val debugger = currentDebugProfile(project)?.name
         return when {
-            configuration !is XMakeProfileRunConfiguration || profile == null -> PLACEHOLDER
+            configuration !is XMakeProfileRunConfiguration &&
+                    configuration !is XMakeTestRunConfiguration -> PLACEHOLDER
+            profile == null -> PLACEHOLDER
             debugger == null -> profile
             else -> "$profile | $debugger"
         }
@@ -130,8 +134,9 @@ class XMakeProfileSwitcherAction : ComboBoxAction(), DumbAware {
         }
 
         override fun actionPerformed(e: AnActionEvent) {
-            val configuration = selectedConfiguration(project) as? XMakeProfileRunConfiguration ?: return
-            val current = targetsFor(project, configuration as RunConfiguration).firstOrNull { it.profileId == target.profileId } ?: return
+            val configuration = selectedConfiguration(project) ?: return
+            if (configuration !is XMakeProfileRunConfiguration && configuration !is XMakeTestRunConfiguration) return
+            val current = targetsFor(project, configuration).firstOrNull { it.profileId == target.profileId } ?: return
             ExecutionTargetManager.setActiveTarget(project, current)
         }
     }
