@@ -57,7 +57,7 @@ data class ToolkitHost(
     @Transient
     internal var backend: Backend? = null
 
-    internal val wslDistribution: WSLDistribution?
+    val wslDistribution: WSLDistribution?
         get() = (backend as? Backend.WSL)?.distribution
 
     internal val sshConfig: SshConfig?

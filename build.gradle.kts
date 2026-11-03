@@ -52,11 +52,26 @@ dependencies {
     intellijPlatform {
         clion(runIdeVersion)
         bundledPlugin("intellij.ssh.plugin")
+        bundledModule("intellij.platform.coverage")
+        bundledModule("intellij.platform.coverage.agent")
         testFramework(TestFrameworkType.Platform)
         pluginModule(project(":clion"))
     }
     testImplementation("junit:junit:4.13.2")
 }
+
+// The optional CLion module's tests reuse this module's platform fixture base
+// (XMakePlatformTestCase), so the compiled test classes are published as a consumable
+// artifact instead of duplicating the fixture in the module.
+val testArtifacts by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+val testJar by tasks.registering(Jar::class) {
+    archiveClassifier = "test"
+    from(sourceSets.test.get().output)
+}
+artifacts.add("testArtifacts", testJar)
 
 tasks {
     test {

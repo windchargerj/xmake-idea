@@ -45,12 +45,13 @@ import kotlin.coroutines.resumeWithException
  * and may throw ExecutionException, so callers must consume the handler right away,
  * through [awaitSuccessfulCompletion] or the platform's `startProcess` lifecycle.
  */
-internal class XMakeCommandProcessHandler(
+class XMakeCommandProcessHandler(
     private val project: Project,
     private val command: XMakeCommand,
     private val options: XMakeConsoleOptions = XMakeConsoleOptions(),
     private val onTextAvailable: (String, Key<*>) -> Unit = { _, _ -> },
     private val onProblems: (List<XMakeProblem>) -> Unit = {},
+    private val onTerminated: () -> Unit = {},
 ) {
     private val stdErr = StringBuilder()
     private val stdOut = StringBuilder()
@@ -147,6 +148,11 @@ internal class XMakeCommandProcessHandler(
             if (options.showExitCode) {
                 ProcessTerminatedListener.attach(handler, project)
             }
+            handler.addProcessListener(object : ProcessListener {
+                override fun processTerminated(event: ProcessEvent) {
+                    onTerminated()
+                }
+            })
             handler
         } catch (error: Throwable) {
             // The handler may not be fully constructed, so force-kill the started process.

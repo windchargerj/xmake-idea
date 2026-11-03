@@ -38,7 +38,9 @@ internal class XMakeRunState private constructor(
     private val runCommand: XMakeCommand,
 ) : CommandLineState(environment) {
 
-    public override fun startProcess(): ProcessHandler =
+    public override fun startProcess(): ProcessHandler = startProcess { }
+
+    internal fun startProcess(onTerminated: () -> Unit): ProcessHandler =
         XMakeCommandProcessHandler(
             environment.project,
             runCommand,
@@ -46,6 +48,7 @@ internal class XMakeRunState private constructor(
                 showExitCode = true,
                 emulateTerminal = configuration.emulateTerminalInConsole,
             ),
+            onTerminated = onTerminated,
         ).processHandler
 
     init {
