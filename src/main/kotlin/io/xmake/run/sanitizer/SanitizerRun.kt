@@ -18,17 +18,14 @@ package io.xmake.run.sanitizer
 
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configuration.EnvironmentVariablesData
-import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.ToolWindowManager
 import io.xmake.project.console.XMakeConsole
 import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.run.XMakeRunConfiguration
-import io.xmake.run.analysis.ANALYSIS_TOOL_WINDOW_ID
 import io.xmake.run.analysis.AnalysisService
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeConsoleOptions
@@ -263,26 +260,12 @@ internal fun publishAnalysisReport(
         }
         .finish(configuration.name)
         .copy(toolkit = runCommand.toolkit, hostWorkingDirectory = runCommand.workingDirectory)
-    invokeLater {
-        if (project.isDisposed) return@invokeLater
-        AnalysisService.getInstance(project).publish(report)
-        console?.print(
-            if (report.issues.isEmpty()) {
-                "${kind.displayName}: no findings\n"
-            } else {
-                "${kind.displayName}: ${report.totalFindings} finding(s) at " +
-                        "${report.issues.size} unique place(s) - see the XMake Analysis view\n"
-            },
-            ConsoleViewContentType.SYSTEM_OUTPUT,
-        )
-        if (report.issues.isNotEmpty()) {
-            ToolWindowManager.getInstance(project)
-                .getToolWindow(ANALYSIS_TOOL_WINDOW_ID)
-                ?.activate(null)
-        } else {
-            Log.info("Sanitizer run of '${configuration.name}' under ${kind.displayName} reported no findings")
-        }
+    if (report.issues.isEmpty()) {
+        Log.info("Sanitizer run of '${configuration.name}' under ${kind.displayName} reported no findings")
     }
+    // Publish, console line, and the view - shown without stealing focus, the way the
+    // clang-tidy run narrates its findings too.
+    AnalysisService.getInstance(project).publishAndNarrate(report, console, kind.displayName)
 }
 
 /** Drops the findings of the previous run when a plain run starts. */

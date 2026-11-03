@@ -21,6 +21,7 @@ import io.xmake.run.analysis.AnalysisIssue
 import io.xmake.run.analysis.AnalysisReport
 import io.xmake.run.analysis.AnalysisSeverity
 import io.xmake.run.analysis.AnalysisStack
+import io.xmake.utils.stripAnsi
 
 /**
  * Reads the stdout of `xmake check clang.tidy` and turns it into findings for the analysis
@@ -42,13 +43,13 @@ internal class ClangTidyReportParser {
             if (breakAt < 0) return
             val rawLine = buffer.substring(0, breakAt)
             buffer.delete(0, breakAt + lineBreakLength(breakAt))
-            consumeLine(ANSI.replace(rawLine.trim(), ""))
+            consumeLine(stripAnsi(rawLine.trim()))
         }
     }
 
     fun finish(projectName: String): AnalysisReport {
         if (buffer.isNotEmpty()) {
-            consumeLine(ANSI.replace(buffer.toString().trim(), ""))
+            consumeLine(stripAnsi(buffer.toString().trim()))
             buffer.setLength(0)
         }
         return AnalysisReport(
@@ -103,8 +104,5 @@ internal class ClangTidyReportParser {
         /** `src/main.cpp:13:9: warning: use nullptr [modernize-use-nullptr]`; the check
          *  name in brackets is optional, and so is the column in older releases. */
         private val FINDING = Regex("""(\S+?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note|remark):\s*(.+?)(?:\s+\[([^\]]+)])?$""")
-
-        /** xmake colors its output even when piped; the wrap spans whole blocks. */
-        private val ANSI = Regex("""[]?\[[0-9;]+[A-Za-z]""")
     }
 }

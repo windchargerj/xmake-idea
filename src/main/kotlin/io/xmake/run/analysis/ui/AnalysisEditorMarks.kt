@@ -100,7 +100,9 @@ internal class AnalysisEditorMarks(private val project: Project) : Disposable {
         editor.putUserData(MARKS, null)
     }
 
-    /** The one-based report lines that fall into [virtualFile], as zero-based editor lines. */
+    /** The one-based report lines that fall into [virtualFile], as zero-based editor lines.
+     *  The candidate ladder is the shared one in [RemotePathMapper.localCandidates]; marks
+     *  keep their equality-only semantics - an open editor's file needs no existence check. */
     private fun blamedLines(virtualFile: VirtualFile, report: AnalysisReport): List<Triple<Int, AnalysisSeverity, String>> {
         val mapper = report.toolkit?.let { toolkit ->
             report.hostWorkingDirectory?.let { RemotePathMapper.forToolkit(toolkit, it, project) }
@@ -109,13 +111,8 @@ internal class AnalysisEditorMarks(private val project: Project) : Disposable {
         return report.issues.mapNotNull { issue ->
             val frame = issue.primaryFrame ?: return@mapNotNull null
             val framePath = frame.file ?: return@mapNotNull null
-            val mapped = mapper?.toLocal(File(framePath).toPath())?.toFile()?.toPath()
-            val matches = when {
-                mapped != null && mapped == localPath -> true
-                File(framePath).toPath() == localPath -> true
-                else -> project.basePath != null &&
-                        File(project.basePath, framePath).toPath() == localPath
-            }
+            val matches = RemotePathMapper.localCandidates(mapper, File(framePath).toPath(), project)
+                .any { it == localPath }
             if (!matches || frame.line == null) return@mapNotNull null
             Triple(frame.line - 1, issue.severity, "${issue.severity}: ${issue.type} - ${issue.message}")
         }

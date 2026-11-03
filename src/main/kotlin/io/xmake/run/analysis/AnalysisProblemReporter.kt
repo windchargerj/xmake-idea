@@ -67,22 +67,22 @@ internal class AnalysisProblemReporter(private val project: Project) {
         }
     }
 
-    /** The report's findings grouped by their local file, with 1-based positions. */
+    /** The report's findings grouped by their local file, with 1-based positions. The
+     *  path ladder is the shared one in [RemotePathMapper.localCandidates]; only the
+     *  existence test is this consumer's own. */
     private fun resolveFindings(report: AnalysisReport): Map<VirtualFile, List<Triple<Int, Int, String>>> {
         val mapper = report.toolkit?.let { toolkit ->
             report.hostWorkingDirectory?.let { RemotePathMapper.forToolkit(toolkit, it, project) }
         }
-        val basePath = project.basePath
         val byFile = mutableMapOf<VirtualFile, MutableList<Triple<Int, Int, String>>>()
         for (issue in report.issues) {
             val frame = issue.primaryFrame ?: continue
             val path = frame.file ?: continue
             val line = frame.line ?: continue
-            val local = mapper?.toLocal(File(path).toPath())?.toFile()?.takeIf(File::isFile)
-                ?: basePath?.let { File(it, path).takeIf(File::isFile) }
-                ?: File(path).takeIf(File::isFile)
+            val local = RemotePathMapper.localCandidates(mapper, File(path).toPath(), project)
+                .firstOrNull { candidate -> candidate.toFile().isFile }
                 ?: continue
-            val virtual = LocalFileSystem.getInstance().findFileByIoFile(local) ?: continue
+            val virtual = LocalFileSystem.getInstance().findFileByIoFile(local.toFile()) ?: continue
             byFile.getOrPut(virtual) { mutableListOf() } += Triple(line, frame.column ?: 1, "${issue.type}: ${issue.message}")
         }
         return byFile

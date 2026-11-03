@@ -16,6 +16,8 @@
  */
 package io.xmake.run.test
 
+import io.xmake.utils.stripAnsi
+
 /**
  * Reads the stdout of `xmake test` and turns it into per-test results.
  *
@@ -67,7 +69,7 @@ internal class XMakeTestOutputParser {
         if (line.startsWith(ERROR_PREFIX)) sawFailureLine = true
     }
 
-    private fun cleanLine(line: String): String = ANSI.replace(line.trim(), "")
+    private fun cleanLine(line: String): String = stripAnsi(line.trim())
 
     private fun lineBreakLength(breakAt: Int): Int = when (buffer[breakAt]) {
         '\r' -> if (breakAt + 1 < buffer.length && buffer[breakAt + 1] == '\n') 2 else 1
@@ -87,9 +89,6 @@ internal class XMakeTestOutputParser {
         private val SUMMARY = Regex("""\d+% tests passed.+\d+(\.\d+)?s$""")
 
         private const val ERROR_PREFIX = "error:"
-
-        /** xmake colors its output even when piped. */
-        private val ANSI = Regex("""[\u001B\u009B]?\[[0-9;]+[A-Za-z]""")
     }
 }
 

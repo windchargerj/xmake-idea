@@ -26,6 +26,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import io.xmake.utils.stripAnsi
 
 
 /** The api set the info manager probes for Lua completion. */
@@ -43,7 +44,7 @@ data class XMakeInfo(
             fromLines: (List<String>) -> T,
         ): T {
             // xmake emits color codes even when piped; every listing parser sees the stripped text.
-            val text = output.replace(ANSI_ESCAPE, "")
+            val text = stripAnsi(output)
             val payload = text.lineSequence().map(String::trim)
                 .lastOrNull { it.startsWith("[") || it.startsWith("{") }
             if (payload != null) {
@@ -133,7 +134,7 @@ data class XMakeInfo(
          *  `create --list` tree of xmake 3.x (groups unindented, languages one level in,
          *  `- kind` entries two levels in). */
         fun parseProjectTemplates(output: String): XMakeProjectTemplates {
-            val text = output.replace(ANSI_ESCAPE, "")
+            val text = stripAnsi(output)
             val payload = text.lineSequence().map(String::trim).lastOrNull { it.startsWith("{") }
             if (payload != null) {
                 val exported = parseTemplateExport(payload)
@@ -196,7 +197,5 @@ data class XMakeInfo(
                 },
                 { emptySet() },
             )
-
-        private val ANSI_ESCAPE = Regex("\u001B\\[[0-9;]*[A-Za-z]")
     }
 }

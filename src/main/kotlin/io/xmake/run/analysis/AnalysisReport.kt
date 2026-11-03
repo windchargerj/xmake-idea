@@ -88,6 +88,9 @@ data class AnalysisReport(
     val hostWorkingDirectory: String? = null,
     /** The stderr lines no parser consumed; shown verbatim so nothing is lost. */
     val unparsed: List<String> = emptyList(),
+    /** Why the producing run failed, when it did - the summary names it, so a check that
+     *  died partway never reads as a clean one that found nothing. */
+    val failure: String? = null,
     val timestamp: Instant = Instant.now(),
 ) {
     val totalFindings: Int get() = issues.sumOf(AnalysisIssue::count)

@@ -24,10 +24,16 @@ import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.runners.ExecutionUtil
+import com.intellij.execution.ui.ConsoleViewContentType
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.util.messages.Topic
+import io.xmake.project.console.XMakeConsole
+import kotlinx.coroutines.Deferred
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The project's analysis findings: the report of the last analysis run - a sanitized run,
@@ -35,9 +41,11 @@ import com.intellij.util.messages.Topic
  * anything else stay in step.
  *
  * One report replaces the previous one - the view always describes the last run, the way
- * coverage data does - and a plain run clears the findings again. The last few reports also
- * stay in a history the view's picker reads; showing an older one is presentation-only and
- * never republishes it.
+ * coverage data does - and a plain run clears the current report again. The last few
+ * reports also stay in a history the view's picker and the Accumulate switch read; the
+ * history survives a plain run's clear (an ordinary run must not wipe a collected session)
+ * and only the view's Clear drops it. Showing an older one is presentation-only and never
+ * republishes it.
  */
 @Service(Service.Level.PROJECT)
 internal class AnalysisService(private val project: Project) {
@@ -56,6 +64,17 @@ internal class AnalysisService(private val project: Project) {
 
     private val reportHistory = ArrayDeque<AnalysisReport>()
 
+    /**
+     * The claim a check takes before its task is even submitted: the executor's single lane
+     * may sit behind a long build, so without a claim every click of Run would queue
+     * another full `xmake check` behind the first. Released when the registered process
+     * takes over ([registerCheckProcess]), when the run bails early, or on stop.
+     */
+    private val checkClaimed = AtomicBoolean(false)
+
+    /** The queued check's job, held so the stop button can cancel it before it starts. */
+    private var checkJob: Deferred<*>? = null
+
     /** The process of the check running now, held so the view's stop button can kill it. */
     @Volatile
     private var checkProcess: ProcessHandler? = null
@@ -64,23 +83,52 @@ internal class AnalysisService(private val project: Project) {
     val isCheckRunning: Boolean
         get() = checkProcess?.isProcessTerminated == false
 
-    /** Publishes the findings of one run; null clears the view - and its history - again. */
+    /** Whether a check is claimed but its process is not registered yet: the task may sit
+     *  queued on the executor's lane, or still be building the compile database. */
+    val isCheckQueued: Boolean
+        get() = checkClaimed.get()
+
+    /** Whether a check occupies the pipeline in any way - what the Run button disables on. */
+    val isCheckActive: Boolean
+        get() = isCheckQueued || isCheckRunning
+
+    /**
+     * Claims the one check slot; false when a check is already queued or running. Called
+     * from the Run entry before anything is submitted, so repeated clicks cannot pile up.
+     */
+    fun beginCheck(): Boolean = checkClaimed.compareAndSet(false, true)
+
+    /** Releases the claim when no process took it over - an early bail or a failed launch. */
+    fun endCheck() {
+        checkClaimed.set(false)
+    }
+
+    /** Publishes the findings of one run; null clears the current report - the view's
+     *  content, not its history, which a plain run has no business wiping. */
     fun publish(report: AnalysisReport?) {
         this.report = report
-        if (report == null) {
-            reportHistory.clear()
-        } else {
+        if (report != null) {
             reportHistory.addFirst(report)
             while (reportHistory.size > HISTORY_LIMIT) reportHistory.removeLast()
         }
         project.messageBus.syncPublisher(TOPIC).reportPublished(report)
     }
 
+    /** Drops the current report and the history - the Clear button's clean slate, and the
+     *  only path that wipes the collected session. */
+    fun clearAll() {
+        report = null
+        reportHistory.clear()
+        project.messageBus.syncPublisher(TOPIC).reportPublished(null)
+    }
+
     /**
      * Remembers [handler] as the check the view can stop. The registration clears itself
-     * when the process ends - completion, failure, or the stop button, whichever comes first.
+     * when the process ends - completion, failure, or the stop button, whichever comes first -
+     * and takes over from the queued claim: from here on the process is the running state.
      */
     fun registerCheckProcess(handler: ProcessHandler) {
+        checkClaimed.set(false)
         checkProcess = handler
         handler.addProcessListener(object : ProcessListener {
             override fun processTerminated(event: ProcessEvent) {
@@ -89,9 +137,50 @@ internal class AnalysisService(private val project: Project) {
         })
     }
 
-    /** Stops the running check, if one runs; whatever it found until then still publishes. */
+    /** Remembers the submitted job so [stopCheck] can cancel a check still queued on the lane. */
+    fun registerCheckJob(job: Deferred<*>) {
+        checkJob = job
+    }
+
+    /**
+     * Stops the check: a queued one is cancelled before it ever starts (its claim released,
+     * since its task may never run to do that itself); a running one has its process
+     * destroyed - whatever it found until then still publishes.
+     */
     fun stopCheck() {
+        if (checkClaimed.get()) {
+            checkJob?.cancel()
+            endCheck()
+            return
+        }
         checkProcess?.destroyProcess()
+    }
+
+    /**
+     * Publishes [report] and narrates it the way both producing runs did: the console line
+     * that says what was found and points at the view, and the view itself - shown, not
+     * activated, so a rerun landing while the user works elsewhere never steals focus.
+     * Runs on the EDT hop; [console] is optional because a sanitized run may have none.
+     */
+    fun publishAndNarrate(report: AnalysisReport, console: XMakeConsole?, sourceLabel: String) {
+        invokeLater {
+            if (project.isDisposed) return@invokeLater
+            publish(report)
+            console?.print(
+                if (report.issues.isEmpty()) {
+                    "$sourceLabel: no findings\n"
+                } else {
+                    "$sourceLabel: ${report.totalFindings} finding(s) at " +
+                            "${report.issues.size} unique place(s) - see the XMake Analysis view\n"
+                },
+                ConsoleViewContentType.SYSTEM_OUTPUT,
+            )
+            if (report.issues.isNotEmpty()) {
+                ToolWindowManager.getInstance(project)
+                    .getToolWindow(ANALYSIS_TOOL_WINDOW_ID)
+                    ?.show()
+            }
+        }
     }
 
     fun rememberSanitizedSettings(settings: RunnerAndConfigurationSettings) {
