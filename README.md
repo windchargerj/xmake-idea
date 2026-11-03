@@ -148,6 +148,7 @@ as it does when the finished build holds no instrumented objects.
 | Valgrind memcheck (`-m valgrind`) | Valgrind executor | CLion memory view | CLion |
 | perf profiling (`-m profile`) | Profiler executor | Flame graph | CLion |
 | Sanitizers (ASan/LSan/MSan/TSan/UBSan) | Run configuration | XMake Analysis view + editor marks | any |
+| clang-tidy | XMake Analysis toolbar | XMake Analysis view + editor marks | any |
 
 ### Sanitizers
 
@@ -166,6 +167,13 @@ dedup tokens) apply only when the run configuration sets none of its own - your
 `ASAN_OPTIONS` and friends always win. Platform support is the compilers', not the
 plugin's: MemorySanitizer needs clang on Linux, Thread/LeakSanitizer need Linux or macOS,
 and on Windows AddressSanitizer runs under MSVC or clang.
+
+### clang-tidy
+
+The XMake Analysis view's toolbar runs `xmake check clang.tidy` over the project; xmake
+builds the compile database the checker reads (and installs clang-tidy itself on first
+use), and the findings land in the same view as the sanitizers - findings grouped by
+check, repeats merged with a count, every location clickable back to its source line.
 
 ## How to contribute?
 

@@ -201,6 +201,15 @@ class XMakeCommandFactory(
             show(queryName, json = jsonOutput)
         }
 
+    /**
+     * One `xmake check clang.tidy` pass over the whole project, in this profile's context:
+     * xmake builds the compile database the checker reads and prints its findings verbatim
+     * on stdout, in clang-tidy's own `file:line:col: severity: message [check]` form.
+     */
+    fun createClangTidyCheck(): XMakeCommand = createCommand {
+        check("clang.tidy")
+    }
+
     private fun createCommand(
         environmentVariables: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT,
         environmentOverrides: Map<String, String> = emptyMap(),

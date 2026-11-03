@@ -41,6 +41,7 @@ import io.xmake.run.analysis.AnalysisIssue
 import io.xmake.run.analysis.AnalysisReport
 import io.xmake.run.analysis.AnalysisSeverity
 import io.xmake.run.analysis.AnalysisStack
+import io.xmake.run.tidy.runClangTidy
 import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -112,9 +113,16 @@ internal class AnalysisPanel(
     /** The subscriptions ride on the content's disposal; nothing else outlives the panel. */
     override fun dispose() = Unit
 
-    private fun toolbar(): ActionToolbar {        val group = DefaultActionGroup(RerunAction(), ClearAction(), ErrorsOnlyAction(), CopyReportAction())
+    private fun toolbar(): ActionToolbar {
+        val group = DefaultActionGroup(
+            RunClangTidyAction(),
+            RerunAction(),
+            ClearAction(),
+            ErrorsOnlyAction(),
+            CopyReportAction(),
+        )
         return ActionManager.getInstance()
-            .createActionToolbar("XMakeSanitizerView", group, true)
+            .createActionToolbar("XMakeAnalysisView", group, true)
             .apply { targetComponent = this@AnalysisPanel }
     }
 
@@ -203,6 +211,24 @@ internal class AnalysisPanel(
                 }
                 append('\n')
             }
+        }
+    }
+
+    /** One click from findings to more findings: the project check fills the same view. */
+    private inner class RunClangTidyAction : DumbAwareAction(
+        "Run clang-tidy",
+        "Check the project through xmake check clang.tidy",
+        AllIcons.Actions.Find,
+    ) {
+
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = event.project != null
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            runClangTidy(event.project ?: return)
         }
     }
 
