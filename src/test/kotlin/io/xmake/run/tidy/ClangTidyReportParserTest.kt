@@ -82,8 +82,8 @@ class ClangTidyReportParserTest {
 
     @Test
     fun `reads xmake's wrapped 3x output with its colors`() {
-        val escape = "[1m"
-        val reset = "[0m"
+        val escape = "\u001B[1m"
+        val reset = "\u001B[0m"
         val parser = ClangTidyReportParser()
         parser.feed(
             "[  0%]: clang-tidy.analyzing src\\main.cpp\r\n" +
@@ -102,5 +102,44 @@ class ClangTidyReportParserTest {
         assertEquals("src\\main.cpp", finding.primaryFrame?.file)
         assertEquals(4, finding.primaryFrame?.line)
         assertEquals(14, finding.primaryFrame?.column)
+    }
+
+    @Test
+    fun `maps remarks to notes and fatal errors to errors`() {
+        val parser = ClangTidyReportParser()
+        parser.feed(
+            """
+            src/perf.cpp:10:2: remark: loop vectorized [backend-opt]
+            src/broken.cpp:3:1: fatal error: 'missing.h' file not found
+            """.trimIndent() + "\n",
+        )
+        val report = parser.finish("demo")
+
+        assertEquals(2, report.issues.size)
+        val remark = report.issues.first { it.type == "backend-opt" }
+        assertEquals(AnalysisSeverity.NOTE, remark.severity)
+        assertEquals("src/perf.cpp", remark.primaryFrame?.file)
+        val fatal = report.issues.first { it.type == "fatal error" }
+        assertEquals(AnalysisSeverity.ERROR, fatal.severity)
+        assertEquals("src/broken.cpp", fatal.primaryFrame?.file)
+        assertEquals(3, fatal.primaryFrame?.line)
+    }
+
+    @Test
+    fun `chunk boundaries never split a finding line`() {
+        val text = "src/main.cpp:13:9: warning: use nullptr [modernize-use-nullptr]\n"
+        val parser = ClangTidyReportParser()
+        // feed in 7-character pieces: the same buffered reassembly the sanitizer parser
+        // is tested on, which this parser shares the shape of
+        var index = 0
+        while (index < text.length) {
+            parser.feed(text.substring(index, minOf(index + 7, text.length)))
+            index += 7
+        }
+        val report = parser.finish("demo")
+
+        assertEquals(1, report.issues.size)
+        assertEquals("modernize-use-nullptr", report.issues[0].type)
+        assertEquals(13, report.issues[0].primaryFrame?.line)
     }
 }

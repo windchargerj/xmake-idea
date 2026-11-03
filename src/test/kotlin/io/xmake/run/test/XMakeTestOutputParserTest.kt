@@ -83,9 +83,9 @@ class XMakeTestOutputParserTest {
 
     @Test
     fun `strips the colors xmake emits even when piped`() {
-        val escape = "[0m"
-        val green = "[38;5;2;1m"
-        val red = "[38;5;1;1m"
+        val escape = "\u001B[0m"
+        val green = "\u001B[38;5;2;1m"
+        val red = "\u001B[38;5;1;1m"
         val parser = XMakeTestOutputParser()
         parser.feed("${green}[100%]: demo/hello ....... passed 0.063s$escape\r\n")
         parser.feed("${red}[ 50%]: demo/bad ......... failed 0.001s$escape\r\n")
@@ -104,5 +104,37 @@ class XMakeTestOutputParserTest {
 
         assertFalse(run.anyFailed)
         assertEquals(1, run.results.size)
+    }
+
+    @Test
+    fun `an unexpected pass is its own outcome and counts as failed`() {
+        // xmake's fourth label, one the grammar rotates explicitly; without it a wrongly
+        // passing test would vanish from the tree or fall into the summary's else branch.
+        val parser = XMakeTestOutputParser()
+        parser.feed("[100%]: demo/flaky ......... unexpected pass 0.002s\n")
+        val run = parser.finish()
+
+        assertEquals(1, run.results.size)
+        assertEquals(XMakeTestOutcome.UNEXPECTED_PASS, run.results[0].outcome)
+        assertTrue(run.results[0].outcome.failed)
+        assertTrue(run.anyFailed)
+    }
+
+    @Test
+    fun `chunk boundaries never split a result line`() {
+        val text = "[100%]: demo/hello ......... passed 0.001s\n"
+        val parser = XMakeTestOutputParser()
+        // feed in 7-character pieces: the same buffered reassembly the sanitizer parser
+        // is tested on, which this parser shares the shape of
+        var index = 0
+        while (index < text.length) {
+            parser.feed(text.substring(index, minOf(index + 7, text.length)))
+            index += 7
+        }
+        val run = parser.finish()
+
+        assertEquals(1, run.results.size)
+        assertEquals("demo/hello", run.results[0].name)
+        assertEquals(XMakeTestOutcome.PASSED, run.results[0].outcome)
     }
 }
