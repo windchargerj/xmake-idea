@@ -206,11 +206,17 @@ class XMakeCommandFactory(
      * xmake builds the compile database the checker reads and prints its findings verbatim
      * on stdout, in clang-tidy's own `file:line:col: severity: message [check]` form.
      */
-    fun createClangTidyCheck(): XMakeCommand = createCommand {
+    fun createClangTidyCheck(checks: String? = null): XMakeCommand = createCommand {
         check("clang.tidy")
+        checks?.let { option("--checks" to it) }
     }
 
-    /** One `xmake test` pass; [filters] are the group and name patterns the action takes. */
+    /**
+     * One `xmake test` pass; [filters] are the group and name patterns the action takes.
+     * `--output-on-failure` only exists from xmake 3.1.2 on - older versions reject the
+     * unknown flag, so the toggle silently drops there and the report section carries
+     * the failing output instead.
+     */
     fun createTestRun(
         filters: List<String> = emptyList(),
         outputOnFailure: Boolean = true,
@@ -218,7 +224,9 @@ class XMakeCommandFactory(
         test(
             buildList {
                 addAll(filters)
-                if (outputOnFailure) add("--output-on-failure")
+                if (outputOnFailure && versionAtLeast(toolkit.version, 3, 1, 2)) {
+                    add("--output-on-failure")
+                }
             },
         )
     }
@@ -337,6 +345,17 @@ class XMakeCommandFactory(
         private fun StringBuilder.appendField(value: String) {
             append(value.length).append(':').append(value)
         }
+
+        /** True when [version] parses at least major.minor.patch; junk never does. */
+        private fun versionAtLeast(version: String, major: Int, minor: Int, patch: Int): Boolean {
+            val numbers = VERSION_NUMBER.findAll(version).map { it.value.toInt() }.toList()
+            if (numbers.size < 3) return false
+            return (numbers[0] > major) ||
+                    (numbers[0] == major && numbers[1] > minor) ||
+                    (numbers[0] == major && numbers[1] == minor && numbers[2] >= patch)
+        }
+
+        private val VERSION_NUMBER = Regex("\\d+")
     }
 }
 

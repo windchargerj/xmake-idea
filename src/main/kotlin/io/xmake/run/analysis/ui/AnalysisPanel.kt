@@ -29,6 +29,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.TreeSpeedSearch
@@ -43,7 +44,7 @@ import io.xmake.run.analysis.AnalysisSeverity
 import io.xmake.run.analysis.AnalysisStack
 import io.xmake.run.tidy.runClangTidy
 import java.awt.datatransfer.StringSelection
-import java.awt.event.MouseAdapter
+import com.intellij.ui.DoubleClickListener
 import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.JComponent
@@ -74,6 +75,8 @@ internal class AnalysisPanel(
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
+        // The report's own words, aligned the way the console shows them.
+        font = com.intellij.openapi.editor.colors.EditorColorsManager.getInstance().globalScheme.getFont(com.intellij.openapi.editor.colors.EditorFontType.PLAIN)
     }
 
     private var errorsOnly = false
@@ -84,22 +87,29 @@ internal class AnalysisPanel(
         tree.cellRenderer = Renderer()
         tree.model = treeModel
         TreeSpeedSearch.installOn(tree, true) { path -> path.lastPathComponent.toString() }
-        tree.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(event: MouseEvent) {
-                if (event.clickCount == 2) navigateSelection()
+        // The platform's own double-click handling: keyboard and accessibility included.
+        object : DoubleClickListener() {
+            override fun onDoubleClick(event: MouseEvent): Boolean {
+                navigateSelection()
+                return true
             }
-        })
+        }.installOn(tree)
         tree.addTreeSelectionListener {
             val node = tree.lastSelectedPathComponent as? IssueNode
             details.text = node?.issue?.let(::renderDetails).orEmpty()
         }
 
         toolbar = toolbar().component
-        setContent(JBUI.Panels.simplePanel().apply {
-            addToTop(summaryLabel.apply { border = JBUI.Borders.empty(4, 8) })
-            addToCenter(ScrollPaneFactory.createScrollPane(tree, true))
-            addToBottom(detailsPanel())
-        })
+        // The Problems view's shape: the findings above, the selected one's report below,
+        // the split remembered between sessions.
+        val split = OnePixelSplitter(true, SPLIT_KEY, 0.72f).apply {
+            firstComponent = JBUI.Panels.simplePanel().apply {
+                addToTop(summaryLabel.apply { border = JBUI.Borders.empty(4, 8) })
+                addToCenter(ScrollPaneFactory.createScrollPane(tree, true))
+            }
+            secondComponent = detailsPanel()
+        }
+        setContent(split)
 
         refresh(AnalysisService.getInstance(project).report)
         project.messageBus.connect(parentDisposable).subscribe(
@@ -127,7 +137,6 @@ internal class AnalysisPanel(
     }
 
     private fun detailsPanel(): JComponent = JBUI.Panels.simplePanel().apply {
-        preferredSize = JBUI.size(0, 140)
         addToTop(JLabel("Details").apply { border = JBUI.Borders.empty(4, 8) })
         addToCenter(ScrollPaneFactory.createScrollPane(details, true))
     }
@@ -302,6 +311,11 @@ internal class AnalysisPanel(
 
     private class FrameNode(val frame: AnalysisFrame) : DefaultMutableTreeNode(frame) {
         override fun toString(): String = frame.function
+    }
+
+    private companion object {
+        /** The splitter's persistence key; the user's split survives restarts. */
+        private const val SPLIT_KEY = "XMakeAnalysisView"
     }
 
     private class Renderer : ColoredTreeCellRenderer() {
