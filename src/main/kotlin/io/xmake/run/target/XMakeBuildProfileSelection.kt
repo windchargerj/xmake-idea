@@ -25,6 +25,14 @@ import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.profile.xmakeBuildProfiles
 import io.xmake.utils.notify
 
+/**
+ * The one wording of the no-profile guard: every surface that needs a build profile before
+ * it can run or probe says this the same way - once with its own context appended, e.g.
+ * `"$SELECT_BUILD_PROFILE_FIRST to enumerate the project's xpack() packages"` - so the same
+ * situation never reads as four different messages.
+ */
+internal const val SELECT_BUILD_PROFILE_FIRST = "Select an XMake build profile first"
+
 internal fun Project.findXMakeBuildProfileFor(target: ExecutionTarget): XMakeBuildProfile? {
     val profileId = (target as? XMakeBuildProfileExecutionTarget)?.profileId ?: return null
     return xmakeBuildProfiles.findProfile(profileId)

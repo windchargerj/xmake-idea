@@ -28,33 +28,35 @@ import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.editor.colors.EditorColorsManager
-import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
-import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.openapi.util.text.StringUtil
+import com.intellij.ui.ColoredTableCellRenderer
 import com.intellij.ui.DoubleClickListener
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SearchTextField
+import com.intellij.ui.SideBorder
 import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.TreeSpeedSearch
-import com.intellij.ui.treeStructure.Tree
+import com.intellij.ui.TableSpeedSearch
+import com.intellij.ui.table.TableView
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
+import com.intellij.util.ui.ColumnInfo
+import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.ListTableModel
 import com.intellij.util.ui.UIUtil
-import com.intellij.util.ui.tree.TreeUtil
+import com.intellij.util.ui.components.BorderLayoutPanel
 import io.xmake.project.console.XMakeConsoleManager
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.packages.XMakePackageInfo
-import io.xmake.run.packages.XMakePackageParsers
-import io.xmake.run.packages.XMakePackageSearchEntry
 import io.xmake.run.packages.XMakePackagesService
 import io.xmake.run.packages.XMakePackagesSnapshot
-import io.xmake.run.packages.XMakeRequireEntry
 import io.xmake.utils.notify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,34 +64,36 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.Dimension
+import java.awt.Font
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.event.ActionEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
-import java.util.Collections
 import javax.swing.AbstractAction
 import javax.swing.JComponent
-import javax.swing.JLabel
-import javax.swing.JTextArea
-import javax.swing.JTree
+import javax.swing.JPanel
+import javax.swing.JTable
 import javax.swing.KeyStroke
-import javax.swing.tree.DefaultMutableTreeNode
-import javax.swing.tree.DefaultTreeModel
-import javax.swing.tree.TreePath
-import javax.swing.tree.TreeSelectionModel
+import javax.swing.ListSelectionModel
+import javax.swing.ScrollPaneConstants
 
 /**
- * The XMake Packages view: the declared packages as one tree, the selected package's
+ * The XMake Packages view: the declared packages as one table, the selected package's
  * `--info` data beneath, and the toolbar's search and confirmed package actions.
  *
- * The tree rows come from `require --list`, the dependency children from the depgraph
- * query (a failed graph just means childless rows), and the details pane from a lazily
- * fetched, cached `require --info` per selection - its `references` key is the installed
- * badge, because the listing's own detail lines survive an uninstall. Search swaps the
- * rows to the repository hits, which then stay the tree's filtered view across refreshes;
- * Esc, or an emptied field plus Enter, brings the declared list back. Two clicks on a row
- * open the install flow. Everything mutates only through a confirmation naming the exact
- * command line, then streams into the XMake console. The view reflects; it never computes
- * package state itself.
+ * The rows come from `require --list` - name, the version the project asks for, the
+ * repository, and the installed/declared status that the lazily fetched, cached
+ * `require --info` reports (its `references` key is the installed badge, because the
+ * listing's own detail lines survive an uninstall). Search swaps the rows to the
+ * repository hits in the same table - version, description in the name cell, repository
+ * - and Esc, or an emptied field plus Enter, brings the declared list back. Dependencies
+ * are not rows: the depgraph's answer for the selected package reads in the details
+ * pane, beside the description and the install directory - the information a tree row
+ * only hinted at, spelled out instead. Two clicks on a row open the install flow.
+ * Everything mutates only through a confirmation naming the exact command line, then
+ * streams into the XMake console. The view reflects; it never computes package state
+ * itself.
  */
 internal class XMakePackagesPanel(
     private val project: Project,
@@ -98,119 +102,209 @@ internal class XMakePackagesPanel(
 
     private val service = XMakePackagesService.getInstance(project)
 
-    private val model = DefaultTreeModel(DefaultMutableTreeNode(ROOT))
-    private val tree = Tree(model).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+    private val nameColumn = object : ColumnInfo<PackageRow, String>("Name") {
+
+        override fun valueOf(item: PackageRow): String = item.name
+    }
+
+    private val versionColumn = object : ColumnInfo<PackageRow, String?>("Version") {
+
+        /** The version of record: what `xmake.lua` pins, or what a hit's repository
+         *  offers. The resolved installed version reads in the details pane, where the
+         *  `--info` data lives. */
+        override fun valueOf(item: PackageRow): String? =
+            if (item.isHit) item.version else item.requirement
+    }
+
+    private val repoColumn = object : ColumnInfo<PackageRow, String?>("Repo") {
+
+        override fun valueOf(item: PackageRow): String? =
+            if (item.isHit) item.repo else sourceLabel(item.name, infoFor(item.name))
+    }
+
+    private val statusColumn = object : ColumnInfo<PackageRow, String?>("Status") {
+
+        override fun valueOf(item: PackageRow): String? = statusOf(item)
+    }
+
+    private val descriptionColumn = object : ColumnInfo<PackageRow, String?>("Description") {
+
+        override fun valueOf(item: PackageRow): String? = item.description
+    }
+
+    private val tableModel = ListTableModel<PackageRow>(
+        nameColumn,
+        descriptionColumn,
+        versionColumn,
+        repoColumn,
+        statusColumn,
+    )
+    private val table = TableView(tableModel).apply {
+        fillsViewportHeight = true
+        selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
+        columnModel.getColumn(COLUMN_NAME).minWidth = JBUI.scale(100)
+        columnModel.getColumn(COLUMN_NAME).preferredWidth = JBUI.scale(120)
+        columnModel.getColumn(COLUMN_DESCRIPTION).minWidth = JBUI.scale(180)
+        columnModel.getColumn(COLUMN_DESCRIPTION).preferredWidth = JBUI.scale(400)
+        columnModel.getColumn(COLUMN_VERSION).preferredWidth = JBUI.scale(90)
+        columnModel.getColumn(COLUMN_REPO).preferredWidth = JBUI.scale(110)
+        columnModel.getColumn(COLUMN_STATUS).preferredWidth = JBUI.scale(90)
         emptyText.text = LOADING
     }
 
-    /** The tree's scroll pane; a rebuild restores its viewport so a refresh keeps the
+    /** The table's scroll pane; a rebuild restores its viewport so a refresh keeps the
      *  user's place instead of throwing the rows back to the top. */
-    private val treeScroll = ScrollPaneFactory.createScrollPane(tree, true)
+    private val tableScroll = ScrollPaneFactory.createScrollPane(table, true)
+
+    /** The name cell: the package's own name in bold. */
+    private val nameCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+        }
+    }
+
+    /** The description cell: a hit's repository description, grayed - the column is the
+     *  flexible one, so the text has room before the narrow columns. */
+    private val descriptionCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+        }
+    }
+
+    /** The Repo cell: grayed, like the analysis view's Location column. */
+    private val repoCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            (value as? String)?.let { append(it, SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+        }
+    }
+
+    /** The Status cell: "installed" reads as the state, "declared" as the weaker one. */
+    private val statusCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            when (value as? String) {
+                INSTALLED -> append(INSTALLED, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                AVAILABLE -> append(AVAILABLE, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                DECLARED -> append(DECLARED, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                else -> {}
+            }
+        }
+    }
 
     /** The toolbar's search field; kept so an Esc exit can empty it with the view. */
     private var searchField: SearchTextField? = null
 
-    private val summaryLabel = JLabel()
-    private val details = JTextArea().apply {
-        isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
-        // The package's own data, aligned the way the console shows it.
-        font = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+    /** The details grid: caption-value rows rebuilt per selection or info landing, in a
+     *  scroll pane that never scrolls sideways - the long values wrap instead, the way
+     *  the old text pane wrapped them. */
+    private val detailsBody = JPanel(GridBagLayout()).apply {
+        isOpaque = false
+        border = JBUI.Borders.empty(4, 12, 8, 12)
     }
 
-    /** The snapshot the tree was built from; an info-only update repaints, never rebuilds,
-     *  so a selection (and its loading detail) survives a background info landing. */
-    private var treeSource: XMakePackagesSnapshot? = null
+    /** The snapshot the table was built from; an info-only update repaints, never
+     *  rebuilds, so a selection (and its loading detail) survives a background info
+     *  landing. */
+    private var tableSource: XMakePackagesSnapshot? = null
 
     /** Drives only the Show-in-Console hop onto the EDT; cancelled with the panel. */
     private val consoleScope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
 
-    /** The tree column's renderer: name, requirement, source, installed badge, and the
-     *  search hits' description in place. */
-    private val packageRenderer = object : ColoredTreeCellRenderer() {
+    /** The status line's label: the list's size, the search mode, the operation the grayed
+     *  actions wait for, and the failure note; red when the last operation failed. */
+    private val statusLabel = JBLabel()
 
-        override fun customizeCellRenderer(
-            tree: JTree,
-            value: Any,
-            selected: Boolean,
-            expanded: Boolean,
-            leaf: Boolean,
-            row: Int,
-            hasFocus: Boolean,
-        ) {
-            when (value) {
-                is PackageNode -> {
-                    val info = service.snapshot?.infos?.get(value.entry.name)
-                    if (info?.installed == true) icon = AllIcons.General.InspectionsOK
-                    append(value.entry.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                    if (value.entry.requirement.isNotEmpty()) {
-                        append(" : ${value.entry.requirement}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                    }
-                    sourceLabel(value.entry.name, info)
-                        ?.let { append("   $it", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
-                    if (info != null) {
-                        append(
-                            if (info.installed) "  installed" else "  not installed",
-                            SimpleTextAttributes.GRAYED_ATTRIBUTES,
-                        )
-                    }
-                }
-                is SearchNode -> {
-                    append(value.entry.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                    value.entry.version?.let { append("-$it", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
-                    value.entry.description?.let { append("  $it", SimpleTextAttributes.REGULAR_ATTRIBUTES) }
-                    value.entry.repo?.let { append("  (in $it)", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
-                }
-                is DepNode -> {
-                    append(value.name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                    value.version?.let { append(" : $it", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
-                }
-                else -> append(value.toString(), SimpleTextAttributes.REGULAR_ATTRIBUTES)
-            }
-        }
+    /** The bottom row itself: a hairline above, the narration on the left - the VCS
+     *  commit view's status panel, reporting the list the way the analysis view reports
+     *  the run. */
+    private val statusPanel = BorderLayoutPanel().apply {
+        isOpaque = false
+        border = JBUI.Borders.compound(SideBorder(JBColor.border(), SideBorder.TOP), JBUI.Borders.empty(4, 8))
+        addToCenter(statusLabel)
     }
 
     init {
-        tree.cellRenderer = packageRenderer
-        TreeSpeedSearch.installOn(tree)
+        table.columnModel.getColumn(COLUMN_NAME).cellRenderer = nameCellRenderer
+        table.columnModel.getColumn(COLUMN_DESCRIPTION).cellRenderer = descriptionCellRenderer
+        table.columnModel.getColumn(COLUMN_REPO).cellRenderer = repoCellRenderer
+        table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
+        TableSpeedSearch.installOn(table)
         // Selecting a row is what fetches its info; the cache makes re-selection free.
-        tree.addTreeSelectionListener {
-            selectionPackageName()?.let { name ->
+        table.selectionModel.addListSelectionListener { event ->
+            if (event.valueIsAdjusting) return@addListSelectionListener
+            selectedPackageName()?.let { name ->
                 service.fetchInfo(name)
                 renderDetails(name)
-            } ?: run { details.text = "" }
+            } ?: renderDetails(null)
         }
         // Esc leaves search mode from wherever focus sits; the search field gets the same
         // binding when the toolbar creates it below.
-        exitSearchOnEscape(tree)
+        exitSearchOnEscape(table)
         // The platform's own double-click handling (the Analysis view's pattern): two
         // clicks on a row are the Install entry - where a search hit starts its flow.
         object : DoubleClickListener() {
             override fun onDoubleClick(event: MouseEvent): Boolean {
-                val name = selectionPackageName() ?: return false
+                val name = selectedPackageName() ?: return false
                 installPackage(name)
                 return true
             }
-        }.installOn(tree)
+        }.installOn(table)
 
         toolbar = toolbar().component
         // The Analysis view's shape: the rows above, the selected package's data below,
-        // the split remembered between sessions.
-        val split = OnePixelSplitter(true, SPLIT_KEY, 0.65f).apply {
-            firstComponent = JBUI.Panels.simplePanel().apply {
-                addToTop(summaryLabel.apply { border = JBUI.Borders.empty(4, 8) })
-                addToCenter(treeScroll)
-            }
+        // the split remembered between sessions; the status line rides under the whole
+        // split - it reports the list, not a pane of it.
+        // Bottom tool windows run horizontal master-detail (table left, details right) -
+        // the Services/Problems/VcsLog convention; the Details separator goes away, the
+        // right pane's own content organizes it.
+        val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
+            firstComponent = tableScroll
             secondComponent = JBUI.Panels.simplePanel().apply {
-                addToTop(JLabel("Details").apply { border = JBUI.Borders.empty(4, 8) })
-                addToCenter(ScrollPaneFactory.createScrollPane(details, true))
+                addToTop(JBLabel("Details").apply {
+                    font = JBFont.label()
+                    border = JBUI.Borders.empty(8, 12, 4, 8)
+                })
+                addToCenter(
+                    JBScrollPane(
+                        detailsBody,
+                        ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                        ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
+                    ),
+                )
             }
         }
-        setContent(split)
+        setContent(JBUI.Panels.simplePanel().addToCenter(split).addToBottom(statusPanel))
 
         project.messageBus.connect(parentDisposable).subscribe(
             XMakePackagesService.TOPIC,
@@ -247,107 +341,100 @@ internal class XMakePackagesPanel(
 
     /** One publish: rebuild the rows when their shape changed, repaint for a fresh info,
      *  and re-render the details of whatever stays selected. A failed first load publishes
-     *  null over null - no identity change - yet must still reach [rebuild], or the tree
-     *  would keep promising "Loading" while only the summary line knows the failure. */
+     *  null over null - no identity change - yet must still reach [rebuild], or the table
+     *  would keep promising "Loading" while only the status line knows the failure. */
     private fun onSnapshot(snapshot: XMakePackagesSnapshot?) {
-        val structureChanged = snapshot?.packages !== treeSource?.packages ||
-                snapshot?.depgraph !== treeSource?.depgraph ||
-                snapshot?.searchResults !== treeSource?.searchResults
-        treeSource = snapshot
+        val structureChanged = snapshot?.packages !== tableSource?.packages ||
+                snapshot?.depgraph !== tableSource?.depgraph ||
+                snapshot?.searchResults !== tableSource?.searchResults
+        tableSource = snapshot
         if (structureChanged || (snapshot == null && service.lastError != null)) {
             rebuild(snapshot)
         } else {
-            tree.repaint()
+            // The info cache moved: the Repo and Status cells re-read it on paint.
+            table.repaint()
         }
         updateSummary(snapshot)
         // A selection made while a refresh held the lane gets its info now; cached or busy
         // calls inside are no-ops.
-        selectionPackageName()?.let { name ->
+        selectedPackageName()?.let { name ->
             service.fetchInfo(name)
             renderDetails(name)
         }
     }
 
-    /** Swaps the rows: search results while searching, else the declared packages with
-     *  their dependency children (a missing graph simply leaves them childless). A rebuild
-     *  is a refresh, not a reset: the scroll position, the expanded rows, and the selection
-     *  carry over, so a post-action refresh reads as the rows updating in place. */
+    /** Swaps the rows: search results while searching, else the declared packages. A
+     *  rebuild is a refresh, not a reset: the scroll position and the selection carry
+     *  over, so a post-action refresh reads as the rows updating in place. */
     private fun rebuild(snapshot: XMakePackagesSnapshot?) {
-        val selectedName = selectionPackageName()
-        val expandedRows = expandedRowKeys()
-        val position = treeScroll.viewport.viewPosition
-        val root = DefaultMutableTreeNode(ROOT)
+        val selectedName = selectedPackageName()
+        val position = tableScroll.viewport.viewPosition
         val results = snapshot?.searchResults
-        if (results != null) {
-            results.hits.forEach { root.add(SearchNode(it)) }
+        tableModel.items = if (results != null) {
+            results.hits.map { hit ->
+                PackageRow(
+                    name = hit.name,
+                    requirement = null,
+                    version = hit.version,
+                    description = hit.description,
+                    repo = hit.repo,
+                    isHit = true,
+                )
+            }
         } else {
-            snapshot?.packages?.forEach { entry ->
-                val node = PackageNode(entry)
-                XMakePackageParsers.dependencyChildren(snapshot.depgraph, entry.name)
-                    .forEach { dep -> node.add(DepNode(dep.name, dep.version)) }
-                root.add(node)
+            snapshot?.packages.orEmpty().map { entry ->
+                PackageRow(
+                    name = entry.name,
+                    requirement = entry.requirement.ifEmpty { null },
+                    version = null,
+                    description = infoFor(entry.name)?.description,
+                    repo = null,
+                    isHit = false,
+                )
             }
         }
-        tree.emptyText.text = when {
-            snapshot == null && service.lastError != null ->
-                // The first query never landed; the reason sits in lastError, and the
-                // summary line above the tree repeats it in red.
-                "Could not list packages: ${service.lastError} - fix the problem and press Refresh"
-            snapshot == null -> LOADING
-            results != null ->
+        applyEmptyText(snapshot)
+        restoreSelection(selectedName)
+        tableScroll.viewport.viewPosition = position
+        // The viewport revalidates after the items swap; re-apply once layout has settled,
+        // or the fresh rows would still pull it back to the top.
+        invokeLater { tableScroll.viewport.viewPosition = position }
+    }
+
+    /** The bare table speaks through its own StatusText: the state's words, and every way
+     *  out a platform link - Refresh after a failure, the declared list after a miss. */
+    private fun applyEmptyText(snapshot: XMakePackagesSnapshot?) {
+        val empty = table.emptyText
+        empty.clear()
+        val results = snapshot?.searchResults
+        when {
+            snapshot == null && service.lastError != null -> {
+                empty.text = "Could not list packages: ${service.lastError}"
+                empty.appendSecondaryText(
+                    "Refresh",
+                    SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES,
+                ) { service.refresh() }
+            }
+            snapshot == null -> empty.text = LOADING
+            results != null -> {
                 // Zero hits plus a diagnostic is a broken toolchain answering exit 0
                 // (xmake 2.8.7 without unzip/7zip), not a misspelled term - the line is
                 // the difference between "try another term" and "fix your xmake"
                 // (docs/roadmap-designs/audit-packages.md, sections 1.6 and 3.1).
-                results.diagnostics.firstOrNull()
-                    ?.let { "No hits - xmake reported: $it" }
-                    ?: "No hits - try another term"
-            else -> "No packages declared"
-        }
-        model.setRoot(root)
-        if (expandedRows.isEmpty()) {
-            // A fresh view opens fully, as it always has.
-            TreeUtil.expandAll(tree)
-        } else {
-            // The root first - the rows hang off it - then the rows the user had open.
-            tree.expandPath(TreePath(root.path))
-            restoreExpanded(root, expandedRows)
-        }
-        restoreSelection(selectedName)
-        treeScroll.viewport.viewPosition = position
-        // The viewport revalidates after the model swap; re-apply once layout has settled,
-        // or the fresh rows would still pull it back to the top.
-        invokeLater { treeScroll.viewport.viewPosition = position }
-    }
-
-    /** A row's rebuild-stable key: the nodes are rebuilt on every swap, so expansion is
-     *  matched on the user object, not on node identity. */
-    private fun rowKey(userObject: Any?): String? = when (userObject) {
-        is XMakeRequireEntry -> "pkg:${userObject.name}"
-        is XMakePackageSearchEntry -> "hit:${userObject.name}"
-        is DepNode -> "dep:${userObject.name}"
-        else -> null
-    }
-
-    /** The keys of the rows the user had expanded, taken before the swap. */
-    private fun expandedRowKeys(): Set<String> {
-        val root = model.root as? DefaultMutableTreeNode ?: return emptySet()
-        val keys = mutableSetOf<String>()
-        for (node in Collections.list(root.depthFirstEnumeration())) {
-            val mutable = node as? DefaultMutableTreeNode ?: continue
-            if (mutable !== root && tree.isExpanded(TreePath(mutable.path))) {
-                rowKey(mutable.userObject)?.let { keys.add(it) }
+                empty.text = if (results.diagnostics.isEmpty()) "No hits - try another term" else "No hits"
+                results.diagnostics.firstOrNull()?.let {
+                    empty.appendSecondaryText(
+                        "xmake reported: $it",
+                        SimpleTextAttributes.GRAYED_ATTRIBUTES,
+                        null as java.awt.event.ActionListener?,
+                    )
+                }
+                empty.appendSecondaryText(
+                    "Back to the declared packages",
+                    SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES,
+                ) { leaveSearch() }
             }
-        }
-        return keys
-    }
-
-    private fun restoreExpanded(node: DefaultMutableTreeNode, keys: Set<String>) {
-        for (index in 0 until node.childCount) {
-            val child = node.getChildAt(index) as? DefaultMutableTreeNode ?: continue
-            val key = rowKey(child.userObject)
-            if (key != null && key in keys) tree.expandPath(TreePath(child.path))
-            restoreExpanded(child, keys)
+            else -> empty.text = "No packages declared"
         }
     }
 
@@ -356,20 +443,10 @@ internal class XMakePackagesPanel(
      *  or the ordinary lazy load. */
     private fun restoreSelection(name: String?) {
         if (name == null) return
-        val root = model.root as? DefaultMutableTreeNode ?: return
-        val match = Collections.list(root.depthFirstEnumeration())
-            .filterIsInstance<DefaultMutableTreeNode>()
-            .firstOrNull { selectionName(it.userObject) == name } ?: return
-        tree.addSelectionPath(TreePath(match.path))
-    }
-
-    /** The package name a row's user object carries - the same reading the selection
-     *  listener applies to the live selection. */
-    private fun selectionName(userObject: Any?): String? = when (userObject) {
-        is XMakeRequireEntry -> userObject.name
-        is XMakePackageSearchEntry -> userObject.name
-        is DepNode -> userObject.name
-        else -> null
+        val modelRow = tableModel.items.indexOfFirst { it.name == name }
+        if (modelRow < 0) return
+        val viewRow = table.convertRowIndexToView(modelRow)
+        table.setRowSelectionInterval(viewRow, viewRow)
     }
 
     private fun updateSummary(snapshot: XMakePackagesSnapshot?) {
@@ -384,74 +461,185 @@ internal class XMakePackagesPanel(
             else -> "Press Refresh to list the declared packages"
         }
         val error = service.lastError
-        summaryLabel.text = buildString {
+        statusLabel.text = buildString {
             append(base)
             // While an operation holds the pipeline the grayed buttons need their reason on
             // show - the same narration the Services panel's message line gives.
             service.currentOperation?.let { operation -> append(" - ").append(operation) }
             if (error != null) append(" - last operation failed: ").append(error)
         }
-        summaryLabel.foreground = if (error == null) UIUtil.getLabelForeground() else JBColor.RED
+        statusLabel.foreground = if (error == null) UIUtil.getLabelForeground() else JBColor.RED
     }
 
-    /** The package name the selection carries: a row, a search hit, or a dependency child. */
-    private fun selectionPackageName(): String? = when (val node = tree.lastSelectedPathComponent) {
-        is PackageNode -> node.entry.name
-        is SearchNode -> node.entry.name
-        is DepNode -> node.name
-        else -> null
+    /** The package name the selection carries. */
+    private fun selectedPackageName(): String? = table.selectedObject?.name
+
+    /** The model row a cell renderer paints, through the view-to-model conversion. */
+    private fun rowAt(viewRow: Int): PackageRow? {
+        val row = table.convertRowIndexToModel(viewRow)
+        return if (row >= 0 && row < tableModel.rowCount) tableModel.getItem(row) else null
     }
 
-    private fun renderDetails(name: String) {
-        val info = service.snapshot?.infos?.get(name)
-        details.text = when {
+    private fun infoFor(name: String): XMakePackageInfo? = service.snapshot?.infos?.get(name)
+
+    /** The status of a row, in the table's own words: the installed truth when the info
+     *  cache holds one, "declared" for a project requirement otherwise - a hit is neither
+     *  until its info lands on selection. */
+    private fun statusOf(row: PackageRow): String? = when {
+        infoFor(row.name)?.installed == true -> INSTALLED
+        row.isHit -> AVAILABLE
+        else -> DECLARED
+    }
+
+    /** Rebuilds the details grid for [name], or shows the nothing-selected line. The
+     *  narration while the info has not landed is the same one the old text pane gave. */
+    private fun renderDetails(name: String?) {
+        detailsBody.removeAll()
+        var gridy = 0
+        fun constraints(row: Int, column: Int, insetsLeft: Int, fillMode: Int): GridBagConstraints =
+            GridBagConstraints().apply {
+                gridy = row
+                gridx = column
+                anchor = GridBagConstraints.WEST
+                weightx = if (column == 0) 0.0 else 1.0
+                fill = fillMode
+                insets = JBUI.insets(3, insetsLeft, 3, 8)
+            }
+
+        fun addRow(caption: String, value: JComponent) {
+            detailsBody.add(
+                JBLabel(caption).apply { foreground = SimpleTextAttributes.GRAYED_ATTRIBUTES.fgColor },
+                constraints(gridy, 0, 8, GridBagConstraints.NONE),
+            )
+            detailsBody.add(value, constraints(gridy, 1, 12, GridBagConstraints.HORIZONTAL))
+            gridy++
+        }
+
+        fun addTextRow(caption: String, text: String?) {
+            if (!text.isNullOrEmpty()) addRow(caption, JBLabel(text))
+        }
+
+        fun addWrappedRow(caption: String, text: String) {
+            addRow(caption, wrappedText(text))
+        }
+
+        fun addNarration(text: String) {
+            val row = gridy
+            detailsBody.add(
+                wrappedText(text),
+                GridBagConstraints().apply {
+                    gridy = row
+                    gridx = 0
+                    gridwidth = GridBagConstraints.REMAINDER
+                    weightx = 1.0
+                    fill = GridBagConstraints.HORIZONTAL
+                    anchor = GridBagConstraints.WEST
+                    insets = JBUI.insets(4, 8)
+                },
+            )
+        }
+
+        fun addFiller() {
+            val row = gridy
+            detailsBody.add(
+                JPanel().apply { isOpaque = false },
+                GridBagConstraints().apply {
+                    gridy = row
+                    gridx = 0
+                    gridwidth = GridBagConstraints.REMAINDER
+                    weighty = 1.0
+                    fill = GridBagConstraints.BOTH
+                },
+            )
+        }
+
+        val info = name?.let { service.snapshot?.infos?.get(it) }
+        when {
+            name == null -> {
+                addNarration("Select a package to read its details")
+                addFiller()
+            }
             // A busy pipeline with a named operation is not loading this info at all - the
             // fetchInfo call was a no-op; say what the wait is really on.
-            info == null && service.busy && service.currentOperation != null ->
-                "Waiting for the current operation to finish before loading the info of '$name'... - " +
-                        "${service.currentOperation} - then the row loads its info, or select it again"
-            info == null && service.busy ->
-                "Loading the info of '$name'... - xmake require --info --format=json $name"
-            info == null -> "No info available for '$name' - the query failed or produced nothing usable"
-            else -> renderInfo(name, info)
+            info == null && service.busy && service.currentOperation != null -> {
+                addNarration(
+                    "Waiting for the current operation to finish before loading the info of '$name'... - " +
+                        "${service.currentOperation} - then the row loads its info, or select it again",
+                )
+                addFiller()
+            }
+            info == null && service.busy -> {
+                addNarration("Loading the info of '$name'... - xmake require --info --format=json $name")
+                addFiller()
+            }
+            info == null -> {
+                addNarration("No info available for '$name' - the query failed or produced nothing usable")
+                addFiller()
+            }
+            else -> {
+                addRow("Package", JBLabel(name).apply { font = JBFont.label().deriveFont(Font.BOLD) })
+                tableModel.items.firstOrNull { it.name == name }?.requirement
+                    ?.let { addTextRow("Requirement", it) }
+                info.version?.let { addTextRow("Version", it) }
+                info.description?.let { addWrappedRow("Description", it) }
+                addRow(
+                    "Repo",
+                    JBLabel(
+                        when {
+                            // A package that exists nowhere still reports version "latest"; the
+                            // missing repo is the "not found" signal, not a failed query.
+                            info.repoName == null -> "not found in the configured repositories"
+                            else -> listOfNotNull(info.repoName, info.repoUrl?.let { "($it)" }).joinToString(" ")
+                        },
+                    ),
+                )
+                // `--info` carries no dependency field; the depgraph query is the honest
+                // source. A package outside the project's graph (a search hit) simply has
+                // no line here.
+                val dependencies = service.snapshot?.depgraph?.packages
+                    ?.firstOrNull { it.name == name }?.deps
+                if (!dependencies.isNullOrEmpty()) {
+                    addTextRow("Depends on", dependencies.joinToString(", "))
+                }
+                info.installdir?.let { addWrappedRow("Install directory", it) }
+                info.cachedir?.let { addWrappedRow("Cache directory", it) }
+                if (info.platforms.isNotEmpty()) {
+                    addTextRow("Platforms", info.platforms.joinToString(", "))
+                }
+                if (info.installed) {
+                    addTextRow("References", "${info.references?.size ?: 0} - installed")
+                    info.references.orEmpty().forEach { reference ->
+                        addRow(
+                            "",
+                            JBLabel(
+                                buildString {
+                                    append(reference.dir ?: "?")
+                                    reference.date?.let { append("  (").append(it).append(')') }
+                                },
+                            ),
+                        )
+                    }
+                } else {
+                    addTextRow("References", "none - not installed")
+                }
+                addFiller()
+            }
         }
+        detailsBody.revalidate()
+        detailsBody.repaint()
     }
 
-    private fun renderInfo(name: String, info: XMakePackageInfo): String = buildString {
-        append("package: ").append(name).append('\n')
-        info.version?.let { append("version: ").append(it).append('\n') }
-        info.description?.let { append("description: ").append(it).append('\n') }
-        // `--info` carries no dependency field; the depgraph query is the honest source.
-        // A package outside the project's graph (a search hit) simply has no line here.
-        val dependencies = service.snapshot?.depgraph?.packages
-            ?.firstOrNull { it.name == name }?.deps
-        if (!dependencies.isNullOrEmpty()) {
-            append("depends on: ").append(dependencies.joinToString(", ")).append('\n')
-        }
-        if (info.repoName == null) {
-            // A package that exists nowhere still reports version "latest"; the missing
-            // repo is the "not found" signal, not a failed query.
-            append("repo: not found in the configured repositories\n")
-        } else {
-            append("repo: ").append(info.repoName)
-            info.repoUrl?.let { append(" (").append(it).append(')') }
-            append('\n')
-        }
-        info.installdir?.let { append("installdir: ").append(it).append('\n') }
-        info.cachedir?.let { append("cachedir: ").append(it).append('\n') }
-        if (info.platforms.isNotEmpty()) {
-            append("platforms: ").append(info.platforms.joinToString(", ")).append('\n')
-        }
-        if (info.installed) {
-            append("references: ").append(info.references?.size ?: 0).append(" - installed\n")
-            info.references.orEmpty().forEach { reference ->
-                append("  ").append(reference.dir ?: "?")
-                reference.date?.let { append("  (").append(it).append(')') }
-                append('\n')
-            }
-        } else {
-            append("references: none - not installed\n")
-        }
+    /** A value that wraps instead of widening the grid: the description, the paths. A
+     *  wrapping text area sized by GridBag settles at the pane width once laid out, and
+     *  the scroll pane never scrolls sideways - the old text pane's wrapping, kept per
+     *  value. */
+    private fun wrappedText(text: String): JComponent = JBTextArea(text).apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+        isFocusable = false
+        isOpaque = false
+        font = JBFont.label()
     }
 
     /** The row's source: the external-manager prefix for `vcpkg::`/`conan::` names, else
@@ -484,20 +672,24 @@ internal class XMakePackagesPanel(
         }
     }
 
-    /** Esc leaves search mode from [component] - the tree, or the search field - and
-     *  empties the field, so it does not claim a term the view no longer filters by.
-     *  Outside search mode it is a no-op. */
+    /** Esc leaves search mode from the table as from the field - and empties the field,
+     *  so it does not claim a term the view no longer filters by. Outside search mode it
+     *  is a no-op. */
+    private fun leaveSearch() {
+        if (service.snapshot?.searchResults == null) return
+        // The lane holds exitSearch until the operation ends; emptying the field before
+        // that would claim a term the view still filters by.
+        if (service.busy) return
+        searchField?.text = ""
+        service.exitSearch()
+    }
+
     private fun exitSearchOnEscape(component: JComponent) {
         component.getInputMap(JComponent.WHEN_FOCUSED)
             .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), EXIT_SEARCH)
         component.actionMap.put(EXIT_SEARCH, object : AbstractAction() {
             override fun actionPerformed(event: ActionEvent) {
-                if (service.snapshot?.searchResults == null) return
-                // The lane holds exitSearch until the operation ends; emptying the field
-                // before that would claim a term the view still filters by.
-                if (service.busy) return
-                searchField?.text = ""
-                service.exitSearch()
+                leaveSearch()
             }
         })
     }
@@ -507,7 +699,7 @@ internal class XMakePackagesPanel(
      *  answered instead of silently dropped (docs/roadmap-designs/audit-packages.md,
      *  section 3.3). The next publish overwrites it. */
     private fun narrateBusyWait() {
-        summaryLabel.text = buildString {
+        statusLabel.text = buildString {
             append("Waiting for the current operation to finish - ")
             append(service.currentOperation ?: "working")
             append(" - then try again")
@@ -574,7 +766,7 @@ internal class XMakePackagesPanel(
                         else -> service.search(term)
                     }
                 }
-                // Esc is the other way out, from the field as from the tree.
+                // Esc is the other way out, from the field as from the table.
                 exitSearchOnEscape(textEditor)
                 preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
             }.also { field -> searchField = field }
@@ -589,11 +781,11 @@ internal class XMakePackagesPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectionPackageName() != null
+            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            installPackage(selectionPackageName() ?: return)
+            installPackage(selectedPackageName() ?: return)
         }
     }
 
@@ -625,11 +817,11 @@ internal class XMakePackagesPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectionPackageName() != null
+            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            val name = selectionPackageName() ?: return
+            val name = selectedPackageName() ?: return
             service.prepareCommand(prepare = { createRequireUninstall(name) }) { command ->
                 confirmAndRun("Uninstall package", "Uninstalling '$name'.", command)
             }
@@ -661,22 +853,17 @@ internal class XMakePackagesPanel(
         }
     }
 
-    /** One declared package row: the listing entry, with dependency children beneath. */
-    private class PackageNode(val entry: XMakeRequireEntry) :
-        DefaultMutableTreeNode(entry) {
-
-        override fun toString(): String = entry.name
-    }
-
-    /** One search hit row. */
-    private class SearchNode(val entry: XMakePackageSearchEntry) :
-        DefaultMutableTreeNode(entry) {
-
-        override fun toString(): String = entry.name
-    }
-
-    /** One dependency child: a package name and the version the graph resolved. */
-    private class DepNode(val name: String, val version: String?) : DefaultMutableTreeNode(name) {
+    /** One row of the packages table: a declared entry, or a repository hit while
+     *  searching. The info-driven cells (version resolved, repo, status) re-read the
+     *  service's snapshot on paint, so an info landing is a repaint, not a rebuild. */
+    private class PackageRow(
+        val name: String,
+        val requirement: String?,
+        val version: String?,
+        val description: String?,
+        val repo: String?,
+        val isHit: Boolean,
+    ) {
 
         override fun toString(): String = name
     }
@@ -686,12 +873,19 @@ internal class XMakePackagesPanel(
         /** The splitter's persistence key; the user's split survives restarts. */
         private const val SPLIT_KEY = "XMakePackagesView"
 
-        /** The input-map key of the exit-search binding, shared by the tree and the field. */
+        /** The input-map key of the exit-search binding, shared by the table and the field. */
         private const val EXIT_SEARCH = "XMakePackages.exitSearch"
 
-        /** The invisible tree root; the panel swaps it per refresh. */
-        private const val ROOT = "root"
-
         private const val LOADING = "Loading the declared packages... - or press Refresh"
+
+        private const val INSTALLED = "installed"
+        private const val DECLARED = "declared"
+        private const val AVAILABLE = "available"
+
+        private const val COLUMN_NAME = 0
+        private const val COLUMN_DESCRIPTION = 1
+        private const val COLUMN_VERSION = 2
+        private const val COLUMN_REPO = 3
+        private const val COLUMN_STATUS = 4
     }
 }

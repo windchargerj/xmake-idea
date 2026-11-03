@@ -28,6 +28,7 @@ import io.xmake.run.command.XMakeCommandProcessHandler
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.xmakeCommands
 import io.xmake.run.command.xmakeExecutor
+import io.xmake.run.target.notifyMissingBuildProfile
 import io.xmake.run.target.requireXMakeBuildProfileFor
 import io.xmake.utils.notify
 import kotlinx.coroutines.CancellationException
@@ -57,7 +58,7 @@ internal fun runClangTidy(project: Project) {
                 project.requireXMakeBuildProfileFor(target)
             } catch (error: Exception) {
                 service.endCheck()
-                project.notify("Select an XMake build profile before running clang-tidy")
+                project.notifyMissingBuildProfile()
                 return@submit
             }
             // Without a project .clang-tidy some builds enable no checks at all; the compiler

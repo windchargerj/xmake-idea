@@ -227,6 +227,27 @@ class XMakeCommandFactory(
         }
 
     /**
+     * Materializes one service endpoint the IDE configured into the active profile's
+     * project-local client.conf, or with a blank [endpoint] clears the kind's entry -
+     * always through the setservice.lua script on the toolkit's own host: the config
+     * directory lives there, and the IDE must not fork xmake's client state by writing
+     * it from the outside (docs/roadmap-designs/audit-services.md section 3). The script
+     * also resets the kind's status.txt to xmake's own post-failed-connect shape, since
+     * the persisted address wins over client.conf on the next connect.
+     */
+    fun createSetServiceEndpoint(kind: XMakeServiceKind, endpoint: String): XMakeCommand =
+        createCommand(
+            environmentOverrides = mapOf(
+                SET_SERVICE_KIND_VARIABLE to kind.statusDir,
+                SET_SERVICE_ENDPOINT_VARIABLE to endpoint,
+            ),
+        ) {
+            lua {
+                script = scriptArgument("setservice.lua")
+            }
+        }
+
+    /**
      * Lists the project's declared xpack() packages, one `name<TAB>formats` line each - the
      * pack editor's pickers read it. Runs the xpacks.lua script, which reads
      * `project.scope("xpack")`: `xmake show -l xpacks` does not exist on the verified
@@ -451,6 +472,14 @@ class XMakeCommandFactory(
 
         /** The environment variable the runtool script reads the collapsed-stacks path from. */
         const val RUNTOOL_COLLAPSE_VARIABLE = "XMAKE_RUNTOOL_COLLAPSED"
+
+        /** The environment variable the setservice script reads the service kind's
+         *  status directory name from. */
+        const val SET_SERVICE_KIND_VARIABLE = "XMAKE_SERVICE_SET_KIND"
+
+        /** The environment variable the setservice script reads the endpoint from;
+         *  empty means clear the kind's project-local entry. */
+        const val SET_SERVICE_ENDPOINT_VARIABLE = "XMAKE_SERVICE_SET_ENDPOINT"
 
         private const val ANDROID_PLATFORM = "android"
 

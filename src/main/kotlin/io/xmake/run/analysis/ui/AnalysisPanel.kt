@@ -46,16 +46,19 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
+import com.intellij.ui.SideBorder
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.TreeTableSpeedSearch
 import com.intellij.ui.treeStructure.treetable.ListTreeTableModelOnColumns
 import com.intellij.ui.treeStructure.treetable.TreeTable
 import com.intellij.ui.treeStructure.treetable.TreeTableModel
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.containers.Convertor
 import com.intellij.util.text.DateFormatUtil
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.intellij.util.ui.components.BorderLayoutPanel
 import com.intellij.util.ui.tree.TreeUtil
 import io.xmake.run.command.RemotePathMapper
 import io.xmake.run.analysis.AnalysisService
@@ -65,7 +68,9 @@ import io.xmake.run.analysis.AnalysisReport
 import io.xmake.run.analysis.AnalysisSeverity
 import io.xmake.run.analysis.AnalysisStack
 import io.xmake.run.tidy.runClangTidy
+import java.awt.Color
 import java.awt.Component
+import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -74,6 +79,7 @@ import java.util.Date
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JLabel
+import javax.swing.JPanel
 import javax.swing.JTable
 import javax.swing.JTextArea
 import javax.swing.JTree
@@ -103,7 +109,12 @@ import javax.swing.tree.TreeSelectionModel
  * Next Finding and Previous Finding walk the rows in their shown order - select, scroll,
  * and open the source line - with Alt+Down / Alt+Up bound while the view holds the focus.
  * The Group-by-File switch re-roots the same rows under the file each finding points into,
- * and the summary names the file the findings hit most.
+ * and the status line names the file the findings hit most.
+ *
+ * The status line is the VCS commit view's shape: a hairline above, the run's own words
+ * on the left (red when the run failed), the counts on the right colored per severity -
+ * the commit legend's job, done with severity colors. The bare canvas speaks through the
+ * tree's own empty text, with the ways to run - and out of the filter - as its links.
  */
 internal class AnalysisPanel(
     private val project: Project,
@@ -112,13 +123,35 @@ internal class AnalysisPanel(
 
     private val model = ListTreeTableModelOnColumns(DefaultMutableTreeNode(ROOT), COLUMNS)
     private val treeTable = TreeTable(model)
-    private val summaryLabel = JLabel()
     private val details = JTextArea().apply {
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
         // The report's own words, aligned the way the console shows them.
         font = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+    }
+
+    /** The status line's left text: the run's description without the counts the legend
+     *  carries - the narration tick below rewrites the line without rebuilding the rows. */
+    private var statusText: String = ""
+
+    /** The status line's left label: the run's description, its failure note, and the
+     *  check-wait narration; red when the shown run failed. */
+    private val statusLabel = JBLabel()
+
+    /** The status line's right legend: one colored label per count, rebuilt per refresh
+     *  - the commit legend's slot, filled with severity colors instead of file statuses. */
+    private val legendPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+        isOpaque = false
+    }
+
+    /** The bottom row itself: a hairline above, the description on the left, the colored
+     *  counts on the right - the VCS commit view's status panel, reporting the run. */
+    private val statusPanel = BorderLayoutPanel().apply {
+        isOpaque = false
+        border = JBUI.Borders.compound(SideBorder(JBColor.border(), SideBorder.TOP), JBUI.Borders.empty(4, 8))
+        addToCenter(statusLabel)
+        addToRight(legendPanel)
     }
 
     private var errorsOnly = false
@@ -144,24 +177,20 @@ internal class AnalysisPanel(
      *  them and Next/Previous Finding walk them in this order. */
     private var shownIssues: List<IssueNode> = emptyList()
 
-    /** The summary text without the check-wait narration, so the narration tick below can
-     *  rewrite the line without rebuilding the rows - and dropping the selection. */
-    private var summaryText: String = ""
-
-    /** The narration the summary line last carried; the tick rewrites only on a change. */
+    /** The narration the status line last carried; the tick rewrites only on a change. */
     private var lastCheckNarration: String = ""
 
     /**
-     * Narrates a queued or running check in the summary. The report only publishes when
-     * the run ends, so there is no bus event to ride for the wait itself: this polls the
-     * service's cheap claim/process flags on the EDT and rewrites the label only when
-     * the wait state flips. Presentation only - it drives no state.
+     * Narrates a queued or running check in the status line. The report only publishes
+     * when the run ends, so there is no bus event to ride for the wait itself: this
+     * polls the service's cheap claim/process flags on the EDT and rewrites the label
+     * only when the wait state flips. Presentation only - it drives no state.
      */
     private val narrationTimer = Timer(NARRATION_MS) {
         val narration = checkWaitNarration()
         if (narration != lastCheckNarration) {
             lastCheckNarration = narration
-            summaryLabel.text = summaryText + narration
+            statusLabel.text = statusText + narration
         }
     }
 
@@ -187,6 +216,10 @@ internal class AnalysisPanel(
      *  registering the shortcut below must not fork the actions it registers. */
     private val nextFindingAction = NextFindingAction()
     private val previousFindingAction = PreviousFindingAction()
+
+    /** The toolbar, held by its interface: the empty text's "Show everything" link turns
+     *  the Errors Only filter off and repaints the toggle in the same stroke. */
+    private val toolbarActions: ActionToolbar = toolbar()
 
     /** The tree column's renderer: the severity of a finding, the role of a stack, the frame's function. */
     private val treeColumnRenderer = object : ColoredTreeCellRenderer() {
@@ -337,17 +370,16 @@ internal class AnalysisPanel(
             "XMakeAnalysisView",
         )
 
-        toolbar = toolbar().component
+        toolbar = toolbarActions.component
         // The Problems view's shape: the findings above, the selected one's report below,
         // the split remembered between sessions.
         val split = OnePixelSplitter(true, SPLIT_KEY, 0.72f).apply {
-            firstComponent = JBUI.Panels.simplePanel().apply {
-                addToTop(summaryLabel.apply { border = JBUI.Borders.empty(4, 8) })
-                addToCenter(ScrollPaneFactory.createScrollPane(treeTable, true))
-            }
+            firstComponent = ScrollPaneFactory.createScrollPane(treeTable, true)
             secondComponent = detailsPanel()
         }
-        setContent(split)
+        // The commit view's status line rides under the whole split: it reports the run,
+        // not a pane of it.
+        setContent(JBUI.Panels.simplePanel().addToCenter(split).addToBottom(statusPanel))
 
         refresh(AnalysisService.getInstance(project).report)
         project.messageBus.connect(parentDisposable).subscribe(
@@ -415,28 +447,36 @@ internal class AnalysisPanel(
             return
         }
         val nodes = visible(report.issues).map { IssueNode(it, report) }
-        // A failed run says so right in the summary: partial findings next to the failure
+        // A failed run says so on the status line: partial findings next to the failure
         // must never read as a clean, finished check. The panel's word for it is "check" -
         // it covers the sanitized runs too; the tool name stays in the balloon alone.
         val failureNote = report.failure?.let { failure -> " - check failed: $failure" }.orEmpty()
-        setSummary(
-            "${report.source} on '${report.targetName}': " +
-                    "${report.errorCount} error(s), ${report.warningCount} warning(s) - " +
-                    "${report.totalFindings} finding(s) at ${report.issues.size} unique place(s)" +
+        setStatus(
+            "${report.source} on '${report.targetName}':" +
                     topLocationNote(nodes.map(IssueNode::issue)) +
                     unparsedNote(report.unparsed.size) +
                     failureNote,
+            listOf(
+                Count("${report.errorCount} error(s)", ERROR_COLOR),
+                Count("${report.warningCount} warning(s)", WARNING_COLOR),
+                Count(
+                    "${report.totalFindings} finding(s) at ${report.issues.size} unique place(s)",
+                    UIUtil.getLabelForeground(),
+                ),
+            ),
             failure = report.failure != null,
         )
-        val emptyState = when {
-            nodes.isNotEmpty() -> ""
+        val emptyHint = when {
+            nodes.isNotEmpty() -> null
+            // A run that died before finishing is not the clean-run state, even when it
+            // parsed no findings at all: the failure is the headline, the run the link.
+            report.failure != null -> failureHint(report.failure)
             // A published report the parser read fully but that found nothing: not the
             // no-report-at-all state, so it says what the run was, not what to run.
-            report.issues.isEmpty() -> "No findings in this run - the target came back clean"
-            else ->
-                "No errors in this run - ${report.totalFindings} finding(s) hidden by the Errors Only filter"
+            report.issues.isEmpty() -> EmptyHint("No findings in this run - the target came back clean")
+            else -> filteredHint("in this run", report.totalFindings)
         }
-        show(nodes, report.unparsed, emptyState)
+        show(nodes, report.unparsed, emptyHint)
     }
 
     /** Every history run's findings merged into one view, newest sighting per signature. */
@@ -458,34 +498,49 @@ internal class AnalysisPanel(
         // Every run's unrecognized lines, de-duplicated: the same stray output - the
         // output-cap marker, say - repeats across runs that hit the same wall.
         val unparsed = history.flatMap { it.unparsed }.distinct()
-        setSummary(
-            "Accumulated from ${history.size} run(s): " +
-                    "${issues.count { it.severity == AnalysisSeverity.ERROR }} error(s), " +
-                    "${issues.count { it.severity == AnalysisSeverity.WARNING }} warning(s) - " +
-                    "${issues.sumOf(AnalysisIssue::count)} finding(s) at ${issues.size} unique place(s)" +
+        setStatus(
+            "Accumulated from ${history.size} run(s):" +
                     topLocationNote(issues) +
-                    unparsedNote(unparsed.size)
+                    unparsedNote(unparsed.size),
+            listOf(
+                Count("${issues.count { it.severity == AnalysisSeverity.ERROR }} error(s)", ERROR_COLOR),
+                Count("${issues.count { it.severity == AnalysisSeverity.WARNING }} warning(s)", WARNING_COLOR),
+                Count(
+                    "${issues.sumOf(AnalysisIssue::count)} finding(s) at ${issues.size} unique place(s)",
+                    UIUtil.getLabelForeground(),
+                ),
+            ),
         )
         val total = findings.sumOf { it.issue.count }
-        val emptyState = when {
-            nodes.isNotEmpty() -> ""
-            findings.isEmpty() -> "No findings across ${history.size} run(s)"
-            else ->
-                "No errors across ${history.size} run(s) - $total finding(s) hidden by the Errors Only filter"
+        val emptyHint = when {
+            nodes.isNotEmpty() -> null
+            findings.isEmpty() -> EmptyHint("No findings across ${history.size} run(s)")
+            else -> filteredHint("across ${history.size} run(s)", total)
         }
-        show(nodes, unparsed, emptyState)
+        show(nodes, unparsed, emptyHint)
     }
 
     /** Swaps the rows and the in-canvas empty state; [unparsed] trails the findings as
      *  one group so a report the parser only partly understood is visible here, and
-     *  [emptyState] is what the bare table says when nothing else is left to show. */
-    private fun show(nodes: List<IssueNode>, unparsed: List<String>, emptyState: String) {
+     *  [hint] is what the bare table says when nothing else is left to show. */
+    private fun show(nodes: List<IssueNode>, unparsed: List<String>, hint: EmptyHint?) {
         shownIssues = nodes
         navigationCursor = -1
         val root = DefaultMutableTreeNode(ROOT)
         if (groupByFile) fileGroupNodes(nodes).forEach(root::add) else nodes.forEach(root::add)
         if (unparsed.isNotEmpty()) root.add(UnparsedGroupNode(unparsed))
-        treeTable.emptyText.text = emptyState
+        // The bare canvas speaks through the tree's own StatusText: the state's words,
+        // every way out a platform link, not a hand-drawn hint.
+        treeTable.emptyText.clear()
+        hint?.let { empty ->
+            treeTable.emptyText.text = empty.text
+            empty.actions.forEach { (label, action) ->
+                treeTable.emptyText.appendSecondaryText(
+                    label,
+                    SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES,
+                ) { action() }
+            }
+        }
         // The model is replaced in place, so column widths, renderers, and the speed
         // search survive; setRoot fires the structure change both the tree and the
         // table's adapter listen for.
@@ -496,20 +551,68 @@ internal class AnalysisPanel(
 
     private fun showEmpty() {
         shownIssues = emptyList()
-        setSummary(NO_FINDINGS)
+        // The guidance lives in the tree's empty text; the status line stays blank until
+        // a report - or a check's wait narration - gives it something to say.
+        setStatus("", emptyList())
         details.text = ""
-        show(emptyList(), emptyList(), NO_FINDINGS)
+        show(emptyList(), emptyList(), noReportHint())
     }
 
-    /** The summary line's one write path: the caller's text plus the check-wait
-     *  narration, and the color rule the Packages and Services panels already follow -
-     *  a red line means the last operation failed. */
-    private fun setSummary(text: String, failure: Boolean = false) {
-        summaryText = text
+    /** The status line's one write path: the left line's text (the narration tick re-adds
+     *  the check-wait words) and the legend's counts. The color rule the Packages and
+     *  Services panels already follow stands: a red line means the last operation failed. */
+    private fun setStatus(description: String, counts: List<Count>, failure: Boolean = false) {
+        statusText = description
         lastCheckNarration = checkWaitNarration()
-        summaryLabel.text = summaryText + lastCheckNarration
-        summaryLabel.foreground = if (failure) JBColor.RED else UIUtil.getLabelForeground()
+        statusLabel.text = statusText + lastCheckNarration
+        statusLabel.foreground = if (failure) ERROR_COLOR else UIUtil.getLabelForeground()
+        updateLegend(counts)
     }
+
+    /** Swaps the legend's segments; no counts means no legend, the way the commit legend
+     *  hides itself when nothing is included. */
+    private fun updateLegend(counts: List<Count>) {
+        legendPanel.removeAll()
+        counts.forEach { count ->
+            legendPanel.add(JBLabel(count.text).apply { foreground = count.color })
+        }
+        legendPanel.isVisible = counts.isNotEmpty()
+        legendPanel.revalidate()
+        legendPanel.repaint()
+    }
+
+    /** The bare canvas when nothing has run yet: the ways in, clickable - the project
+     *  check, and the last sanitized configuration when the session remembers one. */
+    private fun noReportHint(): EmptyHint {
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        actions += "Run analysis" to { runClangTidy(project) }
+        if (AnalysisService.getInstance(project).lastSanitizedSettings != null) {
+            actions += "Run sanitized" to { AnalysisService.getInstance(project).rerunLast() }
+        }
+        return EmptyHint(NO_FINDINGS, actions)
+    }
+
+    /** The bare canvas when the Errors Only filter hides every finding: the words, and
+     *  the switch off as the way out. */
+    private fun filteredHint(where: String, hidden: Int): EmptyHint = EmptyHint(
+        "No errors $where - $hidden finding(s) hidden by the Errors Only filter",
+        listOf(
+            "Show everything" to {
+                errorsOnly = false
+                refreshView()
+                // The toolbar toggle reads this flag on its update pass; the immediate
+                // one repaints the lit button instead of waiting for a hover.
+                toolbarActions.updateActionsImmediately()
+            },
+        ),
+    )
+
+    /** The bare canvas when the run failed without producing a row: the failure is the
+     *  headline, the check the way out. */
+    private fun failureHint(failure: String): EmptyHint = EmptyHint(
+        "Check failed: $failure",
+        listOf("Run analysis" to { runClangTidy(project) }),
+    )
 
     /** The wait narration for a queued or running check, mirroring the Services panel's
      *  lane-wait wording: a check rides the same serialized lane as builds, so one
@@ -1023,6 +1126,16 @@ internal class AnalysisPanel(
     /** One accumulated row: the newest sighting's finding, its occurrences summed over the runs. */
     private class MergedFinding(val issue: AnalysisIssue, val source: AnalysisReport)
 
+    /** What the bare table says when no rows show: the words, plus each clickable way
+     *  out as a label-action pair, rendered as the tree's StatusText links. */
+    private class EmptyHint(
+        val text: String,
+        val actions: List<Pair<String, () -> Unit>> = emptyList(),
+    )
+
+    /** One count of the status legend: the number-unit wording and the color it shows in. */
+    private class Count(val text: String, val color: Color)
+
     private companion object {
 
         /** The splitter's persistence key; the user's split survives restarts. */
@@ -1034,8 +1147,13 @@ internal class AnalysisPanel(
         /** The Group-by-File heading of findings the parser could not place in any file. */
         private const val NO_FILE = "Unknown location"
 
-        /** Shown when nothing is accumulated and no report exists. */
-        private const val NO_FINDINGS = "No findings - run sanitized, or run Clang-Tidy from the toolbar"
+        /** The no-report canvas's words; the links beside it name the ways to run. */
+        private const val NO_FINDINGS = "No findings yet"
+
+        /** The legend's severity colors: the platform's label error/warning foregrounds,
+         *  theme-aware like the commit legend's own file-status attributes. */
+        private val ERROR_COLOR: Color = SimpleTextAttributes.ERROR_ATTRIBUTES.fgColor
+        private val WARNING_COLOR: Color = JBColor.namedColor("Label.warningForeground", 0xA46704, 0xBA9752)
 
         /** How often the summary's check-wait narration polls the service's flags. */
         private const val NARRATION_MS = 500

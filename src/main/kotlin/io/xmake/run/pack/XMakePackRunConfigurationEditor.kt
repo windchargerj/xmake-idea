@@ -21,14 +21,14 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.RawCommandLineEditor
 import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Cell
 import com.intellij.ui.dsl.builder.panel
-import com.intellij.util.ui.UIUtil
 import io.xmake.project.directory.ui.DirectoryBrowser
 import io.xmake.run.command.xmakeCommands
 import io.xmake.run.command.xmakeExecutor
+import io.xmake.run.target.SELECT_BUILD_PROFILE_FIRST
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
 import io.xmake.utils.ui.coroutineScope
 import io.xmake.utils.ui.uiEdt
@@ -54,10 +54,9 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
 
     private val packName = ComboBox<String>().apply { isEditable = true }
     private val formatsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
-    private val formatsHint = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
     private val outputDirectory = DirectoryBrowser(
         null,
-        "Output Directory",
+        "Select output directory",
         "Select the pack output directory",
     )
     private val basename = JBTextField()
@@ -66,6 +65,9 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
 
     /** The xpack() entries the enumeration query last answered; empty until it succeeds. */
     private var entries: List<XMakePackEntry> = emptyList()
+
+    /** Rewrites the formats row's comment; wired to the real line in [createEditor]. */
+    private var formatsComment: (String) -> Unit = {}
 
     /** The formats checked in the row. Kept across package re-selections and round-trips
      *  for the formats the packages share - but pruned to whatever the selected package
@@ -124,12 +126,10 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
             cell(packName).align(AlignX.FILL)
                 .comment("The xpack() to pack; $ALL_PACKAGES packs every declared one")
             button("Refresh") { scheduleEnumeration(force = true) }
+                .component.toolTipText = "Re-run the xpack enumeration query"
         }
         row("Formats:") {
-            cell(formatsRow).align(AlignX.FILL)
-        }
-        row {
-            cell(formatsHint).align(AlignX.FILL)
+            formatsComment = cell(formatsRow).align(AlignX.FILL).mutableComment(FORMATS_COMMENT)
         }
         row("Output directory:") {
             cell(outputDirectory).align(AlignX.FILL)
@@ -182,16 +182,18 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
                 }
             })
         }
-        formatsHint.text = when {
-            declared.isNotEmpty() -> FORMATS_COMMENT
-            // `<all>` or a package without declarations, with formats still checked from a
-            // previous selection: say so, or the run would filter every xpack invisibly.
-            selectedFormats.isNotEmpty() ->
-                "Still filtering by ${selectedFormats.joinToString(", ")} - the xpacks that do not " +
-                        "declare them pack nothing; select a package that declares one to uncheck it"
-            else ->
-                "Pick a package to see the formats it declares; leaving all unchecked packs every declared format"
-        }
+        setFormatsHint(
+            when {
+                declared.isNotEmpty() -> FORMATS_COMMENT
+                // `<all>` or a package without declarations, with formats still checked from a
+                // previous selection: say so, or the run would filter every xpack invisibly.
+                selectedFormats.isNotEmpty() ->
+                    "Still filtering by ${selectedFormats.joinToString(", ")} - the xpacks that do not " +
+                            "declare them pack nothing; select a package that declares one to uncheck it"
+                else ->
+                    "Pick a package to see the formats it declares; leaving all unchecked packs every declared format"
+            },
+        )
         formatsRow.revalidate()
         formatsRow.repaint()
     }
@@ -218,7 +220,7 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
         if (project.isDisposed) return
         val profile = project.activeOrSingleXMakeBuildProfile
         if (profile == null) {
-            setFormatsHint("Select an XMake build profile to enumerate the project's xpack() packages")
+            setFormatsHint("$SELECT_BUILD_PROFILE_FIRST to enumerate the project's xpack() packages")
             return
         }
         if (!force) {
@@ -228,6 +230,9 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
             }
         }
         queryJob?.cancel()
+        // The query may queue behind a build on the executor's lane, so say it is running
+        // before submitting - otherwise the stale hint reads as if nothing were loading.
+        setFormatsHint("Listing the project's xpack() packages...")
         queryJob = queryScope.launch {
             val output = try {
                 project.xmakeExecutor.submit {
@@ -238,9 +243,11 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
                 throw cancellation
             } catch (error: Exception) {
                 withContext(uiEdt) {
+                    // The same failure sentence shape the Packages panel's first load uses.
                     setFormatsHint(
                         "Could not list the project's xpack() packages: " +
-                                (error.message ?: error.javaClass.simpleName),
+                                (error.message ?: error.javaClass.simpleName) +
+                                " - fix the problem and press Refresh",
                     )
                 }
                 return@launch
@@ -275,7 +282,7 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
     }
 
     private fun setFormatsHint(text: String) {
-        formatsHint.text = text
+        formatsComment(text)
     }
 
     private companion object {
@@ -287,5 +294,17 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
          * is what keeps dialog opens and configuration re-selections off the executor lane.
          */
         private val ENUMERATION_CACHE = java.util.concurrent.ConcurrentHashMap<String, List<XMakePackEntry>>()
+    }
+}
+
+/** Adds a comment line under a cell whose text the editor can rewrite later. Kept as a
+ *  file-local copy of the run configuration editor's helper so both settings editors
+ *  speak the same Cell.comment mechanism without touching shared UI utils. */
+private fun Cell<*>.mutableComment(text: String): (String) -> Unit {
+    comment(text)
+    val line = comment!!
+    return { value ->
+        line.text = value
+        line.parent?.revalidate()
     }
 }
