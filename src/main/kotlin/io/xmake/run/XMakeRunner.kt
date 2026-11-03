@@ -133,7 +133,9 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             )
         }
         if (sanitizer == null) {
-            // A plain run clears the analysis view: its findings describe the last run.
+            // A plain run clears the analysis view's current report: its findings describe
+            // the last run. The history stays - an ordinary run must not wipe the collected
+            // session the Accumulate switch unions; only the view's Clear drops that.
             clearSanitizerFindings(environment.project)
         }
 

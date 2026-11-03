@@ -26,11 +26,13 @@ import com.intellij.ui.CheckboxTreeBase.CheckPolicy
 import com.intellij.ui.CheckedTreeNode
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.execution.ParametersListUtil
+import com.intellij.util.ui.UIUtil
 import io.xmake.run.command.xmakeCommands
 import io.xmake.run.command.xmakeExecutor
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
@@ -52,6 +54,11 @@ internal class XMakeTestRunConfigurationEditor : SettingsEditor<XMakeTestRunConf
     private val testFilters = JBTextField().apply { emptyText.text = "test_*  or  -g quick" }
     private val outputOnFailure = JBCheckBox("Print the output of failing tests")
 
+    /** The persistent hint under the Browse row: the missing-prerequisite case lives here,
+     *  not in a balloon this modal dialog would swallow - the pack editor's enumeration
+     *  hint works the same way. */
+    private val browseHint = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
+
     /** The project behind the configuration being edited; a browse before any reset has
      *  nothing to query and stays silent. */
     private var editedProject: Project? = null
@@ -66,6 +73,7 @@ internal class XMakeTestRunConfigurationEditor : SettingsEditor<XMakeTestRunConf
         editedProject = configuration.project
         testFilters.text = configuration.testFilters
         outputOnFailure.isSelected = configuration.outputOnFailure
+        refreshBrowseHint()
     }
 
     override fun applyEditorTo(configuration: XMakeTestRunConfiguration) {
@@ -80,7 +88,21 @@ internal class XMakeTestRunConfigurationEditor : SettingsEditor<XMakeTestRunConf
             button("Browse...") { browseTests() }
         }
         row {
+            cell(browseHint).align(AlignX.FILL)
+        }
+        row {
             cell(outputOnFailure)
+        }
+    }
+
+    /** Names the missing prerequisite while there is no profile to enumerate tests with,
+     *  before the user ever clicks Browse; balloons stay for the query's real failures. */
+    private fun refreshBrowseHint() {
+        val project = editedProject?.takeUnless { it.isDisposed }
+        browseHint.text = if (project?.activeOrSingleXMakeBuildProfile == null) {
+            "Select an XMake build profile to enumerate the project's tests for picking"
+        } else {
+            ""
         }
     }
 
@@ -91,7 +113,7 @@ internal class XMakeTestRunConfigurationEditor : SettingsEditor<XMakeTestRunConf
         if (project == null || project.isDisposed) return
         val profile = project.activeOrSingleXMakeBuildProfile
         if (profile == null) {
-            project.notify("Select an XMake build profile before picking tests")
+            refreshBrowseHint()
             return
         }
         queryJob?.cancel()

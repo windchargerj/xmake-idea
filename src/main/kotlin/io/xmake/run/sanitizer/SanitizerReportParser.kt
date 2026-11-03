@@ -21,6 +21,8 @@ import io.xmake.run.analysis.AnalysisIssue
 import io.xmake.run.analysis.AnalysisReport
 import io.xmake.run.analysis.AnalysisSeverity
 import io.xmake.run.analysis.AnalysisStack
+import io.xmake.utils.stripAnsi
+
 /**
  * Reads the stderr of one sanitized run and turns it into [AnalysisReport] findings.
  *
@@ -199,7 +201,7 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
         return AnalysisFrame(function, file, line.toIntOrNull(), column.toIntOrNull())
     }
 
-    private fun cleanLine(line: String): String = ANSI.replace(line.trim(), "")
+    private fun cleanLine(line: String): String = stripAnsi(line.trim())
 
     private fun lineBreakLength(breakAt: Int): Int = when (buffer[breakAt]) {
         '\r' -> if (breakAt + 1 < buffer.length && buffer[breakAt + 1] == '\n') 2 else 1
@@ -341,10 +343,5 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
 
         /** LeakSanitizer's per-leak blocks. */
         private val LEAK_BLOCK = Regex("^\\s*(Direct|Indirect) leak of \\d+ byte\\(s\\).*")
-
-        /** ANSI color sequences a PTY run may leave in the stream, with or without the
-         *  escape character itself; at least one digit or separator keeps plain bracketed
-         *  text intact. */
-        private val ANSI = Regex("""[\u001B\u009B]?\[[0-9;]+[A-Za-z]""")
     }
 }

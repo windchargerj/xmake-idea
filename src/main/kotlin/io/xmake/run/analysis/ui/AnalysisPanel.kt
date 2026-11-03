@@ -32,6 +32,7 @@ import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -90,6 +91,8 @@ import javax.swing.tree.TreeSelectionModel
  * the source location fill the cells beside it. The Accumulate switch unions every run of
  * this session into one view - findings merge on their signature, occurrences sum, and
  * every row keeps the run that found it so its host paths still map to local files.
+ * Stderr lines no parser consumed trail the findings as one Unparsed output group, so a
+ * report the parser only partly understood is visible here, not just in the console.
  */
 internal class AnalysisPanel(
     private val project: Project,
@@ -157,6 +160,11 @@ internal class AnalysisPanel(
                     icon = severityIcon(value.issue.severity)
                     append(severityTitle(value.issue.severity), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                 }
+                is UnparsedGroupNode -> append(
+                    value.toString(),
+                    SimpleTextAttributes.GRAYED_BOLD_ATTRIBUTES,
+                )
+                is UnparsedLineNode -> append(value.line, SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 is StackNode -> append(value.stack.title, SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 is FrameNode -> append(value.frame.function, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                 else -> append(value.toString(), SimpleTextAttributes.REGULAR_ATTRIBUTES)
@@ -240,8 +248,14 @@ internal class AnalysisPanel(
             }
         }.installOn(treeTable)
         treeTable.tree.addTreeSelectionListener {
-            val node = treeTable.tree.lastSelectedPathComponent as? IssueNode
-            details.text = node?.issue?.let(::renderDetails).orEmpty()
+            details.text = when (val node = treeTable.tree.lastSelectedPathComponent) {
+                is IssueNode -> renderDetails(node.issue)
+                // The raw stderr lines a parser never consumed: the details pane is where
+                // they read verbatim, the tree row only carries a clipped preview.
+                is UnparsedGroupNode -> node.lines.joinToString("\n")
+                is UnparsedLineNode -> node.line
+                else -> ""
+            }
         }
         // A table keeps its selection on right-click; the popup actions address the selected
         // row, so select the row under the cursor first - the tree column does that itself.
@@ -329,11 +343,24 @@ internal class AnalysisPanel(
             return
         }
         val nodes = visible(report.issues).map { IssueNode(it, report) }
+        // A failed run says so right in the summary: partial findings next to the failure
+        // must never read as a clean, finished check.
+        val failureNote = report.failure?.let { failure -> " - check failed: $failure" }.orEmpty()
         summaryLabel.text =
             "${report.source} on '${report.targetName}': " +
                     "${report.errorCount} error(s), ${report.warningCount} warning(s) - " +
-                    "${report.totalFindings} finding(s) at ${report.issues.size} unique place(s)"
-        show(nodes)
+                    "${report.totalFindings} finding(s) at ${report.issues.size} unique place(s)" +
+                    unparsedNote(report.unparsed.size) +
+                    failureNote
+        val emptyState = when {
+            nodes.isNotEmpty() -> ""
+            // A published report the parser read fully but that found nothing: not the
+            // no-report-at-all state, so it says what the run was, not what to run.
+            report.issues.isEmpty() -> "No findings in this run - the target came back clean"
+            else ->
+                "No errors in this run - ${report.totalFindings} finding(s) hidden by the Errors Only filter"
+        }
+        show(nodes, report.unparsed, emptyState)
     }
 
     /** Every history run's findings merged into one view, newest sighting per signature. */
@@ -352,18 +379,34 @@ internal class AnalysisPanel(
             )
             .map { IssueNode(it.issue, it.source) }
         val issues = nodes.map(IssueNode::issue)
+        // Every run's unrecognized lines, de-duplicated: the same stray output - the
+        // output-cap marker, say - repeats across runs that hit the same wall.
+        val unparsed = history.flatMap { it.unparsed }.distinct()
         summaryLabel.text =
             "Accumulated from ${history.size} run(s): " +
                     "${issues.count { it.severity == AnalysisSeverity.ERROR }} error(s), " +
                     "${issues.count { it.severity == AnalysisSeverity.WARNING }} warning(s) - " +
-                    "${issues.sumOf(AnalysisIssue::count)} finding(s) at ${issues.size} unique place(s)"
-        show(nodes)
+                    "${issues.sumOf(AnalysisIssue::count)} finding(s) at ${issues.size} unique place(s)" +
+                    unparsedNote(unparsed.size)
+        val total = findings.sumOf { it.issue.count }
+        val emptyState = when {
+            nodes.isNotEmpty() -> ""
+            findings.isEmpty() -> "No findings across ${history.size} run(s)"
+            else ->
+                "No errors across ${history.size} run(s) - $total finding(s) hidden by the Errors Only filter"
+        }
+        show(nodes, unparsed, emptyState)
     }
 
-    private fun show(nodes: List<IssueNode>) {
+    /** Swaps the rows and the in-canvas empty state; [unparsed] trails the findings as
+     *  one group so a report the parser only partly understood is visible here, and
+     *  [emptyState] is what the bare table says when nothing else is left to show. */
+    private fun show(nodes: List<IssueNode>, unparsed: List<String>, emptyState: String) {
         shownIssues = nodes
         val root = DefaultMutableTreeNode(ROOT)
         nodes.forEach(root::add)
+        if (unparsed.isNotEmpty()) root.add(UnparsedGroupNode(unparsed))
+        treeTable.emptyText.text = emptyState
         // The model is replaced in place, so column widths, renderers, and the speed
         // search survive; setRoot fires the structure change both the tree and the
         // table's adapter listen for.
@@ -376,8 +419,13 @@ internal class AnalysisPanel(
         shownIssues = emptyList()
         summaryLabel.text = NO_FINDINGS
         details.text = ""
-        show(emptyList())
+        show(emptyList(), emptyList(), NO_FINDINGS)
     }
+
+    /** The summary's tail for the stderr lines no parser consumed; empty for a fully
+     *  parsed run, so an under-reported finding count is never silent about why. */
+    private fun unparsedNote(count: Int): String =
+        if (count == 0) "" else " - $count unparsed line(s)"
 
     /** The severity filter and the error-first, most-often ordering the rows show in. */
     private fun visible(issues: List<AnalysisIssue>): List<AnalysisIssue> =
@@ -464,19 +512,19 @@ internal class AnalysisPanel(
         OpenFileDescriptor(project, virtual, (frame.line ?: 1) - 1, (frame.column ?: 1) - 1).navigate(true)
     }
 
-    /** Host form first, then project-relative, matching how the toolchain compiles sources.
-     *  The mapping comes from the report that found the finding, so accumulated rows and
-     *  history picks alike resolve against the run that produced them. */
+    /** Host form first, then project-relative, then as-is - the shared candidate ladder in
+     *  [RemotePathMapper.localCandidates], first existing file wins. The mapping comes from
+     *  the report that found the finding, so accumulated rows and history picks alike
+     *  resolve against the run that produced them. */
     private fun resolveLocalFile(file: String, report: AnalysisReport?): File? {
         val mapper = report?.toolkit?.let { toolkit ->
             report.hostWorkingDirectory?.let {
                 RemotePathMapper.forToolkit(toolkit, it, project)
             }
         }
-        val mapped = mapper?.toLocal(File(file).toPath())?.toFile()
-        if (mapped?.isFile == true) return mapped
-        val basePath = project.basePath ?: return null
-        return File(basePath, file).takeIf(File::isFile) ?: File(file).takeIf(File::isFile)
+        return RemotePathMapper.localCandidates(mapper, File(file).toPath(), project)
+            .firstOrNull { candidate -> candidate.toFile().isFile }
+            ?.toFile()
     }
 
     private fun renderDetails(issue: AnalysisIssue): String = buildString {
@@ -508,10 +556,11 @@ internal class AnalysisPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            // One check at a time; the stop button owns the running one.
+            // One check at a time, queued or running: the claim is taken at the click, so
+            // the disabled button covers the whole wait - the lane may sit behind a build.
             val project = event.project
             event.presentation.isEnabled =
-                project != null && !AnalysisService.getInstance(project).isCheckRunning
+                project != null && !AnalysisService.getInstance(project).isCheckActive
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -519,17 +568,18 @@ internal class AnalysisPanel(
         }
     }
 
-    /** The check's off switch: kills the process the run registered, partial findings stay. */
+    /** The check's off switch: cancels a check still queued on the lane, and kills the
+     *  process of one already running - its partial findings still publish. */
     private inner class StopCheckAction : DumbAwareAction(
         "Stop",
-        "Stop the check running now",
+        "Stop the queued or running check",
         AllIcons.Actions.Suspend,
     ) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = AnalysisService.getInstance(project).isCheckRunning
+            event.presentation.isEnabled = AnalysisService.getInstance(project).isCheckActive
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -557,7 +607,8 @@ internal class AnalysisPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             // A clear drops both the current report and the history - a clean slate again.
-            AnalysisService.getInstance(project).publish(null)
+            // It is the only wipe: a plain run's null publish keeps the history.
+            AnalysisService.getInstance(project).clearAll()
         }
     }
 
@@ -595,7 +646,10 @@ internal class AnalysisPanel(
         }
     }
 
-    private inner class ErrorsOnlyAction : DumbAwareAction(
+    /** The severity filter's switch, selected while the rows show errors only. A
+     *  ToggleAction so the toolbar itself carries the state - a lit button says what the
+     *  mode is, instead of a text swap that names the next action. */
+    private inner class ErrorsOnlyAction : DumbAwareToggleAction(
         "Errors Only",
         "Show only the errors, or everything again",
         AllIcons.General.Filter,
@@ -603,18 +657,16 @@ internal class AnalysisPanel(
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
-        override fun update(event: AnActionEvent) {
-            event.presentation.text = if (errorsOnly) "Show All" else "Errors Only"
-        }
+        override fun isSelected(event: AnActionEvent): Boolean = errorsOnly
 
-        override fun actionPerformed(event: AnActionEvent) {
-            errorsOnly = !errorsOnly
+        override fun setSelected(event: AnActionEvent, state: Boolean) {
+            errorsOnly = state
             refreshView()
         }
     }
 
-    /** The accumulated view's switch: union every run's findings, or the last run alone again. */
-    private inner class AccumulateAction : DumbAwareAction(
+    /** The accumulated view's switch, selected while every run's findings are unioned. */
+    private inner class AccumulateAction : DumbAwareToggleAction(
         "Accumulate",
         "Show the union of every run's findings, or the last run alone again",
         AllIcons.Actions.GroupBy,
@@ -622,12 +674,10 @@ internal class AnalysisPanel(
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
-        override fun update(event: AnActionEvent) {
-            event.presentation.text = if (accumulate) "Latest Only" else "Accumulate"
-        }
+        override fun isSelected(event: AnActionEvent): Boolean = accumulate
 
-        override fun actionPerformed(event: AnActionEvent) {
-            accumulate = !accumulate
+        override fun setSelected(event: AnActionEvent, state: Boolean) {
+            accumulate = state
             refreshView()
         }
     }
@@ -710,6 +760,21 @@ internal class AnalysisPanel(
 
     private class FrameNode(val frame: AnalysisFrame) : DefaultMutableTreeNode(frame) {
         override fun toString(): String = frame.function
+    }
+
+    /** The findings tree's last row: the stderr lines no parser consumed, grouped so a
+     *  partly unread report or a dropped output tail shows up in the view instead of
+     *  quietly shrinking the finding count. Each child keeps one line verbatim. */
+    private class UnparsedGroupNode(val lines: List<String>) :
+        DefaultMutableTreeNode("Unparsed output - ${lines.size} line(s)") {
+
+        override fun toString(): String = "Unparsed output - ${lines.size} line(s)"
+    }
+
+    /** One stderr line no parser consumed, exactly as the run emitted it. */
+    private class UnparsedLineNode(val line: String) : DefaultMutableTreeNode(line) {
+
+        override fun toString(): String = line
     }
 
     /** One accumulated row: the newest sighting's finding, its occurrences summed over the runs. */
