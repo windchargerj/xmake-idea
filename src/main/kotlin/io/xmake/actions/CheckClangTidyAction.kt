@@ -36,8 +36,8 @@ import io.xmake.run.tidy.runClangTidy
  */
 class CheckClangTidyAction : DumbAwareAction(
     "Run Clang-Tidy",
-    "Check the project through xmake check clang.tidy and show the findings in the XMake Analysis view",
-    AllIcons.Actions.Find,
+    "Run the Clang-Tidy check on the project (xmake check clang.tidy) and show the findings in the XMake Analysis view",
+    AllIcons.Actions.Execute,
 ) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
