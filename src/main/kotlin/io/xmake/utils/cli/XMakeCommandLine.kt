@@ -50,6 +50,12 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
 
     fun version(): XMakeCommandLine = beginAction("version", "--version")
 
+    /** Adds `check <checker>`; the project-checking plugin action (e.g. `clang.tidy`). */
+    fun check(checker: String): XMakeCommandLine = apply {
+        beginAction("check")
+        args(checker)
+    }
+
     /** Adds `show`; [listing] selects one `-l` listing and [json] asks for the JSON form. */
     fun show(listing: String? = null, json: Boolean = false): XMakeCommandLine = apply {
         listing?.let {
