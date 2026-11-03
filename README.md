@@ -147,8 +147,8 @@ as it does when the finished build holds no instrumented objects.
 | Coverage (`-m coverage`, gcov) | Run with coverage | Coverage view + line highlighting | any |
 | Valgrind memcheck (`-m valgrind`) | Valgrind executor | CLion memory view | CLion |
 | perf profiling (`-m profile`) | Profiler executor | Flame graph | CLion |
-| Sanitizers (ASan/LSan/MSan/TSan/UBSan) | Run configuration | XMake Analysis view + editor marks | any |
-| clang-tidy | XMake Analysis toolbar | XMake Analysis view + editor marks | any |
+| Sanitizers (ASan/LSan/MSan/TSan/UBSan) | Run configuration | XMake Analysis view, editor marks, Problems view | any |
+| clang-tidy | XMake Analysis toolbar | XMake Analysis view, editor marks, Problems view | any |
 
 ### Sanitizers
 
