@@ -26,6 +26,8 @@ import io.xmake.run.XMakeRunConfiguration
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.resolveLaunchWorkingDirectory
 import io.xmake.run.command.xmakeCommands
+import io.xmake.run.sanitizer.sanitizer
+import io.xmake.run.sanitizer.sanitizerEnvironment
 import io.xmake.run.target.requireXMakeBuildProfileFor
 
 internal class XMakeDebugState private constructor(
@@ -48,6 +50,9 @@ internal class XMakeDebugState private constructor(
         throw ExecutionException("XMakeDebugState must be executed by XMakeRunner")
 
     companion object {
+        /** Sanitized debug builds stay unoptimized with full debug information. */
+        private const val SANITIZED_DEBUG_MODE = "debug"
+
         fun create(
             configuration: XMakeRunConfiguration,
             environment: ExecutionEnvironment,
@@ -64,8 +69,18 @@ internal class XMakeDebugState private constructor(
                 configuration.launchWorkingDirectory,
             )
 
+            // A sanitized debug builds with the sanitizer's policy, so break points land
+            // inside an instrumented binary; the runtime's options ride the launch env.
+            val sanitizer = configuration.sanitizer
             return XMakeDebugState(
-                configureCommand = commandFactory.createConfigure(),
+                configureCommand = if (sanitizer != null) {
+                    commandFactory.createConfigure(
+                        modeOverride = SANITIZED_DEBUG_MODE,
+                        policies = mapOf(sanitizer.policy to "y"),
+                    )
+                } else {
+                    commandFactory.createConfigure()
+                },
                 buildCommand = buildCommand,
                 targetPathCommand = commandFactory.createTargetPathQuery(configuration.runTarget),
                 targetName = configuration.runTarget,
@@ -76,7 +91,7 @@ internal class XMakeDebugState private constructor(
                 launchConfiguration = configuration.launchConfiguration,
                 launchWorkingDirectory = launchWorkingDirectory,
                 arguments = ParametersListUtil.parse(configuration.runArguments),
-                environment = configuration.runEnvironment.envs.toMap(),
+                environment = sanitizerEnvironment(configuration).envs.toMap(),
             )
         }
     }

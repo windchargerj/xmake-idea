@@ -24,16 +24,20 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.EditorTextField
 import com.intellij.ui.RawCommandLineEditor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Cell
 import com.intellij.ui.dsl.builder.panel
 import io.xmake.debug.DapDriverDetector
 import io.xmake.utils.ui.coroutineScope
 import io.xmake.debug.DapDriverType
 import io.xmake.project.directory.ui.DirectoryBrowser
+import io.xmake.project.toolkit.Toolkit
+import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.run.sanitizer.SanitizerKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Dimension
 import java.awt.event.ItemEvent
+import javax.swing.DefaultComboBoxModel
 import javax.swing.JComponent
 import javax.swing.ScrollPaneConstants
 
@@ -60,10 +65,13 @@ class XMakeRunConfigurationEditor(
 
     private val emulateTerminalInConsole = JBCheckBox("Emulate terminal in the output console")
 
-    /** None plus one entry per sanitizer; the selection drives the sanitized run. */
+    /** None plus one entry per sanitizer; the model keeps only what the active toolkit can run. */
     private val sanitizerKind = com.intellij.openapi.ui.ComboBox(
         arrayOf(NO_SANITIZER) + SanitizerKind.entries.map(SanitizerKind::displayName).toTypedArray(),
     ).apply { renderer = com.intellij.ui.SimpleListCellRenderer.create("") { it } }
+
+    /** Rewrites the sanitizer row's comment; wired to the real line in [createEditor]. */
+    private var sanitizerComment: (String) -> Unit = {}
 
     private val useDapDriver = JBCheckBox(
         "Use an external DAP driver instead of CLion's active debug profile",
@@ -209,8 +217,7 @@ class XMakeRunConfigurationEditor(
         }
 
         row("Sanitizer:") {
-            cell(sanitizerKind)
-                .comment("Rebuilds with the sanitizer's xmake mode and shows the findings in the XMake Analysis view")
+            sanitizerComment = cell(sanitizerKind).mutableComment(SANITIZER_ROW_COMMENT)
         }
 
         collapsibleGroup("Debug Configuration") {
@@ -229,9 +236,34 @@ class XMakeRunConfigurationEditor(
         }
     }
 
+    /** Pushes the profile's resolved toolkit to the controls that depend on it. */
     private fun refreshWorkingDirectoryToolkit(configuration: XMakeRunConfiguration) {
-        val profile = configuration.resolveBuildProfile(project)
-        launchWorkingDirectory.setToolkit(profile?.resolveToolkit(project))
+        val toolkit = configuration.resolveBuildProfile(project)?.resolveToolkit(project)
+        launchWorkingDirectory.setToolkit(toolkit)
+        updateSanitizerAvailability(toolkit)
+    }
+
+    /**
+     * Rebuilds the sanitizer combo for the active toolkit. A local Windows toolchain carries
+     * no MSan/TSan/LSan runtime - the same set the run-time guard in SanitizerRun rejects -
+     * so those entries leave the model instead of failing the build later, and the comment
+     * says where to find them. An unresolved toolkit has no verdict, so the combo keeps
+     * every entry; WSL and SSH toolkits and non-Windows hosts are not restricted either.
+     */
+    private fun updateSanitizerAvailability(toolkit: Toolkit?) {
+        val windowsLocal = SystemInfo.isWindows && toolkit?.host?.type == ToolkitHostType.LOCAL
+        val offered = if (windowsLocal) {
+            SanitizerKind.entries - WINDOWS_LOCAL_UNSUPPORTED
+        } else {
+            SanitizerKind.entries
+        }
+        val items = (listOf(NO_SANITIZER) + offered.map(SanitizerKind::displayName)).toTypedArray()
+        val selection = sanitizerKind.selectedItem
+        sanitizerKind.model = DefaultComboBoxModel(items)
+        sanitizerKind.selectedItem = selection.takeIf(items::contains) ?: NO_SANITIZER
+        sanitizerComment(
+            if (windowsLocal) "$SANITIZER_ROW_COMMENT. $WINDOWS_LOCAL_SANITIZER_NOTE" else SANITIZER_ROW_COMMENT,
+        )
     }
 
     private fun applyDefaultLaunchConfig(driverType: DapDriverType) {
@@ -255,5 +287,26 @@ class XMakeRunConfigurationEditor(
 
         /** The sanitizer combo's plain-run entry. */
         const val NO_SANITIZER = "None"
+
+        /** What the sanitizer row always explains: the policy that instruments the build, and where the findings land. */
+        const val SANITIZER_ROW_COMMENT =
+            "Rebuilds with the sanitizer's build.sanitizer.* policy and shows the findings in the XMake Analysis view"
+
+        /** The note the row appends when the active toolkit cannot run every sanitizer. */
+        const val WINDOWS_LOCAL_SANITIZER_NOTE =
+            "MemorySanitizer, ThreadSanitizer and LeakSanitizer need Linux/macOS - use a WSL toolkit"
+
+        /** Mirrors the run-time WINDOWS_UNSUPPORTED in SanitizerRun: the runtimes no Windows toolchain carries. */
+        val WINDOWS_LOCAL_UNSUPPORTED = setOf(SanitizerKind.MEMORY, SanitizerKind.THREAD, SanitizerKind.LEAK)
+    }
+}
+
+/** Adds a comment line under a cell whose text the editor can rewrite later. */
+private fun Cell<*>.mutableComment(text: String): (String) -> Unit {
+    comment(text)
+    val line = comment!!
+    return { value ->
+        line.text = value
+        line.parent?.revalidate()
     }
 }
