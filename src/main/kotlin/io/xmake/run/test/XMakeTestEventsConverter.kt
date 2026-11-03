@@ -16,10 +16,12 @@
  */
 package io.xmake.run.test
 
+import com.intellij.execution.process.ProcessOutputType
 import com.intellij.execution.testframework.TestConsoleProperties
 import com.intellij.execution.testframework.sm.runner.OutputToGeneralTestEventsConverter
 import com.intellij.execution.testframework.sm.runner.events.TestFailedEvent
 import com.intellij.execution.testframework.sm.runner.events.TestFinishedEvent
+import com.intellij.execution.testframework.sm.runner.events.TestOutputEvent
 import com.intellij.execution.testframework.sm.runner.events.TestStartedEvent
 import com.intellij.execution.testframework.sm.runner.events.TestSuiteFinishedEvent
 import com.intellij.execution.testframework.sm.runner.events.TestSuiteStartedEvent
@@ -29,8 +31,21 @@ import com.intellij.openapi.util.Key
  * Reads `xmake test`'s stdout and drives the standard test tree: one suite per target,
  * one node per test. Both output shapes feed it - 3.x starts tests with `running.test`
  * lines and reports every result after the run, 2.8.x prints each result live - so a
- * result line for a test nobody announced starts the node first, and everything xmake
- * prints that is not a result or a summary flows to the console uncaptured.
+ * result line for a test nobody announced starts the node first. Everything xmake
+ * prints that is not a result or a summary still flows to the console uncaptured; a
+ * copy also lands in a test node, and where that copy goes depends on the shape:
+ * 3.x prints a test's output inside its `running.test` window, so while that test is
+ * open every uncaptured line is copied into its node; 2.8.x announces nothing, so
+ * lines captured between two result lines are held back, and when the next result
+ * reports a failure for a test nobody announced, they are fed into that node before
+ * the failure event - the node then shows the cause above the verdict.
+ *
+ * The attribution is deliberately conservative. It assumes xmake runs tests one at a
+ * time - a parallel run interleaves outputs that cannot be split, and they all land
+ * on the one open window. A passed test's held-back output is dropped rather than
+ * attached (the console keeps it), the buffer keeps only its tail because only a
+ * failure ever reads it, and output xmake defers until after a result line - 3.x's
+ * report section - stays console-only, because nothing marks the test it belongs to.
  */
 internal class XMakeTestEventsConverter(
     testFrameworkName: String,
@@ -41,6 +56,15 @@ internal class XMakeTestEventsConverter(
     private val openTests = mutableSetOf<String>()
     private var summarySeen = false
 
+    /** The test the last `running.test` line announced and no result has followed: 3.x's
+     *  live window, during which whatever xmake prints belongs to that test. */
+    private var runningTest: String? = null
+
+    /** Output seen while no window was open, awaiting the result line that owns it. */
+    private val pendingOutput = ArrayDeque<BufferedOutput>()
+
+    private data class BufferedOutput(val text: String, val stdout: Boolean)
+
     override fun processConsistentText(text: String, outputType: Key<*>) {
         val line = text.trim()
         if (line.isEmpty()) return
@@ -49,22 +73,41 @@ internal class XMakeTestEventsConverter(
             val (name) = match.destructured
             startSuite(name.substringBefore('/'))
             startTest(name)
+            runningTest = name
+            pendingOutput.clear()
             return
         }
         RESULT.matchEntire(line)?.let { match ->
             val (name, outcome, seconds) = match.destructured
-            val suite = name.substringBefore('/')
-            startSuite(suite)
-            if (name !in openTests) startTest(name)
+            startSuite(name.substringBefore('/'))
+            val announced = name in openTests
+            if (!announced) {
+                startTest(name)
+                // 2.8.x's result line is the first word about the test; what it printed
+                // while running has been waiting for exactly this node.
+                if (XMakeTestOutcome.of(outcome).failed) flushPendingOutput(name)
+            }
             finishTest(name, outcome, seconds)
+            runningTest = null
+            pendingOutput.clear()
             return
         }
         if (SUMMARY.containsMatchIn(line)) {
             summarySeen = true
+            pendingOutput.clear()
             fireOnUncapturedOutput("$text\n", outputType)
             return
         }
+        if (line.startsWith(REPORT_BANNER)) {
+            // 3.x opens its report section right after the last `running.test` line: the
+            // announcements are over, and nothing below belongs to an open window anymore.
+            runningTest = null
+            pendingOutput.clear()
+            fireOnUncapturedOutput(text, outputType)
+            return
+        }
         fireOnUncapturedOutput(text, outputType)
+        copyUncapturedOutputToNode(text, outputType)
     }
 
     override fun flushBufferOnProcessTermination(exitCode: Int) {
@@ -121,8 +164,37 @@ internal class XMakeTestEventsConverter(
         openSuites.clear()
     }
 
+    /** Routes one uncaptured line's copy into the tree: into the running test's node when
+     *  3.x's window is open, otherwise into the buffer 2.8.x's next result line reads. */
+    private fun copyUncapturedOutputToNode(text: String, outputType: Key<*>) {
+        val stdout = ProcessOutputType.isStdout(outputType)
+        val live = runningTest?.takeIf { it in openTests }
+        if (live != null) {
+            processor?.onTestOutput(TestOutputEvent(live, live, text, stdout))
+            return
+        }
+        pendingOutput += BufferedOutput(text, stdout)
+        while (pendingOutput.size > MAX_PENDING_OUTPUT) pendingOutput.removeFirst()
+    }
+
+    /** Emits the buffered output as [name]'s node output; the failure event that follows
+     *  puts the verdict under the cause it explains. */
+    private fun flushPendingOutput(name: String) {
+        val processor = processor
+        if (processor != null) {
+            pendingOutput.forEach { chunk ->
+                processor.onTestOutput(TestOutputEvent(name, name, chunk.text, chunk.stdout))
+            }
+        }
+        pendingOutput.clear()
+    }
+
     private companion object {
         private const val ROOT_ID = "0"
+
+        /** Only a failure reads the buffer, and only its tail tells it anything; the cap
+         *  keeps a long between-tests stream (e.g. a rebuild) from growing without bound. */
+        private const val MAX_PENDING_OUTPUT = 200
 
         /** `[  0%]: running.test demo/hello` - 3.x announces each test as it starts. */
         private val RUNNING = Regex("""\[\s*\d+%]: running\.test (\S+)""")
@@ -134,5 +206,9 @@ internal class XMakeTestEventsConverter(
 
         /** `<P>% tests passed, ... out of <T>, spent <S>s` - xmake's own closing line. */
         private val SUMMARY = Regex("""\d+% tests passed.+\d+(\.\d+)?s$""")
+
+        /** 3.x heads its deferred result section with `report of tests:`; the live window
+         *  is over once it appears, so the banner stays out of the last test's node. */
+        private const val REPORT_BANNER = "report of tests"
     }
 }
