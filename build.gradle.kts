@@ -54,6 +54,8 @@ dependencies {
         bundledPlugin("intellij.ssh.plugin")
         bundledModule("intellij.platform.coverage")
         bundledModule("intellij.platform.coverage.agent")
+        bundledModule("intellij.platform.smRunner")
+        bundledModule("intellij.platform.testRunner")
         testFramework(TestFrameworkType.Platform)
         pluginModule(project(":clion"))
     }

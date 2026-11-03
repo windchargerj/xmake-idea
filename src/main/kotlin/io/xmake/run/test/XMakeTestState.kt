@@ -21,6 +21,7 @@ import com.intellij.execution.ExecutionResult
 import com.intellij.execution.Executor
 import com.intellij.execution.configurations.CommandLineState
 import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.util.execution.ParametersListUtil
 import io.xmake.project.console.FileReferenceFilter
@@ -56,8 +57,13 @@ internal class XMakeTestState(
         executor: Executor,
         processHandler: ProcessHandler,
     ): ExecutionResult {
-        val console = createConsole(executor)
-        console?.attachToProcess(processHandler)
+        // The standard test tree: xmake's own result lines drive it, its uncaptured
+        // output stays in the console, and the framework's export and statistics work.
+        val console = SMTestRunnerConnectionUtil.createAndAttachConsole(
+            XMakeTestConsoleProperties.FRAMEWORK_NAME,
+            processHandler,
+            XMakeTestConsoleProperties(configuration, executor),
+        )
         return DefaultExecutionResult(
             console,
             processHandler,
