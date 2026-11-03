@@ -20,11 +20,15 @@
  */
 package io.xmake.project.console
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
+import com.intellij.ui.content.ContentManagerEvent
+import com.intellij.ui.content.ContentManagerListener
 
 class XMakeToolWindowFactory : ToolWindowFactory, DumbAware {
 
@@ -41,8 +45,27 @@ class XMakeToolWindowFactory : ToolWindowFactory, DumbAware {
         outputTab.setDisposer(outputPanel)
         toolWindow.contentManager.addContent(outputTab)
 
+        val servicesPanel = XMakeServicesPanel(project)
+        val servicesTab = ContentFactory.getInstance().createContent(servicesPanel, "Services", false)
+        servicesTab.setDisposer(servicesPanel)
+        toolWindow.contentManager.addContent(servicesTab)
+
         toolWindow.contentManager.setSelectedContent(outputTab)
         XMakeConsoleManager.getInstance(project).register(toolWindow, outputPanel, outputTab)
+
+        // The services state is snapshot-only: a probe runs when the tab becomes the
+        // selected one and on its Refresh action, never in the background. The listener
+        // dies with the panel, which the tab disposes.
+        val contentManager = toolWindow.contentManager
+        val activationListener = object : ContentManagerListener {
+            override fun selectionChanged(event: ContentManagerEvent) {
+                if (event.content === servicesTab) {
+                    servicesPanel.refresh()
+                }
+            }
+        }
+        contentManager.addContentManagerListener(activationListener)
+        Disposer.register(servicesPanel, Disposable { contentManager.removeContentManagerListener(activationListener) })
     }
 }
 
