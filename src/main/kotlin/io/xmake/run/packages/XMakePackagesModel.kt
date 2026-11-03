@@ -1,0 +1,97 @@
+/*!A Xmake integration in IntelliJ IDEA/Clion
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2015-present, Xmake Open Source Community.
+ */
+package io.xmake.run.packages
+
+/**
+ * One package the project declares, as `xmake require --list` printed it.
+ *
+ * [requirement] is the version (or version range) the `xmake.lua` asked for - it says what
+ * the project wants, not what is installed; the installed truth is [XMakePackageInfo].
+ */
+data class XMakeRequireEntry(
+    val name: String,
+    val requirement: String,
+)
+
+/**
+ * What one package's `xmake require --info --format=json` reported.
+ *
+ * [references] is present exactly when the package is installed and referenced - the
+ * authoritative installed marker, because the listing's `-> ` detail lines survive an
+ * uninstall (docs/roadmap-designs/xrepo-packages.md, verified on 3.1.2). A package that
+ * exists nowhere still reports `version: "latest"` with no repo, so a missing [repoName]
+ * means "not found in the configured repositories", not a failed query.
+ */
+data class XMakePackageInfo(
+    val require: String,
+    val version: String?,
+    val description: String?,
+    val repoName: String?,
+    val repoUrl: String?,
+    val installdir: String?,
+    val cachedir: String?,
+    val platforms: List<String>,
+    val references: List<XMakePackageReference>?,
+) {
+    val installed: Boolean
+        get() = references != null
+}
+
+/** One installation reference of an installed package: where and when it was installed. */
+data class XMakePackageReference(
+    val dir: String?,
+    val date: String?,
+    val exists: Boolean?,
+)
+
+/** One repository hit of `xmake require --search`. */
+data class XMakePackageSearchEntry(
+    val name: String,
+    val version: String?,
+    val description: String?,
+    val repo: String?,
+)
+
+/**
+ * The `xmake require --depgraph --format=json` output: every package node and which other
+ * packages it needs. [rootPackages] are the project's direct requirements; the view nests
+ * the rest under their dependents.
+ */
+data class XMakePackageDepgraph(
+    val packages: List<XMakeDepNode>,
+    val rootPackages: List<String>,
+)
+
+/** One dependency-graph node: a package and the names of the packages it needs. */
+data class XMakeDepNode(
+    val name: String,
+    val version: String?,
+    val deps: List<String>,
+)
+
+/**
+ * The packages view's state at one moment. [infos] maps a queried package name to its info,
+ * or to null when the query ran but produced nothing usable - the null stops the view from
+ * re-querying on every selection. [searchResults] is non-null only while search results are
+ * shown; a refresh swaps back to the package list.
+ */
+data class XMakePackagesSnapshot(
+    val packages: List<XMakeRequireEntry>,
+    val depgraph: XMakePackageDepgraph?,
+    val infos: Map<String, XMakePackageInfo?> = emptyMap(),
+    val searchResults: List<XMakePackageSearchEntry>? = null,
+)
