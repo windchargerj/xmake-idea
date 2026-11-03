@@ -22,9 +22,11 @@ import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CustomShortcutSet
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
+import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.actionSystem.ex.ComboBoxAction
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.editor.colors.EditorColorsManager
@@ -40,6 +42,7 @@ import com.intellij.ui.AutoScrollToSourceHandler
 import com.intellij.ui.ColoredTableCellRenderer
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.DoubleClickListener
+import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
@@ -52,6 +55,7 @@ import com.intellij.util.containers.Convertor
 import com.intellij.util.text.DateFormatUtil
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.tree.TreeUtil
 import io.xmake.run.command.RemotePathMapper
 import io.xmake.run.analysis.AnalysisService
@@ -73,7 +77,9 @@ import javax.swing.JLabel
 import javax.swing.JTable
 import javax.swing.JTextArea
 import javax.swing.JTree
+import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
+import javax.swing.Timer
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreeNode
 import javax.swing.tree.TreePath
@@ -93,6 +99,11 @@ import javax.swing.tree.TreeSelectionModel
  * every row keeps the run that found it so its host paths still map to local files.
  * Stderr lines no parser consumed trail the findings as one Unparsed output group, so a
  * report the parser only partly understood is visible here, not just in the console.
+ *
+ * Next Finding and Previous Finding walk the rows in their shown order - select, scroll,
+ * and open the source line - with Alt+Down / Alt+Up bound while the view holds the focus.
+ * The Group-by-File switch re-roots the same rows under the file each finding points into,
+ * and the summary names the file the findings hit most.
  */
 internal class AnalysisPanel(
     private val project: Project,
@@ -115,6 +126,13 @@ internal class AnalysisPanel(
     /** The Accumulate switch: the union of every history run instead of the last run alone. */
     private var accumulate = false
 
+    /** The Group-by-File switch: the findings re-rooted under the file each points into. */
+    private var groupByFile = false
+
+    /** Where the next/previous finding steps from when nothing is selected. Every re-show
+     *  drops it, so a new report starts navigation over from whatever gets selected. */
+    private var navigationCursor = -1
+
     /**
      * The report the view shows - the latest one by default, an older one after a history
      * pick. It follows every publish; picking from the history only swaps it locally. The
@@ -122,8 +140,30 @@ internal class AnalysisPanel(
      */
     private var displayed: AnalysisReport? = null
 
-    /** The finding rows the view shows now, whatever mode built them; Copy Report reads them. */
+    /** The finding rows the view shows now, whatever mode built them; Copy Report reads
+     *  them and Next/Previous Finding walk them in this order. */
     private var shownIssues: List<IssueNode> = emptyList()
+
+    /** The summary text without the check-wait narration, so the narration tick below can
+     *  rewrite the line without rebuilding the rows - and dropping the selection. */
+    private var summaryText: String = ""
+
+    /** The narration the summary line last carried; the tick rewrites only on a change. */
+    private var lastCheckNarration: String = ""
+
+    /**
+     * Narrates a queued or running check in the summary. The report only publishes when
+     * the run ends, so there is no bus event to ride for the wait itself: this polls the
+     * service's cheap claim/process flags on the EDT and rewrites the label only when
+     * the wait state flips. Presentation only - it drives no state.
+     */
+    private val narrationTimer = Timer(NARRATION_MS) {
+        val narration = checkWaitNarration()
+        if (narration != lastCheckNarration) {
+            lastCheckNarration = narration
+            summaryLabel.text = summaryText + narration
+        }
+    }
 
     /** The view's Autoscroll-to-Source switch; the handler and its toolbar toggle share it. */
     private var autoScrollMode = false
@@ -142,6 +182,11 @@ internal class AnalysisPanel(
             navigateSelection()
         }
     }
+
+    /** One instance each, shared by the toolbar, the popup, and the tree's shortcuts -
+     *  registering the shortcut below must not fork the actions it registers. */
+    private val nextFindingAction = NextFindingAction()
+    private val previousFindingAction = PreviousFindingAction()
 
     /** The tree column's renderer: the severity of a finding, the role of a stack, the frame's function. */
     private val treeColumnRenderer = object : ColoredTreeCellRenderer() {
@@ -165,6 +210,10 @@ internal class AnalysisPanel(
                     SimpleTextAttributes.GRAYED_BOLD_ATTRIBUTES,
                 )
                 is UnparsedLineNode -> append(value.line, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                is FileGroupNode -> append(
+                    value.toString(),
+                    SimpleTextAttributes.GRAYED_BOLD_ATTRIBUTES,
+                )
                 is StackNode -> append(value.stack.title, SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 is FrameNode -> append(value.frame.function, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                 else -> append(value.toString(), SimpleTextAttributes.REGULAR_ATTRIBUTES)
@@ -266,10 +315,25 @@ internal class AnalysisPanel(
         // The platform's autoscroll machinery - its timing, its toggle action - driving the
         // view's own navigation.
         autoScroll.install(treeTable)
-        // The Problems view's right-click vocabulary: jump to the source, copy the finding.
+        // Alt+Down / Alt+Up walk the findings while the view holds the focus; the shortcut
+        // is registered on the tree-table itself, so the keys stay free everywhere else.
+        nextFindingAction.registerCustomShortcutSet(
+            CustomShortcutSet(KeyStroke.getKeyStroke("alt DOWN")), treeTable, this
+        )
+        previousFindingAction.registerCustomShortcutSet(
+            CustomShortcutSet(KeyStroke.getKeyStroke("alt UP")), treeTable, this
+        )
+        // The Problems view's right-click vocabulary: jump to the source, walk the findings,
+        // copy the finding.
         PopupHandler.installPopupMenu(
             treeTable,
-            DefaultActionGroup(JumpToSourceAction(), CopyFindingAction()),
+            DefaultActionGroup(
+                JumpToSourceAction(),
+                nextFindingAction,
+                previousFindingAction,
+                Separator.create(),
+                CopyFindingAction(),
+            ),
             "XMakeAnalysisView",
         )
 
@@ -292,10 +356,14 @@ internal class AnalysisPanel(
                 invokeLater { if (!project.isDisposed) refresh(report) }
             },
         )
+        narrationTimer.start()
     }
 
-    /** The subscriptions ride on the content's disposal; nothing else outlives the panel. */
-    override fun dispose() = Unit
+    /** The subscriptions and the narration timer ride on the content's disposal; nothing
+     *  else outlives the panel. */
+    override fun dispose() {
+        narrationTimer.stop()
+    }
 
     private fun toolbar(): ActionToolbar {
         val group = DefaultActionGroup(
@@ -303,11 +371,15 @@ internal class AnalysisPanel(
             StopCheckAction(),
             RerunAction(),
             Separator.create(),
+            nextFindingAction,
+            previousFindingAction,
+            Separator.create(),
             HistoryAction(),
             ClearAction(),
             Separator.create(),
             ErrorsOnlyAction(),
             AccumulateAction(),
+            GroupByFileAction(),
             autoScroll.createToggleAction(),
             CopyReportAction(),
         )
@@ -344,14 +416,18 @@ internal class AnalysisPanel(
         }
         val nodes = visible(report.issues).map { IssueNode(it, report) }
         // A failed run says so right in the summary: partial findings next to the failure
-        // must never read as a clean, finished check.
+        // must never read as a clean, finished check. The panel's word for it is "check" -
+        // it covers the sanitized runs too; the tool name stays in the balloon alone.
         val failureNote = report.failure?.let { failure -> " - check failed: $failure" }.orEmpty()
-        summaryLabel.text =
+        setSummary(
             "${report.source} on '${report.targetName}': " +
                     "${report.errorCount} error(s), ${report.warningCount} warning(s) - " +
                     "${report.totalFindings} finding(s) at ${report.issues.size} unique place(s)" +
+                    topLocationNote(nodes.map(IssueNode::issue)) +
                     unparsedNote(report.unparsed.size) +
-                    failureNote
+                    failureNote,
+            failure = report.failure != null,
+        )
         val emptyState = when {
             nodes.isNotEmpty() -> ""
             // A published report the parser read fully but that found nothing: not the
@@ -382,12 +458,14 @@ internal class AnalysisPanel(
         // Every run's unrecognized lines, de-duplicated: the same stray output - the
         // output-cap marker, say - repeats across runs that hit the same wall.
         val unparsed = history.flatMap { it.unparsed }.distinct()
-        summaryLabel.text =
+        setSummary(
             "Accumulated from ${history.size} run(s): " +
                     "${issues.count { it.severity == AnalysisSeverity.ERROR }} error(s), " +
                     "${issues.count { it.severity == AnalysisSeverity.WARNING }} warning(s) - " +
                     "${issues.sumOf(AnalysisIssue::count)} finding(s) at ${issues.size} unique place(s)" +
+                    topLocationNote(issues) +
                     unparsedNote(unparsed.size)
+        )
         val total = findings.sumOf { it.issue.count }
         val emptyState = when {
             nodes.isNotEmpty() -> ""
@@ -403,8 +481,9 @@ internal class AnalysisPanel(
      *  [emptyState] is what the bare table says when nothing else is left to show. */
     private fun show(nodes: List<IssueNode>, unparsed: List<String>, emptyState: String) {
         shownIssues = nodes
+        navigationCursor = -1
         val root = DefaultMutableTreeNode(ROOT)
-        nodes.forEach(root::add)
+        if (groupByFile) fileGroupNodes(nodes).forEach(root::add) else nodes.forEach(root::add)
         if (unparsed.isNotEmpty()) root.add(UnparsedGroupNode(unparsed))
         treeTable.emptyText.text = emptyState
         // The model is replaced in place, so column widths, renderers, and the speed
@@ -417,15 +496,66 @@ internal class AnalysisPanel(
 
     private fun showEmpty() {
         shownIssues = emptyList()
-        summaryLabel.text = NO_FINDINGS
+        setSummary(NO_FINDINGS)
         details.text = ""
         show(emptyList(), emptyList(), NO_FINDINGS)
+    }
+
+    /** The summary line's one write path: the caller's text plus the check-wait
+     *  narration, and the color rule the Packages and Services panels already follow -
+     *  a red line means the last operation failed. */
+    private fun setSummary(text: String, failure: Boolean = false) {
+        summaryText = text
+        lastCheckNarration = checkWaitNarration()
+        summaryLabel.text = summaryText + lastCheckNarration
+        summaryLabel.foreground = if (failure) JBColor.RED else UIUtil.getLabelForeground()
+    }
+
+    /** The wait narration for a queued or running check, mirroring the Services panel's
+     *  lane-wait wording: a check rides the same serialized lane as builds, so one
+     *  queued behind a long build must not read as a dead panel. Empty when the lane
+     *  carries no check. */
+    private fun checkWaitNarration(): String {
+        val service = AnalysisService.getInstance(project)
+        return when {
+            service.isCheckRunning -> " - check running"
+            service.isCheckQueued -> " - check queued on the xmake lane"
+            else -> ""
+        }
     }
 
     /** The summary's tail for the stderr lines no parser consumed; empty for a fully
      *  parsed run, so an under-reported finding count is never silent about why. */
     private fun unparsedNote(count: Int): String =
         if (count == 0) "" else " - $count unparsed line(s)"
+
+    /** The summary's "where it mostly happens" tail, over the rows shown: the file whose
+     *  findings occur most often, by name since the Location column carries the full path.
+     *  Empty when no shown finding symbolizes to a source file. */
+    private fun topLocationNote(issues: List<AnalysisIssue>): String {
+        val top = issues.groupBy { it.primaryFrame?.file }
+            .filterKeys { it != null }
+            .maxByOrNull { (_, group) -> group.sumOf(AnalysisIssue::count) }
+            ?: return ""
+        val file = top.key ?: return ""
+        return " - most in ${File(file).name} (${top.value.sumOf(AnalysisIssue::count)} finding(s))"
+    }
+
+    /** The findings re-rooted under one node per file - the file each finding's primary
+     *  frame names, alphabetically; findings without a symbolized file gather under their
+     *  own group at the end. Within a file the incoming severity-first order stays, so
+     *  grouping only changes where a finding sits, never which findings show. */
+    private fun fileGroupNodes(nodes: List<IssueNode>): List<FileGroupNode> {
+        val placed = nodes.mapNotNull { node ->
+            node.issue.primaryFrame?.file?.let { file -> file to node }
+        }.groupBy({ (file, _) -> file }, { (_, node) -> node })
+        val unplaced = nodes.filter { it.issue.primaryFrame?.file == null }
+        val groups = placed.toSortedMap().mapTo(mutableListOf()) { (file, findings) ->
+            FileGroupNode(file, findings)
+        }
+        if (unplaced.isNotEmpty()) groups += FileGroupNode(NO_FILE, unplaced)
+        return groups
+    }
 
     /** The severity filter and the error-first, most-often ordering the rows show in. */
     private fun visible(issues: List<AnalysisIssue>): List<AnalysisIssue> =
@@ -504,6 +634,44 @@ internal class AnalysisPanel(
         return null
     }
 
+    /**
+     * Steps to the next (or previous) finding in the shown order and opens its source.
+     * The step starts from the selected finding - a stack or frame selection counts for
+     * the issue row it hangs under - else from the stored cursor; with neither, forward
+     * starts at the first row and backward at the last. The order is [shownIssues]'s,
+     * whatever the grouping put where: navigation always reads severity-first.
+     */
+    private fun stepFinding(step: Int) {
+        if (shownIssues.isEmpty()) return
+        val from = selectedIssueNode()?.let(shownIssues::indexOf) ?: navigationCursor
+        val target = if (from < 0) {
+            if (step > 0) 0 else shownIssues.size - 1
+        } else {
+            (from + step).mod(shownIssues.size)
+        }
+        navigationCursor = target
+        reveal(shownIssues[target])
+    }
+
+    /** The finding row the selection belongs to: the issue itself, or its ancestor. */
+    private fun selectedIssueNode(): IssueNode? =
+        (treeTable.tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.owningIssue()
+
+    /** Puts one finding row on screen: expands to it, selects it on the tree and the table
+     *  together (the platform's own sync, [TreeTable.addSelectedPath]), scrolls it into
+     *  view, and opens the source line the finding names. */
+    private fun reveal(node: IssueNode) {
+        val path = TreePath(node.path)
+        treeTable.tree.expandPath(path)
+        treeTable.clearSelection()
+        treeTable.addSelectedPath(path)
+        val row = treeTable.selectedRow
+        if (row >= 0) {
+            treeTable.scrollRectToVisible(treeTable.getCellRect(row, COLUMN_SEVERITY, true))
+        }
+        navigateSelection()
+    }
+
     /** Opens the source line one frame names, mapping host paths to local files first. */
     private fun navigate(frame: AnalysisFrame, report: AnalysisReport?) {
         val file = frame.file ?: return
@@ -549,8 +717,8 @@ internal class AnalysisPanel(
     /** One click from findings to more findings: the project check fills the same view. */
     private class RunClangTidyAction : DumbAwareAction(
         "Run Clang-Tidy",
-        "Check the project through xmake check clang.tidy",
-        AllIcons.Actions.Find,
+        "Run the Clang-Tidy check on the project (xmake check clang.tidy)",
+        AllIcons.Actions.Execute,
     ) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -601,7 +769,8 @@ internal class AnalysisPanel(
         }
     }
 
-    private inner class ClearAction : DumbAwareAction("Clear", "Drop the current findings", AllIcons.Actions.GC) {
+    private inner class ClearAction :
+        DumbAwareAction("Clear", "Clear the current findings and the run history", AllIcons.Actions.GC) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
@@ -618,6 +787,11 @@ internal class AnalysisPanel(
      * contains every run, and a single report would contradict it.
      */
     private inner class HistoryAction : ComboBoxAction() {
+
+        // The picker is the panel's one toolbar control without an action description, so
+        // its tooltip rides on the combo itself - same fragment style as the descriptions.
+        override fun createCustomComponent(presentation: Presentation, place: String): JComponent =
+            super.createCustomComponent(presentation, place).apply { toolTipText = "Pick an earlier run to display" }
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
@@ -682,6 +856,25 @@ internal class AnalysisPanel(
         }
     }
 
+    /** The Group-by-File switch: one tree node per file the findings point into, the
+     *  findings beneath it, instead of the flat severity-first list. Presentation only -
+     *  the row order navigation follows and Accumulate's sums are untouched. */
+    private inner class GroupByFileAction : DumbAwareToggleAction(
+        "Group by File",
+        "Group the findings under the file each points into, or flat again",
+        AllIcons.Actions.GroupByFile,
+    ) {
+
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun isSelected(event: AnActionEvent): Boolean = groupByFile
+
+        override fun setSelected(event: AnActionEvent, state: Boolean) {
+            groupByFile = state
+            refreshView()
+        }
+    }
+
     private inner class CopyReportAction : DumbAwareAction(
         "Copy Report",
         "Copy the findings as text",
@@ -714,6 +907,43 @@ internal class AnalysisPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             navigateSelection()
+        }
+    }
+
+    /** Walks the findings forward: each step selects the next finding row, scrolls to it,
+     *  and opens its source, so a report reads without reaching for the mouse row by row. */
+    private inner class NextFindingAction : DumbAwareAction(
+        "Next Finding",
+        "Go to the next finding and open its source line",
+        AllIcons.Actions.NextOccurence,
+    ) {
+
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = shownIssues.isNotEmpty()
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            stepFinding(1)
+        }
+    }
+
+    /** Walks the findings backward; the counterpart of [NextFindingAction]. */
+    private inner class PreviousFindingAction : DumbAwareAction(
+        "Previous Finding",
+        "Go to the previous finding and open its source line",
+        AllIcons.Actions.PreviousOccurence,
+    ) {
+
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = shownIssues.isNotEmpty()
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            stepFinding(-1)
         }
     }
 
@@ -758,6 +988,19 @@ internal class AnalysisPanel(
         override fun toString(): String = stack.title
     }
 
+    /** One file-group row of the Group-by-File view: the file its findings point into,
+     *  labeled with how many occurrences the group carries. Its children are issue rows. */
+    private class FileGroupNode(val file: String, findings: List<IssueNode>) :
+        DefaultMutableTreeNode(file) {
+        private val occurrenceCount = findings.sumOf { it.issue.count }
+
+        init {
+            findings.forEach(::add)
+        }
+
+        override fun toString(): String = "$file - $occurrenceCount finding(s)"
+    }
+
     private class FrameNode(val frame: AnalysisFrame) : DefaultMutableTreeNode(frame) {
         override fun toString(): String = frame.function
     }
@@ -788,8 +1031,14 @@ internal class AnalysisPanel(
         /** The invisible tree root; the panel swaps it per refresh. */
         private const val ROOT = "root"
 
+        /** The Group-by-File heading of findings the parser could not place in any file. */
+        private const val NO_FILE = "Unknown location"
+
         /** Shown when nothing is accumulated and no report exists. */
-        private const val NO_FINDINGS = "No findings - run sanitized, or run clang-tidy from the toolbar"
+        private const val NO_FINDINGS = "No findings - run sanitized, or run Clang-Tidy from the toolbar"
+
+        /** How often the summary's check-wait narration polls the service's flags. */
+        private const val NARRATION_MS = 500
 
         private const val COLUMN_SEVERITY = 0
         private const val COLUMN_TYPE = 1
