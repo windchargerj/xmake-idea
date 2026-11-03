@@ -41,7 +41,7 @@ class XMakeToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val outputPanel = XMakeToolWindowOutputPanel(project)
-        val outputTab = ContentFactory.getInstance().createContent(outputPanel, "Output", false)
+        val outputTab = ContentFactory.getInstance().createContent(outputPanel, "Console", false)
         outputTab.setDisposer(outputPanel)
         toolWindow.contentManager.addContent(outputTab)
 
@@ -53,9 +53,14 @@ class XMakeToolWindowFactory : ToolWindowFactory, DumbAware {
         toolWindow.contentManager.setSelectedContent(outputTab)
         XMakeConsoleManager.getInstance(project).register(toolWindow, outputPanel, outputTab)
 
+        // Creating the tab also instantiates the snapshot service, which owns the probe
+        // dispatch both surfaces share (and registers its Services-window listener for
+        // this project).
+        project.xmakeServicesSnapshots
+
         // The services state is snapshot-only: a probe runs when the tab becomes the
-        // selected one and on its Refresh action, never in the background. The listener
-        // dies with the panel, which the tab disposes.
+        // selected one, when the platform Services window shows, and on Refresh - never
+        // in the background. The listener dies with the panel, which the tab disposes.
         val contentManager = toolWindow.contentManager
         val activationListener = object : ContentManagerListener {
             override fun selectionChanged(event: ContentManagerEvent) {

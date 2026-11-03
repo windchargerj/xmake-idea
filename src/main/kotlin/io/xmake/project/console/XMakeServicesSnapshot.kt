@@ -57,6 +57,11 @@ data class XMakeServicesSnapshot(
     val services: Map<XMakeServiceKind, XMakeServiceState>,
 )
 
+/** The state shown before the first probe lands (or when the probe lost one kind's
+ *  record): nothing is known yet, not even that the kind is unconfigured. */
+fun XMakeServiceKind.unprobedState(): XMakeServiceState =
+    XMakeServiceState(this, null, false, XMakeReachability.UNTESTED, false)
+
 /** Parses the machine-readable payload the bundled probeservices.lua script prints between
  *  its `__begin__`/`__end__` markers (see the script header for the grammar). Anything xmake
  *  logs ahead of the markers is ignored, unknown service kinds are skipped for forward
