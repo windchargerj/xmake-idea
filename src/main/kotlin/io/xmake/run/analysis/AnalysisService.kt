@@ -20,6 +20,9 @@ import com.intellij.execution.Executor
 import com.intellij.execution.ExecutorRegistry
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.runners.ExecutionUtil
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -32,7 +35,9 @@ import com.intellij.util.messages.Topic
  * anything else stay in step.
  *
  * One report replaces the previous one - the view always describes the last run, the way
- * coverage data does - and a plain run clears the findings again.
+ * coverage data does - and a plain run clears the findings again. The last few reports also
+ * stay in a history the view's picker reads; showing an older one is presentation-only and
+ * never republishes it.
  */
 @Service(Service.Level.PROJECT)
 internal class AnalysisService(private val project: Project) {
@@ -45,10 +50,48 @@ internal class AnalysisService(private val project: Project) {
     var lastSanitizedSettings: RunnerAndConfigurationSettings? = null
         private set
 
-    /** Publishes the findings of one run; null clears the view for a plain run. */
+    /** The last few published reports, newest first, for the view's history picker. */
+    val history: List<AnalysisReport>
+        get() = reportHistory.toList()
+
+    private val reportHistory = ArrayDeque<AnalysisReport>()
+
+    /** The process of the check running now, held so the view's stop button can kill it. */
+    @Volatile
+    private var checkProcess: ProcessHandler? = null
+
+    /** Whether a check registered through [registerCheckProcess] still runs. */
+    val isCheckRunning: Boolean
+        get() = checkProcess?.isProcessTerminated == false
+
+    /** Publishes the findings of one run; null clears the view - and its history - again. */
     fun publish(report: AnalysisReport?) {
         this.report = report
+        if (report == null) {
+            reportHistory.clear()
+        } else {
+            reportHistory.addFirst(report)
+            while (reportHistory.size > HISTORY_LIMIT) reportHistory.removeLast()
+        }
         project.messageBus.syncPublisher(TOPIC).reportPublished(report)
+    }
+
+    /**
+     * Remembers [handler] as the check the view can stop. The registration clears itself
+     * when the process ends - completion, failure, or the stop button, whichever comes first.
+     */
+    fun registerCheckProcess(handler: ProcessHandler) {
+        checkProcess = handler
+        handler.addProcessListener(object : ProcessListener {
+            override fun processTerminated(event: ProcessEvent) {
+                if (checkProcess === handler) checkProcess = null
+            }
+        })
+    }
+
+    /** Stops the running check, if one runs; whatever it found until then still publishes. */
+    fun stopCheck() {
+        checkProcess?.destroyProcess()
     }
 
     fun rememberSanitizedSettings(settings: RunnerAndConfigurationSettings) {
@@ -66,6 +109,9 @@ internal class AnalysisService(private val project: Project) {
     companion object {
         /** The findings of the last run, or null when they were cleared. */
         val TOPIC: Topic<Listener> = Topic("XMake analysis findings", Listener::class.java)
+
+        /** How many reports the history keeps; the picker shows time, source, and count. */
+        private const val HISTORY_LIMIT = 20
 
         fun getInstance(project: Project): AnalysisService = project.service()
     }
