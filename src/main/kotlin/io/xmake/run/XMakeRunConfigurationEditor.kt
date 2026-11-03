@@ -59,7 +59,7 @@ class XMakeRunConfigurationEditor(
     private val environmentVariables = EnvironmentVariablesComponent(project)
     private val launchWorkingDirectory = DirectoryBrowser(
         project,
-        browseTitle = "Working Directory",
+        browseTitle = "Select working directory",
         browseDescription = "Select the target process working directory",
     )
 
@@ -79,7 +79,7 @@ class XMakeRunConfigurationEditor(
     private val dapDriverAutoDetect = JBCheckBox("Auto-detect DAP driver")
     private val dapDriverPath = TextFieldWithBrowseButton().apply {
         val descriptor = FileChooserDescriptorFactory.singleFile().apply {
-            title = "Select DAP Driver"
+            title = "Select DAP driver"
             description = "Select the lldb-dap or gdb executable"
         }
         addBrowseFolderListener(TextBrowseFolderListener(descriptor, project))
@@ -217,7 +217,7 @@ class XMakeRunConfigurationEditor(
         }
 
         row("Sanitizer:") {
-            sanitizerComment = cell(sanitizerKind).mutableComment(SANITIZER_ROW_COMMENT)
+            sanitizerComment = cell(sanitizerKind).align(AlignX.FILL).mutableComment(SANITIZER_ROW_COMMENT)
         }
 
         collapsibleGroup("Debug Configuration") {
