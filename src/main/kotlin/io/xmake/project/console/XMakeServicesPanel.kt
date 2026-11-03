@@ -73,6 +73,16 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
     /** True while [applySnapshot] moves the checkbox, so the user's listener ignores it. */
     private var applyingCheckboxState = false
 
+    /**
+     * True while a probe or a toggle/connect sits on the executor lane or runs against it.
+     * The panel disables its controls then - the lane serializes against builds, so a
+     * click during the wait would queue a second command to run after the first, and
+     * nothing else tells the user the wait is on. Cleared by the EDT hop that lands the
+     * result or the failure.
+     */
+    @Volatile
+    private var probing = false
+
     private val messageLabel = JBLabel("Activate this tab or press Refresh to probe the build cache and service status")
 
     private val cacheCheckBox = JCheckBox("ccache (--ccache)")
@@ -87,6 +97,9 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
             DefaultActionGroup(
                 object : DumbAwareAction("Refresh", "Re-probe the build cache and service status", AllIcons.Actions.Refresh) {
                     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+                    override fun update(event: AnActionEvent) {
+                        event.presentation.isEnabled = !probing
+                    }
                     override fun actionPerformed(event: AnActionEvent) {
                         refresh()
                     }
@@ -104,7 +117,9 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
         }
     }
 
-    /** One probe, submitted on the executor lane; the result reaches Swing in one EDT hop. */
+    /** One probe, submitted on the executor lane; the result reaches Swing in one EDT hop.
+     *  Re-entrant calls are dropped: the tab's activation listener and this action both
+     *  land here, and one probe in flight is one probe the lane needs. */
     fun refresh() {
         runThenReprobe { _, _ ->
             // nothing to run first: this is the probe only
@@ -219,14 +234,28 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
 
     /** Runs [operation] on the executor lane and re-probes the snapshot afterwards, so the
      *  panel shows what xmake persisted, not what the command exit code suggests. Failures
-     *  land in the message label and keep the last good snapshot. */
+     *  land in the message label and keep the last good snapshot.
+     *
+     *  The controls disable for the whole wait - including the lane queue ahead of this
+     *  task, which a running build occupies - and re-enable when the result or the failure
+     *  lands. A call while one is in flight is dropped: it would only stack a second
+     *  command behind the first. */
     private fun runThenReprobe(operation: suspend (console: XMakeConsole, factory: XMakeCommandFactory) -> Unit) {
         val profile = project.activeOrSingleXMakeBuildProfile
         if (profile == null) {
             setMessage("Select an XMake build profile first!")
             return
         }
-        setMessage("Probing the build cache and service status...")
+        if (probing) return
+        probing = true
+        setControlsEnabled(false)
+        setMessage(
+            if (project.xmakeExecutor.laneBusy) {
+                "Waiting for the running build or command to finish, then probing the build cache and service status..."
+            } else {
+                "Probing the build cache and service status..."
+            },
+        )
         @Suppress("DeferredResultUnused") // fire-and-forget: the panel's state narrates progress
         project.xmakeExecutor.submit {
             try {
@@ -236,6 +265,8 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
                 val output = project.xmakeExecutor.captureStandardOutput(factory.createBuildServicesProbe())
                 val probed = XMakeServicesProbeParser.parse(output)
                 withContext(Dispatchers.EDT) {
+                    probing = false
+                    setControlsEnabled(true)
                     if (probed == null) {
                         messageLabel.text = "The services probe produced no data (xmake ${factory.toolkit.name})."
                     } else {
@@ -244,11 +275,21 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
                     }
                 }
             } catch (cancellation: CancellationException) {
+                // The project is going away with the probe still queued; the flag is all
+                // the state that must not stay stuck.
+                probing = false
                 throw cancellation
             } catch (error: Exception) {
                 reportFailure(error)
             }
         }
+    }
+
+    /** The busy gate over every clickable the panel owns: the cache checkbox, each service
+     *  row's buttons, and the toolbar's Refresh action read the same [probing] flag. */
+    private fun setControlsEnabled(enabled: Boolean) {
+        cacheCheckBox.isEnabled = enabled
+        serviceRows.values.forEach { row -> row.setBusy(!enabled) }
     }
 
     private fun applySnapshot(newSnapshot: XMakeServicesSnapshot) {
@@ -272,6 +313,8 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
     private suspend fun reportFailure(error: Exception) {
         Log.warn("XMake services probe failed", error)
         withContext(Dispatchers.EDT) {
+            probing = false
+            setControlsEnabled(true)
             messageLabel.text = "XMake services probe failed: ${error.message}"
             // a failed toggle/connect must not leave the panel describing a state xmake refused
             snapshot?.let { applySnapshot(it) }
@@ -308,6 +351,13 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
             addActionListener { disconnectService(kind) }
         }
 
+        /** The last snapshot's state, so the busy gate can re-enable exactly what the
+         *  snapshot allows instead of guessing. */
+        private var state: XMakeServiceState? = null
+
+        /** The busy gate's share: while an operation runs, every button is off. */
+        private var busy = false
+
         val panel: JComponent = row(
             JBLabel(kindName(kind)),
             endpointLabel,
@@ -317,6 +367,7 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
         )
 
         fun show(state: XMakeServiceState) {
+            this.state = state
             endpointLabel.text = state.endpoint ?: "-"
             statusLabel.text = statusText(state)
             statusLabel.foreground = if (state.connected && state.reachable == XMakeReachability.NO) {
@@ -324,8 +375,18 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
             } else {
                 UIUtil.getLabelForeground()
             }
-            connectButton.isEnabled = state.endpoint != null
-            disconnectButton.isEnabled = state.connected
+            refreshButtons()
+        }
+
+        fun setBusy(busy: Boolean) {
+            this.busy = busy
+            refreshButtons()
+        }
+
+        private fun refreshButtons() {
+            val state = this.state
+            connectButton.isEnabled = !busy && state?.endpoint != null
+            disconnectButton.isEnabled = !busy && state?.connected == true
         }
     }
 

@@ -210,6 +210,8 @@ class XMakeCommandFactory(
                 script = scriptArgument("enumtests.lua")
             }
         }
+
+    /**
      * One snapshot probe of the build cache and the project's xmake services, answering
      * machine-readably between `__begin__`/`__end__` markers. Runs the probeservices.lua
      * script on the toolkit's own host - the state it reads (the persisted cache option,
@@ -267,40 +269,12 @@ class XMakeCommandFactory(
             }
         }
 
->    fun createInfoQuery(queryName: String, jsonOutput: Boolean = true): XMakeCommand =
+    fun createInfoQuery(queryName: String, jsonOutput: Boolean = true): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             show(queryName, json = jsonOutput)
         }
 
     /**
-     * One `xmake check clang.tidy` pass over the whole project, in this profile's context:
-     * xmake builds the compile database the checker reads and prints its findings verbatim
-     * on stdout, in clang-tidy's own `file:line:col: severity: message [check]` form.
-     */
-    fun createClangTidyCheck(checks: String? = null): XMakeCommand = createCommand {
-        check("clang.tidy")
-        checks?.let { option("--checks" to it) }
-    }
-
-    /**
-     * One `xmake test` pass; [filters] are the group and name patterns the action takes.
-     * `--output-on-failure` only exists from xmake 3.1.2 on - older versions reject the
-     * unknown flag, so the toggle silently drops there and the report section carries
-     * the failing output instead.
-     */
-    fun createTestRun(
-        filters: List<String> = emptyList(),
-        outputOnFailure: Boolean = true,
-    ): XMakeCommand = createCommand {
-        test(
-            buildList {
-                addAll(filters)
-                if (outputOnFailure && versionAtLeast(toolkit.version, 3, 1, 2)) {
-                    add("--output-on-failure")
-                }
-            },
-        )
-    }
      * One `xmake require --list`: the packages the project declares. Plain text by design -
      * this xmake accepts `--format=json` on the listing and silently ignores it
      * (docs/roadmap-designs/xrepo-packages.md, verified on 3.1.2) - so no json flag goes out.
@@ -356,6 +330,36 @@ class XMakeCommandFactory(
         }
 
     /**
+     * One `xmake check clang.tidy` pass over the whole project, in this profile's context:
+     * xmake builds the compile database the checker reads and prints its findings verbatim
+     * on stdout, in clang-tidy's own `file:line:col: severity: message [check]` form.
+     */
+    fun createClangTidyCheck(checks: String? = null): XMakeCommand = createCommand {
+        check("clang.tidy")
+        checks?.let { option("--checks" to it) }
+    }
+
+    /**
+     * One `xmake test` pass; [filters] are the group and name patterns the action takes.
+     * `--output-on-failure` only exists from xmake 3.1.2 on - older versions reject the
+     * unknown flag, so the toggle silently drops there and the report section carries
+     * the failing output instead.
+     */
+    fun createTestRun(
+        filters: List<String> = emptyList(),
+        outputOnFailure: Boolean = true,
+    ): XMakeCommand = createCommand {
+        test(
+            buildList {
+                addAll(filters)
+                if (outputOnFailure && versionAtLeast(toolkit.version, 3, 1, 2)) {
+                    add("--output-on-failure")
+                }
+            },
+        )
+    }
+
+    /**
      * One `xmake pack` pass over the project's xpack packages. [formats] filters what the
      * xpacks already declare (`-f` intersects, it cannot add - an undeclared format is
      * silently skipped by xmake, docs/roadmap-designs/packaging.md, F7); empty packs every
@@ -381,7 +385,7 @@ class XMakeCommandFactory(
         }
     }
 
->    private fun createCommand(
+    private fun createCommand(
         environmentVariables: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT,
         environmentOverrides: Map<String, String> = emptyMap(),
         configure: XMakeCommandLine.() -> Unit,

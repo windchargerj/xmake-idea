@@ -215,13 +215,19 @@ internal class XMakePackagesPanel(
     }
 
     /** One publish: rebuild the rows when their shape changed, repaint for a fresh info,
-     *  and re-render the details of whatever stays selected. */
+     *  and re-render the details of whatever stays selected. A failed first load publishes
+     *  null over null - no identity change - yet must still reach [rebuild], or the tree
+     *  would keep promising "Loading" while only the summary line knows the failure. */
     private fun onSnapshot(snapshot: XMakePackagesSnapshot?) {
         val structureChanged = snapshot?.packages !== treeSource?.packages ||
                 snapshot?.depgraph !== treeSource?.depgraph ||
                 snapshot?.searchResults !== treeSource?.searchResults
         treeSource = snapshot
-        if (structureChanged) rebuild(snapshot) else tree.repaint()
+        if (structureChanged || (snapshot == null && service.lastError != null)) {
+            rebuild(snapshot)
+        } else {
+            tree.repaint()
+        }
         updateSummary(snapshot)
         // A selection made while a refresh held the lane gets its info now; cached or busy
         // calls inside are no-ops.
@@ -247,6 +253,10 @@ internal class XMakePackagesPanel(
             }
         }
         tree.emptyText.text = when {
+            snapshot == null && service.lastError != null ->
+                // The first query never landed; the reason sits in lastError, and the
+                // summary line above the tree repeats it in red.
+                "Could not list packages - ${service.lastError} - fix the problem and press Refresh"
             snapshot == null -> LOADING
             results != null -> "No hits - try another term"
             else -> "No packages declared"
@@ -258,12 +268,19 @@ internal class XMakePackagesPanel(
     private fun updateSummary(snapshot: XMakePackagesSnapshot?) {
         val base = when {
             snapshot?.searchResults != null ->
-                "Search: ${snapshot.searchResults.size} hit(s) - Refresh returns to the package list"
+                "Search: ${snapshot.searchResults.size} hit(s) - clear the field and press Enter, " +
+                        "or Refresh, to return to the package list"
             snapshot != null -> "${snapshot.packages.size} declared package(s)"
             else -> "Press Refresh to list the declared packages"
         }
         val error = service.lastError
-        summaryLabel.text = if (error == null) base else "$base - last operation failed: $error"
+        summaryLabel.text = buildString {
+            append(base)
+            // While an operation holds the pipeline the grayed buttons need their reason on
+            // show - the same narration the Services panel's message line gives.
+            service.currentOperation?.let { operation -> append(" - ").append(operation) }
+            if (error != null) append(" - last operation failed: ").append(error)
+        }
         summaryLabel.foreground = if (error == null) UIUtil.getLabelForeground() else JBColor.RED
     }
 
@@ -278,7 +295,13 @@ internal class XMakePackagesPanel(
     private fun renderDetails(name: String) {
         val info = service.snapshot?.infos?.get(name)
         details.text = when {
-            info == null && service.busy -> "Loading the info of '$name' - xmake require --info --format=json $name"
+            // A busy pipeline with a named operation is not loading this info at all - the
+            // fetchInfo call was a no-op; say what the wait is really on.
+            info == null && service.busy && service.currentOperation != null ->
+                "Waiting for the current operation to finish before loading the info of '$name' - " +
+                        "${service.currentOperation} - then the row loads its info, or select it again"
+            info == null && service.busy ->
+                "Loading the info of '$name' - xmake require --info --format=json $name"
             info == null -> "No info available for '$name' - the query failed or produced nothing usable"
             else -> renderInfo(name, info)
         }
@@ -372,7 +395,13 @@ internal class XMakePackagesPanel(
                 textEditor.emptyText.text = "Search packages (Enter)"
                 textEditor.addActionListener {
                     val term = text.trim()
-                    if (term.isNotEmpty()) service.search(term)
+                    if (term.isNotEmpty()) {
+                        service.search(term)
+                    } else {
+                        // An empty Enter is the way out of search mode: the declared list
+                        // comes back from the snapshot the search rode on, no lane time spent.
+                        service.exitSearch()
+                    }
                 }
                 preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
             }

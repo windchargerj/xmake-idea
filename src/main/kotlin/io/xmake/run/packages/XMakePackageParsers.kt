@@ -24,6 +24,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 
+import io.xmake.utils.stripAnsi
+
 /**
  * Parses the output of the `xmake require` queries the packages view drives.
  *
@@ -38,8 +40,6 @@ import kotlinx.serialization.json.booleanOrNull
 internal object XMakePackageParsers {
 
     private val json = Json { ignoreUnknownKeys = true }
-
-    private val ANSI_ESCAPE = Regex("\u001B\\[[0-9;]*[A-Za-z]")
 
     /** Diagnostic prologue lines start unindented, so they never read as package data. */
     private val DIAGNOSTIC_PREFIX = Regex("""(?i)^\s*(note|warning|error|checking|stack traceback)\s*[: ]""")
@@ -65,7 +65,7 @@ internal object XMakePackageParsers {
      * cached fetch info, not installed state.
      */
     fun parseRequireList(output: String): List<XMakeRequireEntry> {
-        val text = output.replace(ANSI_ESCAPE, "")
+        val text = stripAnsi(output)
         jsonPayload(text)?.let { payload ->
             val entries = entriesFromJson(payload)
             if (entries != null) return entries
@@ -100,7 +100,7 @@ internal object XMakePackageParsers {
      * still parsed (version `latest`, no repo).
      */
     fun parsePackageInfo(output: String): XMakePackageInfo? {
-        val element = jsonPayload(output.replace(ANSI_ESCAPE, "")) ?: return null
+        val element = jsonPayload(stripAnsi(output)) ?: return null
         val obj = when (element) {
             is JsonArray -> element.firstOrNull() as? JsonObject
             is JsonObject -> element
@@ -133,7 +133,7 @@ internal object XMakePackageParsers {
 
     /** Parses `--search` output into the repository hits; a hit's description may be empty. */
     fun parseSearchResults(output: String): List<XMakePackageSearchEntry> =
-        output.replace(ANSI_ESCAPE, "").lineSequence()
+        stripAnsi(output).lineSequence()
             .mapNotNull { line ->
                 val match = SEARCH_LINE.find(line.trim()) ?: return@mapNotNull null
                 val (nameVersion, description, repo) = match.destructured
@@ -151,7 +151,7 @@ internal object XMakePackageParsers {
     /** Parses the `--depgraph --format=json` output; null on any shape mismatch, which the
      *  view degrades to "no dependency children". */
     fun parseDepgraph(output: String): XMakePackageDepgraph? {
-        val obj = jsonPayload(output.replace(ANSI_ESCAPE, "")) as? JsonObject ?: return null
+        val obj = jsonPayload(stripAnsi(output)) as? JsonObject ?: return null
         val packages = (obj["packages"] as? JsonArray)?.mapNotNull { item ->
             (item as? JsonObject)?.let {
                 XMakeDepNode(
