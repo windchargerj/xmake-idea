@@ -74,7 +74,7 @@ internal fun runClangTidy(project: Project) {
         val findings = StringBuilder()
         var failed: Exception? = null
         try {
-            XMakeCommandProcessHandler(
+            val handler = XMakeCommandProcessHandler(
                 project,
                 command,
                 XMakeConsoleOptions(showConsole = true),
@@ -82,7 +82,11 @@ internal fun runClangTidy(project: Project) {
                     console.print(text, ConsoleViewContentType.getConsoleViewType(outputType))
                     findings.append(text)
                 },
-            ).awaitSuccessfulCompletion()
+            )
+            // The analysis view's stop button kills the running check through this
+            // registration; it clears itself when the process ends, however it ends.
+            AnalysisService.getInstance(project).registerCheckProcess(handler.processHandler)
+            handler.awaitSuccessfulCompletion()
         } catch (error: Exception) {
             failed = error
             Log.warn("clang-tidy check failed", error)
