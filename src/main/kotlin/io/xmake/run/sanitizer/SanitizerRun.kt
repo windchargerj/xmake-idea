@@ -35,7 +35,11 @@ import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.XMakeExecutor
 import io.xmake.run.command.xmakeCommands
 import io.xmake.run.state.XMakeRunState
+import io.xmake.run.target.activeOrSingleXMakeBuildProfile
 import io.xmake.run.target.requireXMakeBuildProfileFor
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** The sanitizer a configuration selected, or null for a plain run. */
 internal val XMakeRunConfiguration.sanitizer: SanitizerKind?
@@ -71,6 +75,17 @@ internal suspend fun prepareSanitizerRun(
                     "or use AddressSanitizer under MSVC or clang",
         )
     }
+    // A local run mirrors its reports into files the plugin reads back at the end: the
+    // directory must exist before the target starts - current runtimes create it
+    // themselves, older ones only fall back to stderr - and it must start empty, so a
+    // debug launch's or a killed session's leftovers never pose as this run's findings.
+    if (host.type == ToolkitHostType.LOCAL) {
+        sanitizerLogDirectory(project)?.let { directory ->
+            runCatching { Files.createDirectories(directory) }
+                .onFailure { error -> Log.warn("Could not create the sanitizer log directory $directory", error) }
+            clearSanitizerLogFiles(directory, kind)
+        }
+    }
     executor.execute(
         console,
         factory.createConfigure(modeOverride = DEBUG_MODE, policies = mapOf(kind.policy to "y")),
@@ -93,9 +108,18 @@ private val WINDOWS_UNSUPPORTED = setOf(SanitizerKind.MEMORY, SanitizerKind.THRE
  * The environment the sanitized target runs with: the configuration's own variables, plus
  * the runtime's option variable carrying the defaults - unless the user set their own,
  * which always win.
+ *
+ * The defaults also point the runtime's `log_path` at a file under the project root, so
+ * the run leaves a complete report the plugin reads back once the target exits - the
+ * stderr collection alone can garble findings (an interleaved console) or drop them
+ * (its size cap). The mirror rides only while the run's build profile resolves a local
+ * toolkit: a WSL or SSH run writes the file on its own filesystem, where the IDE could
+ * never read it back, so those runs stay with the plain stderr collection. A `log_path`
+ * of the user's own is never replaced.
  */
 internal fun sanitizerEnvironment(configuration: XMakeRunConfiguration): EnvironmentVariablesData {
     val kind = configuration.sanitizer ?: return configuration.runEnvironment
+    val project = configuration.project
     val userOptions = configuration.runEnvironment.envs[kind.optionVariable] ?: kind.defaultOptions
     // The runtime's options read one `key:value` list; the user's own keys win, and the
     // defaults fill only the keys their value does not carry.
@@ -105,16 +129,123 @@ internal fun sanitizerEnvironment(configuration: XMakeRunConfiguration): Environ
         .plus(userOptions)
         .joinToString(":")
         .ifEmpty { userOptions }
+    val mirrorOption = mirrorLogPathOption(project, kind)
+        ?.takeIf { !userOptions.contains(LOG_PATH_KEY) }
+    val options = if (mirrorOption == null) merged else "$merged:$mirrorOption"
     return EnvironmentVariablesData.create(
-        configuration.runEnvironment.envs + (kind.optionVariable to merged),
+        configuration.runEnvironment.envs + (kind.optionVariable to options),
         configuration.runEnvironment.isPassParentEnvs,
     )
 }
 
+/** The directory under the project root where the runtimes' report mirror files land. */
+private const val SANITIZER_LOG_DIRECTORY = ".xmake-analysis"
+
+/** The pid placeholder the runtimes expand into the file name the read matches back. */
+private const val PID_PLACEHOLDER = "%p"
+
+/** Marks a user's own log_path, which the mirrored default never overrides. */
+private const val LOG_PATH_KEY = "log_path="
+
+/** How much of the mirror files one run reads back; the stderr collector keeps the same
+ *  budget, and for the same reason: a chatty target must not grow the IDE. */
+private const val SANITIZER_LOG_READ_LIMIT = 2 * 1024 * 1024
+
 /**
- * Parses the collected stderr of one sanitized run into findings and hands them to the
+ * The `log_path` default of one sanitized local run: the runtime mirrors every report
+ * into `<project root>/.xmake-analysis/<kind>.<pid>.log`. Null when the run's build
+ * profile resolves no local toolkit or the project carries no base path - a WSL or SSH
+ * run has no file the IDE could point at, and neither has the default project.
+ */
+private fun mirrorLogPathOption(project: Project, kind: SanitizerKind): String? {
+    val mirrorsLocally = project.activeOrSingleXMakeBuildProfile
+        ?.resolveToolkit(project)?.host?.type == ToolkitHostType.LOCAL
+    if (!mirrorsLocally) return null
+    val file = sanitizerLogDirectory(project) ?: return null
+    return logPathOption(file.resolve("${kind.logPrefix()}.$PID_PLACEHOLDER.log"))
+}
+
+/**
+ * The `log_path` option for [file]: the path forward-slashed and the whole value quoted,
+ * because the options list splits on `:` and a Windows drive colon would otherwise cut
+ * the path in two.
+ */
+internal fun logPathOption(file: Path): String =
+    "log_path=\"${file.toString().replace('\\', '/')}\""
+
+/** The mirror directory of [project], or null when the project has no base path. */
+private fun sanitizerLogDirectory(project: Project): Path? =
+    project.basePath?.let { root -> Path.of(root, SANITIZER_LOG_DIRECTORY) }
+
+/** The file-name prefix of one sanitizer's mirror files: `address.1234.log` and friends. */
+private fun SanitizerKind.logPrefix(): String = name.lowercase()
+
+/** The mirror files of [kind] in [directory], name-sorted so the read stays deterministic. */
+private fun sanitizerLogFiles(directory: Path, kind: SanitizerKind): List<Path> {
+    if (!Files.isDirectory(directory)) return emptyList()
+    val mirrorName = Regex("^${Regex.escape(kind.logPrefix())}\\.\\d+\\.log$")
+    return try {
+        Files.list(directory).use { files ->
+            files.filter { file -> mirrorName.matches(file.fileName.toString()) }
+                .sorted()
+                .toList()
+        }
+    } catch (error: IOException) {
+        Log.warn("Could not list the sanitizer log directory $directory", error)
+        emptyList()
+    }
+}
+
+/**
+ * Reads the mirror files of one run back and deletes them, joined in name order. The
+ * files hold what the stderr collection could lose - a report an interleaved console
+ * garbled, or the tail its cap dropped - and deleting keeps the directory empty, so
+ * nothing of a killed session leaks into a later run's report. One budget bounds the
+ * read the way the stderr collector bounds its capture.
+ */
+internal fun readSanitizerLogFiles(directory: Path, kind: SanitizerKind): String {
+    val collected = StringBuilder()
+    var budget = SANITIZER_LOG_READ_LIMIT
+    for (file in sanitizerLogFiles(directory, kind)) {
+        val text = try {
+            if (budget <= 0) null
+            else Files.newInputStream(file).use { input ->
+                val bytes = input.readNBytes(budget)
+                budget -= bytes.size
+                bytes.toString(Charsets.UTF_8)
+            }
+        } catch (error: IOException) {
+            Log.warn("Could not read the sanitizer log file $file", error)
+            null
+        }
+        if (text != null) {
+            if (collected.isNotEmpty()) collected.append('\n')
+            collected.append(text)
+        }
+        // Readable or not, the file served this run alone; it must not survive it.
+        runCatching { Files.deleteIfExists(file) }
+    }
+    Log.info("Collected ${collected.length} character(s) of ${kind.displayName} log files")
+    return collected.toString()
+}
+
+/** The run-wide entry the runner calls on a local host; other hosts keep stderr only. */
+internal fun readSanitizerLogFiles(project: Project, kind: SanitizerKind): String =
+    sanitizerLogDirectory(project)?.let { directory -> readSanitizerLogFiles(directory, kind) } ?: ""
+
+/** Deletes [kind]'s mirror files ahead of a run, so the read at its end sees this run's
+ *  files alone - not a debug launch's or a killed session's leftovers. */
+private fun clearSanitizerLogFiles(directory: Path, kind: SanitizerKind) {
+    sanitizerLogFiles(directory, kind).forEach { file -> runCatching { Files.deleteIfExists(file) } }
+}
+
+/**
+ * Parses the collected output of one sanitized run into findings and hands them to the
  * analysis view. A run without findings still replaces the view's content - absence is
  * the result too - and both outcomes leave a line in the run console pointing at the view.
+ * The mirror files' text joins the stderr inside the same parser: a runtime writes each
+ * report to either the file or stderr, never both, and the parser's signature merge
+ * keeps a report that somehow reached both channels counted once.
  */
 internal fun publishAnalysisReport(
     project: Project,
@@ -122,10 +253,14 @@ internal fun publishAnalysisReport(
     runCommand: XMakeCommand,
     kind: SanitizerKind,
     stderr: String,
+    logFiles: String = "",
     console: XMakeConsole? = null,
 ) {
     val report = SanitizerReportParser(kind)
-        .apply { feed(stderr) }
+        .apply {
+            feed(stderr)
+            if (logFiles.isNotEmpty()) feed(logFiles)
+        }
         .finish(configuration.name)
         .copy(toolkit = runCommand.toolkit, hostWorkingDirectory = runCommand.workingDirectory)
     invokeLater {
