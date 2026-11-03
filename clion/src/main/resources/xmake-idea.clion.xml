@@ -33,6 +33,10 @@
         <valgrindNativeSession implementation="io.xmake.debug.clion.valgrind.ClionValgrindNativeSessionFactory"/>
     </extensions>
 
+    <extensions defaultExtensionNs="com.intellij.profiler.api">
+        <ProfilerDumpParserProvider implementation="io.xmake.debug.clion.perf.XMakePerfDumpParserProvider"/>
+    </extensions>
+
     <extensions defaultExtensionNs="com.intellij.platform.dap">
         <debugAdapterSupportProvider implementation="io.xmake.debug.clion.dap.XMakeDebugAdapterProvider"/>
     </extensions>
