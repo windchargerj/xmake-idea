@@ -2,17 +2,39 @@
     <dependencies>
         <module name="intellij.platform.dap"/>
         <module name="intellij.clion.toolchains"/>
+        <!-- The capability alias gates this module's loading: loaded where CLion exists,
+             absent where it does not; it does NOT make CLion classes visible - the native
+             Valgrind panel reaches them through CLion's own class loader instead. -->
         <plugin id="com.intellij.modules.clion"/>
         <plugin id="com.intellij.nativeDebug"/>
         <plugin id="com.intellij.clion-compdb"/>
+        <!-- The profiler dump API for the perf flame graph; a product module of its own. -->
+        <plugin id="com.intellij.modules.profiler"/>
     </dependencies>
+
+    <!-- The native Valgrind results UI, behind this module's own extension point: the API and
+         its implementation both live here, and a CLion without the memory profiling module
+         answers through the factory's null return instead. -->
+    <extensionPoints>
+        <extensionPoint name="valgrindNativeSession"
+                        interface="io.xmake.debug.clion.valgrind.XMakeValgrindNativeSessionFactory"/>
+    </extensionPoints>
 
     <extensions defaultExtensionNs="io.xmake">
         <debugSupport implementation="io.xmake.debug.clion.ClionDebugSupport"/>
+        <analysisSupport implementation="io.xmake.debug.clion.ClionAnalysisSupport"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
         <postStartupActivity implementation="io.xmake.debug.XMakeCompDBAutoLinkActivity"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="xmake-idea.clion">
+        <valgrindNativeSession implementation="io.xmake.debug.clion.valgrind.ClionValgrindNativeSessionFactory"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij.profiler.api">
+        <ProfilerDumpParserProvider implementation="io.xmake.debug.clion.perf.XMakePerfDumpParserProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij.platform.dap">
