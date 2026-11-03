@@ -79,4 +79,28 @@ class ClangTidyReportParserTest {
         assertEquals(0, report.issues.size)
         assertEquals(0, report.totalFindings)
     }
+
+    @Test
+    fun `reads xmake's wrapped 3x output with its colors`() {
+        val escape = "[1m"
+        val reset = "[0m"
+        val parser = ClangTidyReportParser()
+        parser.feed(
+            "[  0%]: clang-tidy.analyzing src\\main.cpp\r\n" +
+                    "${escape}src\\main.cpp:\r\n" +
+                    "src\\main.cpp:4:14: warning: use nullptr [modernize-use-nullptr]\r\n" +
+                    "    4 |     int* p = NULL;\r\n" +
+                    "      |              ^~~~\r\n" +
+                    "1 warning generated.\r\n${reset}\r\n" +
+                    "[100%]: clang-tidy analyzed 1 files, spent 0.171s\r\n",
+        )
+        val report = parser.finish("demo")
+
+        assertEquals(1, report.issues.size)
+        val finding = report.issues[0]
+        assertEquals("modernize-use-nullptr", finding.type)
+        assertEquals("src\\main.cpp", finding.primaryFrame?.file)
+        assertEquals(4, finding.primaryFrame?.line)
+        assertEquals(14, finding.primaryFrame?.column)
+    }
 }
