@@ -28,6 +28,7 @@ import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.XMakeCommandProcessHandler
 import io.xmake.run.command.xmakeCommands
+import io.xmake.run.sanitizer.sanitizerEnvironment
 import io.xmake.run.target.requireXMakeBuildProfileFor
 
 internal class XMakeRunState private constructor(
@@ -35,12 +36,16 @@ internal class XMakeRunState private constructor(
     /** The run configuration the state was built from; its options drive the launch. */
     val configuration: XMakeRunConfiguration,
     val configureCommand: XMakeCommand,
-    private val runCommand: XMakeCommand,
+    /** The target launch command; sanitized runs read its toolkit and working directory. */
+    val runCommand: XMakeCommand,
 ) : CommandLineState(environment) {
 
     public override fun startProcess(): ProcessHandler = startProcess { }
 
-    internal fun startProcess(onTerminated: () -> Unit): ProcessHandler =
+    internal fun startProcess(
+        onTextAvailable: (String, com.intellij.openapi.util.Key<*>) -> Unit = { _, _ -> },
+        onTerminated: () -> Unit = {},
+    ): ProcessHandler =
         XMakeCommandProcessHandler(
             environment.project,
             runCommand,
@@ -48,6 +53,7 @@ internal class XMakeRunState private constructor(
                 showExitCode = true,
                 emulateTerminal = configuration.emulateTerminalInConsole,
             ),
+            onTextAvailable = onTextAvailable,
             onTerminated = onTerminated,
         ).processHandler
 
@@ -83,7 +89,7 @@ internal class XMakeRunState private constructor(
                     configuration.runTarget,
                     configuration.runArguments,
                     configuration.launchWorkingDirectory,
-                    configuration.runEnvironment,
+                    sanitizerEnvironment(configuration),
                 ),
             )
         }
