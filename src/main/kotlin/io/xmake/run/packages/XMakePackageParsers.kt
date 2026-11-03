@@ -50,9 +50,21 @@ internal object XMakePackageParsers {
     /** `-> <name>-<version>: <description> (in <repo>)`, description possibly empty. */
     private val SEARCH_LINE = Regex("""->\s*(\S+?)\s*:\s*(.*?)\s*(?:\(in\s+(\S+)\)\s*)?$""")
 
-    /** Splits `name-version`, where the version starts with a digit: the greedy name part
-     *  backtracks past versions with dashes (`1.2.3-beta1`) to the dash that opens one. */
-    private val NAME_VERSION = Regex("""(.*)-(\d.*)""")
+    /** The `note:` / `error:` lines a search can print instead of hits. Deliberately
+     *  narrower than [DIAGNOSTIC_PREFIX]: `checking for platform ...` prologue is noise
+     *  no user can act on, while these two name the real blocker. */
+    private val SEARCH_DIAGNOSTIC = Regex("""(?i)^\s*(note|error)\s*[: ]""")
+
+    /** Splits `name-version`, where the version starts with a digit or `v` + a digit. The
+     *  `v` matters: xrepo keeps the raw `add_versions` strings in the hit tokens, and the
+     *  `v` prefix is common there (`zlib-v1.3.2`, `minizip-v1.3.2`) - the digit-only split
+     *  left the whole token as the name, and an install built on it asked xmake for a
+     *  package that does not exist (docs/roadmap-designs/audit-packages.md, section 2,
+     *  verified on 3.1.2). Only `v` is accepted as a letter prefix - the audit saw no other
+     *  one, and accepting bare letters would mis-split names that end in a word. The greedy
+     *  name part still backtracks to the dash that opens the version, so dashed names
+     *  (`minizip-ng-4.2.2`) and dashed versions (`1.2.3-beta1`) split as before. */
+    private val NAME_VERSION = Regex("""(.*)-(v?\d.*)""")
 
     /** How deep the dependency walk follows `deps`; a real graph is shallow, a corrupt one
      *  might not be, and the cap keeps a corrupt cycle from hanging a refresh. */
@@ -131,9 +143,17 @@ internal object XMakePackageParsers {
         )
     }
 
-    /** Parses `--search` output into the repository hits; a hit's description may be empty. */
-    fun parseSearchResults(output: String): List<XMakePackageSearchEntry> =
-        stripAnsi(output).lineSequence()
+    /**
+     * Parses `--search` output into the repository hits plus the `note:`/`error:` lines
+     * xmake printed around them; a hit's description may be empty. The diagnostics are the
+     * difference between a silent miss and a diagnosis: on xmake 2.8.7 without unzip/7zip
+     * the search prints `error: failed to find unzip or 7zip!` and exits 0 with zero hits
+     * (docs/roadmap-designs/audit-packages.md, sections 1.6 and 3.1), so the line arrives
+     * as stdout and rides out to the view instead of vanishing into "no hits".
+     */
+    fun parseSearchResults(output: String): XMakeSearchResults {
+        val text = stripAnsi(output)
+        val hits = text.lineSequence()
             .mapNotNull { line ->
                 val match = SEARCH_LINE.find(line.trim()) ?: return@mapNotNull null
                 val (nameVersion, description, repo) = match.destructured
@@ -147,6 +167,12 @@ internal object XMakePackageParsers {
             }
             .filter { it.name.isNotEmpty() }
             .toList()
+        val diagnostics = text.lineSequence()
+            .filter { line -> SEARCH_DIAGNOSTIC.containsMatchIn(line.trim()) }
+            .map(String::trim)
+            .toList()
+        return XMakeSearchResults(hits, diagnostics)
+    }
 
     /** Parses the `--depgraph --format=json` output; null on any shape mismatch, which the
      *  view degrades to "no dependency children". */

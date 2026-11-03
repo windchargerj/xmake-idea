@@ -67,6 +67,17 @@ data class XMakePackageSearchEntry(
 )
 
 /**
+ * One `--search` answer: the repository hits and the `note:`/`error:` lines xmake printed
+ * around them. The diagnostics matter exactly when [hits] is empty - a search that answers
+ * exit 0 with no hits and an `error:` line is a broken toolchain (xmake 2.8.7 without
+ * unzip/7zip), not a misspelled term (docs/roadmap-designs/audit-packages.md, section 1.6).
+ */
+data class XMakeSearchResults(
+    val hits: List<XMakePackageSearchEntry>,
+    val diagnostics: List<String> = emptyList(),
+)
+
+/**
  * The `xmake require --depgraph --format=json` output: every package node and which other
  * packages it needs. [rootPackages] are the project's direct requirements; the view nests
  * the rest under their dependents.
@@ -86,12 +97,13 @@ data class XMakeDepNode(
 /**
  * The packages view's state at one moment. [infos] maps a queried package name to its info,
  * or to null when the query ran but produced nothing usable - the null stops the view from
- * re-querying on every selection. [searchResults] is non-null only while search results are
- * shown; a refresh swaps back to the package list.
+ * re-querying on every selection. [searchResults] is non-null while the tree shows the hits
+ * as its filtered view; the view survives refreshes (an install from a hit lands with the
+ * hits still shown) and is left only by the explicit exits - Esc, or an emptied field.
  */
 data class XMakePackagesSnapshot(
     val packages: List<XMakeRequireEntry>,
     val depgraph: XMakePackageDepgraph?,
     val infos: Map<String, XMakePackageInfo?> = emptyMap(),
-    val searchResults: List<XMakePackageSearchEntry>? = null,
+    val searchResults: XMakeSearchResults? = null,
 )
