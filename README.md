@@ -45,6 +45,8 @@ It is deeply integrated with [XMake](https://github.com/xmake-io/xmake) and Inte
 
 It also supports other IntelliJ-based platforms, such as CLion and Android Studio.
 
+## Requirements
+
 The plugin requires IntelliJ Platform 2026.2 or later. CLion and IntelliJ IDEA are currently tested.
 
 Install [XMake](https://github.com/xmake-io/xmake) on the machine or environment where you build the project. Add `xmake` to `PATH` for automatic detection.
@@ -114,7 +116,7 @@ Select `XMake > Build Project` to build the current project. Build output and re
 3. To manually generate it, click `Update Compile Commands` in the main menu.
 4. CLion should automatically detect `compile_commands.json`. If not, you can open it via `File > Open...`.
 
-## Debug
+## Debugging
 
 ### DAP Debugging (Optional)
 
@@ -131,7 +133,8 @@ Debug Target launches through CLion's own debugger: it follows the active debug 
     - Or manually select/input the path to your DAP driver executable (e.g., `/usr/bin/lldb-dap`).
 4. Click the Debug button to start debugging.
 
-### Legacy Debugging (CMake)
+<details>
+<summary><strong>Legacy Debugging (CMake)</strong></summary>
 
 > Supports CLion (>= 2026.2)
 
@@ -139,23 +142,29 @@ Debug Target launches through CLion's own debugger: it follows the active debug 
 2. Click "File > Open..." to choose this file.
 3. Choose "Run > Debug..." or "Run > Debug 'project name'" to start debugging.
 
-## How to contribute?
+</details>
 
-Due to limited personal time, I cannot maintain this plug-in all the time. If you encounter problems, you are welcome to download the plug-in source code to debug it yourself and open pr to contribute.
+## Build From Source
 
-### Build this project
+To build or run this plugin from source, install JDK 25 and use the included Gradle wrapper.
 
-This project requires a JDK 25 toolchain. Use the included Gradle wrapper to build it.
+### Windows
 
 ```powershell
 .\gradlew.bat build
+.\gradlew.bat runIde --stacktrace
 ```
 
-On Linux or macOS, run `./gradlew build` instead.
+### Linux or macOS
 
-### Run and debug this project
+```bash
+./gradlew build
+./gradlew runIde --stacktrace
+```
 
-Run `.\gradlew.bat runIde --stacktrace` on Windows or `./gradlew runIde --stacktrace` on Linux and macOS.
+## Contributing
+
+Due to limited personal time, I cannot maintain this plug-in all the time. If you encounter problems, you are welcome to download the plug-in source code to debug it yourself and open pr to contribute.
 
 For more details, please visit: [CONTRIBUTING](https://github.com/xmake-io/xmake-idea/blob/master/CONTRIBUTING.md)
 
