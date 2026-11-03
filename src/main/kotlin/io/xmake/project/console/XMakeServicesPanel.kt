@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, Xmake Open Source Community.
+ * Copyright (C) 2015-present, XMake Open Source Community.
  */
 package io.xmake.project.console
 
@@ -22,8 +22,7 @@ import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -34,71 +33,58 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.command.xmakeExecutor
-import io.xmake.run.command.xmakeCommands
+import io.xmake.run.target.SELECT_BUILD_PROFILE_FIRST
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
 import io.xmake.utils.cli.XMakeServiceKind
-import io.xmake.utils.cli.XMakeServiceVerb
-import io.xmake.utils.notify
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
  * The "Services" content of the XMake tool window: the build cache state (the persisted
- * `ccache` option and the program xmake actually resolves) plus one row per `xmake service`
- * kind, fed by snapshot probes only. The probe runs through the project's XMakeExecutor on the
- * toolkit's own host (a bundled script, see probeservices.lua), and every state-changing
- * action runs a real xmake command on the same lane with its output in the Output console -
- * the panel itself never touches the toolkit, a socket, or a file.
+ * `ccache` option and the program xmake actually resolves) plus one editable, status-
+ * iconized row per `xmake service` kind - the same [XMakeServiceDetailPanel] the
+ * platform Services contributor shows in its detail pane, fed by the same
+ * [XMakeServicesSnapshotService]. The panel itself never touches the toolkit, a
+ * socket, or a file: probing and state changes run on the project's executor lane
+ * with their output in the Console tab.
  *
- * There is no resident listener: the snapshot refreshes when the tab is activated, on
- * Refresh, and after any toggle/connect action, so nothing probes while another tab is up.
+ * There is no resident listener: the snapshot refreshes when the tab is activated
+ * (the factory wires that), when the platform Services window shows, and after any
+ * action - so nothing probes while both surfaces are hidden.
  */
 class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(true), Disposable {
 
-    private var snapshot: XMakeServicesSnapshot? = null
+    private val snapshots get() = project.xmakeServicesSnapshots
 
-    /** True while [applySnapshot] moves the checkbox, so the user's listener ignores it. */
+    /** True while [applyCheckboxState] moves the checkbox, so the user's listener ignores it. */
     private var applyingCheckboxState = false
 
-    /**
-     * True while a probe or a toggle/connect sits on the executor lane or runs against it.
-     * The panel disables its controls then - the lane serializes against builds, so a
-     * click during the wait would queue a second command to run after the first, and
-     * nothing else tells the user the wait is on. Cleared by the EDT hop that lands the
-     * result or the failure.
-     */
-    @Volatile
-    private var probing = false
-
-    private val messageLabel = JBLabel("Activate this tab or press Refresh to probe the build cache and service status")
+    private val messageLabel = JBLabel(INITIAL_MESSAGE)
 
     private val cacheCheckBox = JCheckBox("ccache (--ccache)")
     private val cacheToolLabel = JBLabel()
 
-    private val serviceRows: Map<XMakeServiceKind, ServiceRow> =
-        XMakeServiceKind.entries.associateWith(::ServiceRow)
+    private val serviceRows: Map<XMakeServiceKind, XMakeServiceDetailPanel> =
+        XMakeServiceKind.entries.associateWith { XMakeServiceDetailPanel(project, it) }
 
     init {
         val toolbar = ActionManager.getInstance().createActionToolbar(
-            "XMake Services Toolbar",
+            "XMakeServicesView",
             DefaultActionGroup(
                 object : DumbAwareAction("Refresh", "Re-probe the build cache and service status", AllIcons.Actions.Refresh) {
                     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
                     override fun update(event: AnActionEvent) {
-                        event.presentation.isEnabled = !probing
+                        event.presentation.isEnabled =
+                            event.project?.serviceOrNull<XMakeServicesSnapshotService>()?.probing != true
                     }
                     override fun actionPerformed(event: AnActionEvent) {
                         refresh()
@@ -115,15 +101,19 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
                 toggleCcache(cacheCheckBox.isSelected)
             }
         }
+        // Every probe or state change - including the ones started from the platform
+        // Services window - lands here as a re-render; no manual refresh remains.
+        project.messageBus.connect(this).subscribe(
+            XMakeServicesSnapshotService.TOPIC,
+            XMakeServicesSnapshotService.Listener { render() },
+        )
+        render()
     }
 
-    /** One probe, submitted on the executor lane; the result reaches Swing in one EDT hop.
-     *  Re-entrant calls are dropped: the tab's activation listener and this action both
-     *  land here, and one probe in flight is one probe the lane needs. */
+    /** One probe, submitted on the executor lane. Re-entrant calls are dropped by the
+     *  snapshot service: the tab's activation listener and this action both land there. */
     fun refresh() {
-        runThenReprobe { _, _ ->
-            // nothing to run first: this is the probe only
-        }
+        snapshots.refresh()
     }
 
     private fun buildSections(): JComponent {
@@ -155,7 +145,7 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
 
         addRow(sectionHeader("XMake services"))
         for (kind in XMakeServiceKind.entries) {
-            addRow(row(serviceRows.getValue(kind).panel))
+            addRow(serviceRows.getValue(kind))
         }
         addRow(messageLabel)
         return sections
@@ -176,15 +166,16 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
                 }
                 add(component)
             }
-            alignmentX = LEFT_ALIGNMENT
+            alignmentX = Component.LEFT_ALIGNMENT
         }
 
     /** Toggles the persisted ccache option with `xmake f --ccache=y|n` after a confirmation:
      *  the configure pass re-runs, and with a cache tool in use the next build rebuilds
-     *  affected targets. */
+     *  affected targets. The command and its re-probe run on the snapshot service's
+     *  lane flow, so both surfaces show the effect without a manual refresh. */
     private fun toggleCcache(enable: Boolean) {
         if (project.activeOrSingleXMakeBuildProfile == null) {
-            setMessage("Select an XMake build profile first!")
+            showMessage(SELECT_BUILD_PROFILE_FIRST)
             showCheckboxState(!enable)
             return
         }
@@ -192,7 +183,7 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
             showCheckboxState(!enable)
             return
         }
-        runThenReprobe { console, factory ->
+        snapshots.runThenReprobe { console, factory ->
             project.xmakeExecutor.execute(console, factory.createCcacheToggle(enable))
         }
     }
@@ -202,106 +193,38 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
             project,
             "Toggling ccache runs xmake f --ccache=${if (enable) "y" else "n"}, which reconfigures the project. " +
                 "With a cache tool in use the next build rebuilds affected targets. Continue?",
-            "Toggle Ccache",
+            "Toggle ccache",
             Messages.getQuestionIcon(),
         ) == Messages.YES
 
-    /** Connects one service kind. The one-time connect of a user-protected server prompts
-     *  for a password on stdin, which the command channel cannot answer - so a connect
-     *  without a stored token is explained instead of silently hanging the lane. */
-    private fun connectService(kind: XMakeServiceKind) {
-        val state = snapshot?.services?.get(kind) ?: return
-        val endpoint = state.endpoint ?: return
-        if (!state.tokenKnown) {
-            project.notify(
-                "No token is stored for $endpoint, so connecting would ask for a password on stdin. " +
-                    "Run `xmake service --connect --${kind.flag}` in a terminal once to store it " +
-                    "(server-side setup: `xmake service --add-user`, `xmake service --gen-token`).",
-                title = "XMake service needs a token",
-            )
-            return
-        }
-        runThenReprobe { console, factory ->
-            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.CONNECT, kind))
-        }
-    }
-
-    private fun disconnectService(kind: XMakeServiceKind) {
-        runThenReprobe { console, factory ->
-            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.DISCONNECT, kind))
-        }
-    }
-
-    /** Runs [operation] on the executor lane and re-probes the snapshot afterwards, so the
-     *  panel shows what xmake persisted, not what the command exit code suggests. Failures
-     *  land in the message label and keep the last good snapshot.
-     *
-     *  The controls disable for the whole wait - including the lane queue ahead of this
-     *  task, which a running build occupies - and re-enable when the result or the failure
-     *  lands. A call while one is in flight is dropped: it would only stack a second
-     *  command behind the first. */
-    private fun runThenReprobe(operation: suspend (console: XMakeConsole, factory: XMakeCommandFactory) -> Unit) {
-        val profile = project.activeOrSingleXMakeBuildProfile
-        if (profile == null) {
-            setMessage("Select an XMake build profile first!")
-            return
-        }
-        if (probing) return
-        probing = true
-        setControlsEnabled(false)
-        setMessage(
-            if (project.xmakeExecutor.laneBusy) {
-                "Waiting for the running build or command to finish, then probing the build cache and service status..."
-            } else {
-                "Probing the build cache and service status..."
-            },
-        )
-        @Suppress("DeferredResultUnused") // fire-and-forget: the panel's state narrates progress
-        project.xmakeExecutor.submit {
-            try {
-                val console = XMakeConsoleManager.getInstance(project).awaitReady()
-                val factory = project.xmakeCommands(profile)
-                operation(console, factory)
-                val output = project.xmakeExecutor.captureStandardOutput(factory.createBuildServicesProbe())
-                val probed = XMakeServicesProbeParser.parse(output)
-                withContext(Dispatchers.EDT) {
-                    probing = false
-                    setControlsEnabled(true)
-                    if (probed == null) {
-                        messageLabel.text = "The services probe produced no data (xmake ${factory.toolkit.name})."
-                    } else {
-                        applySnapshot(probed)
-                        messageLabel.text = "Probed at the last refresh; press Refresh to update."
-                    }
-                }
-            } catch (cancellation: CancellationException) {
-                // The project is going away with the probe still queued; the flag is all
-                // the state that must not stay stuck.
-                probing = false
-                throw cancellation
-            } catch (error: Exception) {
-                reportFailure(error)
-            }
-        }
-    }
-
-    /** The busy gate over every clickable the panel owns: the cache checkbox, each service
-     *  row's buttons, and the toolbar's Refresh action read the same [probing] flag. */
-    private fun setControlsEnabled(enabled: Boolean) {
-        cacheCheckBox.isEnabled = enabled
-        serviceRows.values.forEach { row -> row.setBusy(!enabled) }
-    }
-
-    private fun applySnapshot(newSnapshot: XMakeServicesSnapshot) {
-        snapshot = newSnapshot
-        showCheckboxState(newSnapshot.cache.enabled)
+    /** Re-renders everything from the snapshot service: the cache section, each service
+     *  detail panel, the busy gate, and the status line. One EDT hop per landed result
+     *  (the topic fires from the service's EDT section). */
+    private fun render() {
+        val snapshot = snapshots.snapshot
+        applyingCheckboxState = true
+        cacheCheckBox.isSelected = snapshot?.cache?.enabled ?: cacheCheckBox.isSelected
+        applyingCheckboxState = false
+        cacheCheckBox.isEnabled = !snapshots.probing
         cacheToolLabel.text = when {
-            newSnapshot.cache.program != null -> newSnapshot.cache.program
+            snapshot == null -> ""
+            snapshot.cache.program != null -> snapshot.cache.program
             else -> "No cache tool found - builds run uncached"
         }
-        for ((kind, state) in newSnapshot.services) {
-            serviceRows.getValue(kind).show(state)
+        for ((kind, row) in serviceRows) {
+            val state = snapshot?.services?.get(kind) ?: kind.unprobedState()
+            row.show(state, probed = snapshot != null)
+            row.setBusy(snapshots.probing)
         }
+        showMessage(snapshots.statusMessage ?: INITIAL_MESSAGE, snapshots.statusIsFailure)
+    }
+
+    /** The status line's one write path. [failure] carries the color rule the Packages
+     *  panel already follows - a red line means the last operation failed - so the probe
+     *  failure reads as one there too. */
+    private fun showMessage(message: String, failure: Boolean = false) {
+        messageLabel.text = message
+        messageLabel.foreground = if (failure) JBColor.RED else UIUtil.getLabelForeground()
     }
 
     private fun showCheckboxState(enabled: Boolean) {
@@ -310,90 +233,11 @@ class XMakeServicesPanel(private val project: Project) : SimpleToolWindowPanel(t
         applyingCheckboxState = false
     }
 
-    private suspend fun reportFailure(error: Exception) {
-        Log.warn("XMake services probe failed", error)
-        withContext(Dispatchers.EDT) {
-            probing = false
-            setControlsEnabled(true)
-            messageLabel.text = "XMake services probe failed: ${error.message}"
-            // a failed toggle/connect must not leave the panel describing a state xmake refused
-            snapshot?.let { applySnapshot(it) }
-        }
-    }
-
-    private fun setMessage(message: String) {
-        messageLabel.text = message
-    }
-
-    private fun statusText(state: XMakeServiceState): String = when {
-        state.endpoint == null -> "not configured"
-        state.connected && state.reachable == XMakeReachability.YES -> "connected / reachable"
-        state.connected && state.reachable == XMakeReachability.NO -> "connected (persisted) / unreachable now"
-        state.connected -> "connected (persisted)"
-        state.reachable == XMakeReachability.YES -> "not connected / server reachable"
-        else -> "not connected"
-    }
-
-    private fun kindName(kind: XMakeServiceKind): String = when (kind) {
-        XMakeServiceKind.REMOTE_BUILD -> "Remote build"
-        XMakeServiceKind.DISTCC_BUILD -> "Distcc"
-        XMakeServiceKind.REMOTE_CACHE -> "Remote cache"
-    }
-
-    private inner class ServiceRow(private val kind: XMakeServiceKind) {
-
-        private val endpointLabel = JBLabel()
-        private val statusLabel = JBLabel()
-        private val connectButton = JButton("Connect").apply {
-            addActionListener { connectService(kind) }
-        }
-        private val disconnectButton = JButton("Disconnect").apply {
-            addActionListener { disconnectService(kind) }
-        }
-
-        /** The last snapshot's state, so the busy gate can re-enable exactly what the
-         *  snapshot allows instead of guessing. */
-        private var state: XMakeServiceState? = null
-
-        /** The busy gate's share: while an operation runs, every button is off. */
-        private var busy = false
-
-        val panel: JComponent = row(
-            JBLabel(kindName(kind)),
-            endpointLabel,
-            statusLabel,
-            connectButton,
-            disconnectButton,
-        )
-
-        fun show(state: XMakeServiceState) {
-            this.state = state
-            endpointLabel.text = state.endpoint ?: "-"
-            statusLabel.text = statusText(state)
-            statusLabel.foreground = if (state.connected && state.reachable == XMakeReachability.NO) {
-                JBColor.RED
-            } else {
-                UIUtil.getLabelForeground()
-            }
-            refreshButtons()
-        }
-
-        fun setBusy(busy: Boolean) {
-            this.busy = busy
-            refreshButtons()
-        }
-
-        private fun refreshButtons() {
-            val state = this.state
-            connectButton.isEnabled = !busy && state?.endpoint != null
-            disconnectButton.isEnabled = !busy && state?.connected == true
-        }
-    }
-
     override fun dispose() {
     }
 
     private companion object {
-        private val Log = logger<XMakeServicesPanel>()
+        const val INITIAL_MESSAGE =
+            "Activate this tab or the platform Services window to probe the build cache and service status"
     }
 }
