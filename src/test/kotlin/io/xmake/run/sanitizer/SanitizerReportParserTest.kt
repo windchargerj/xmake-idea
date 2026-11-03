@@ -263,10 +263,74 @@ class SanitizerReportParserTest {
     @Test
     fun `carriage returns and ansi colors from a pty run are cleaned`() {
         val parser = SanitizerReportParser(SanitizerKind.UNDEFINED)
-        parser.feed("[0m/home/dev/proj/src/one.cpp:3:5: runtime error: load of value 255 is out of range\r\n")
+        parser.feed("\u001B[0m/home/dev/proj/src/one.cpp:3:5: runtime error: load of value 255 is out of range\r\n")
         val report = parser.finish("demo")
 
         assertEquals(1, report.issues.size)
         assertEquals("/home/dev/proj/src/one.cpp", report.issues[0].primaryFrame?.file)
+    }
+
+    @Test
+    fun `parses the msan warning variant that carries a pid header`() {
+        // MSan sometimes prints ==pid==WARNING, sometimes WARNING alone; both must open a report.
+        val parser = SanitizerReportParser(SanitizerKind.MEMORY)
+        parser.feed(
+            """
+            ==1234==WARNING: MemorySanitizer: use-of-uninitialized-value
+                #0 0x7f7893912f0b in main /home/dev/proj/src/umr.cc:7:3
+            SUMMARY: MemorySanitizer: use-of-uninitialized-value /home/dev/proj/src/umr.cc:7 in main
+            """.trimIndent() + "\n",
+        )
+        val report = parser.finish("demo")
+
+        assertEquals(1, report.issues.size)
+        assertEquals("use-of-uninitialized-value", report.issues[0].type)
+        assertEquals(AnalysisSeverity.ERROR, report.issues[0].severity)
+        assertEquals("/home/dev/proj/src/umr.cc", report.issues[0].primaryFrame?.file)
+        assertEquals(7, report.issues[0].primaryFrame?.line)
+    }
+
+    @Test
+    fun `parses the gcc frame form that omits the column`() {
+        val parser = SanitizerReportParser(SanitizerKind.ADDRESS)
+        parser.feed(
+            """
+            ==10==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000
+                #0 0x55e1fef5abcd in handle /home/dev/proj/src/handler.cpp:41
+                #1 0x55e1fef5aa01 in main /home/dev/proj/src/main.cpp:9
+            SUMMARY: AddressSanitizer: SEGV /home/dev/proj/src/handler.cpp:41 in handle
+            """.trimIndent() + "\n",
+        )
+        val report = parser.finish("demo")
+
+        assertEquals(1, report.issues.size)
+        val frame = report.issues[0].stacks[0].frames[0]
+        assertEquals("handle", frame.function)
+        assertEquals("/home/dev/proj/src/handler.cpp", frame.file)
+        assertEquals(41, frame.line)
+        assertEquals(null, frame.column)
+    }
+
+    @Test
+    fun `parses the ubsan report whose stack follows with print_stacktrace`() {
+        val parser = SanitizerReportParser(SanitizerKind.UNDEFINED)
+        parser.feed(
+            """
+            /home/dev/proj/src/math.cpp:8:15: runtime error: division by zero
+                #0 0x55e1fef5abcd in divide /home/dev/proj/src/math.cpp:8:15
+                #1 0x55e1fef5aa01 in main /home/dev/proj/src/main.cpp:20:1
+            SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /home/dev/proj/src/math.cpp:8:15 in divide
+            """.trimIndent() + "\n",
+        )
+        val report = parser.finish("demo")
+
+        assertEquals(1, report.issues.size)
+        val issue = report.issues[0]
+        assertEquals("division by zero", issue.type)
+        assertEquals(AnalysisSeverity.WARNING, issue.severity)
+        assertEquals(1, issue.stacks.size)
+        assertEquals("divide", issue.stacks[0].frames[0].function)
+        assertEquals("/home/dev/proj/src/math.cpp", issue.stacks[0].frames[0].file)
+        assertEquals(8, issue.stacks[0].frames[0].line)
     }
 }
