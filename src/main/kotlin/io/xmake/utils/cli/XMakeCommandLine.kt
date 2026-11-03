@@ -144,6 +144,53 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
             ?.let { args(it) }
     }
 
+    /** Adds `service`; [ServiceScope.verb] and [ServiceScope.kind] are xmake's own long flags. */
+    fun service(configure: ServiceScope.() -> Unit): XMakeCommandLine = apply {
+        val options = ServiceScope().apply(configure)
+        beginAction("service")
+        options.verb?.let { flag("--${it.flag}") }
+        options.kind?.let { flag("--${it.flag}") }
+    }
+
+    /** Adds `require`; the xrepo package action: listing, info, search, and the dependency
+     *  graph as read-only queries, install/upgrade/uninstall as mutations. Mutations must
+     *  set [RequireScope.yes] - xmake's own prompt waits on a TTY that never answers, and
+     *  the command would die at timeout. `--format=json` rides on [RequireScope.json]
+     *  verbatim, which `--info` and `--depgraph` honor; the listing silently ignores it
+     *  (docs/roadmap-designs/xrepo-packages.md, verified on xmake 3.1.2). */
+    fun require(configure: RequireScope.() -> Unit): XMakeCommandLine = apply {
+        val options = RequireScope().apply(configure)
+        beginAction("require")
+        flag("--list", options.list)
+        flag("--info", options.info)
+        flag("--search", options.search)
+        flag("--uninstall", options.uninstall)
+        flag("--upgrade", options.upgrade)
+        flag("--depgraph", options.depgraph)
+        flag("--format=json", options.json)
+        flag("-y", options.yes)
+        args(options.packages)
+    }
+
+    /** Adds `pack`; [configure] fills the options and the package names. The scope exists so
+     *  options are structurally emitted before the names - xmake's plugin-task parser swallows
+     *  everything after the first package name as another name (docs/roadmap-designs/packaging.md,
+     *  F8: a trailing `-f zip` re-enables every declared format and can then fail on an
+     *  undeclared tool). `--autobuild` is only emitted to turn xmake's `y` default off, which
+     *  keeps the line parseable by xmake versions predating the flag. */
+    fun pack(configure: PackScope.() -> Unit): XMakeCommandLine = apply {
+        val options = PackScope().apply(configure)
+        beginAction("pack")
+        option("-f" to options.formats?.takeIf { it.isNotEmpty() })
+        option("-o" to options.outputDirectory)
+        options.basename?.takeIf { it.isNotEmpty() }?.let { args("--basename=$it") }
+        if (!options.autoBuild) {
+            args("--autobuild=n")
+        }
+        args(options.extraArguments)
+        args(options.names)
+    }
+
     internal companion object {
         private val INFO_QUERY_PATTERN = Regex("[a-z]+")
     }
@@ -153,6 +200,24 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
 internal const val DEFAULT_TARGET = "default"
 /** The xmake pseudo-target that names every target; [XMakeCommandLine.target] maps it to `-a`. */
 internal const val ALL_TARGET = "all"
+
+/** The `xmake service` verbs this plugin drives; the flags are xmake's own long forms. */
+enum class XMakeServiceVerb(internal val flag: String) {
+    START("start"),
+    STOP("stop"),
+    CONNECT("connect"),
+    DISCONNECT("disconnect"),
+    RECONNECT("reconnect"),
+}
+
+/** The `xmake service` kinds. The remote cache answers to xmake's `--ccache` flag, and
+ *  [statusDir] is the directory name its client persists its status under (which is also
+ *  the kind name the bundled probeservices.lua script reports). */
+enum class XMakeServiceKind(internal val flag: String, internal val statusDir: String) {
+    REMOTE_BUILD("remote", "remote_build"),
+    DISTCC_BUILD("distcc", "distcc_build"),
+    REMOTE_CACHE("ccache", "remote_cache"),
+}
 
 @CliDsl
 internal class BuildScope internal constructor() {
@@ -195,6 +260,49 @@ internal class ProjectScope internal constructor() {
 internal class LuaScope internal constructor() {
     lateinit var script: String
     var target: String? = null
+}
+
+@CliDsl
+internal class ServiceScope internal constructor() {
+    var verb: XMakeServiceVerb? = null
+    var kind: XMakeServiceKind? = null
+}
+
+@CliDsl
+internal class RequireScope internal constructor() {
+    var list: Boolean = false
+    var info: Boolean = false
+    var search: Boolean = false
+    var uninstall: Boolean = false
+    var upgrade: Boolean = false
+    var depgraph: Boolean = false
+    var json: Boolean = false
+    /** Answers xmake's interactive prompt; the executor channel cannot, so mutations always set it. */
+    var yes: Boolean = false
+    /** The packages the action names: the search term, the info target, or the install/uninstall set. */
+    var packages: List<String> = emptyList()
+}
+
+@CliDsl
+internal class PackScope internal constructor() {
+    /** Comma-separated `-f` filter; null or empty packs every format each xpack declares.
+     *  xmake intersects this with the declarations - it cannot add an undeclared format. */
+    var formats: String? = null
+
+    /** `-o` output directory; null uses xmake's default (`<build dir>/xpack/<xpack name>`). */
+    var outputDirectory: String? = null
+
+    /** `--basename`; null uses xmake's default (the xpack name, with its `-src`/`-<version>` variants). */
+    var basename: String? = null
+
+    /** Whether xmake builds the targets before packing; xmake's own default is true. */
+    var autoBuild: Boolean = true
+
+    /** Extra passthrough arguments (e.g. `-j`), already parsed into single parameters. */
+    var extraArguments: List<String> = emptyList()
+
+    /** The xpack names to pack; empty packs every declared xpack. Always emitted last. */
+    var names: List<String> = emptyList()
 }
 
 /** Starts an xmake command line for [toolkit]. */
