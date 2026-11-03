@@ -201,6 +201,35 @@ class SanitizerReportParserTest {
     }
 
     @Test
+    fun `identical reports group by the runtime's dedup token`() {
+        val parser = SanitizerReportParser(SanitizerKind.ADDRESS)
+        parser.feed(
+            """
+            ==1==ERROR: AddressSanitizer: heap-use-after-free on address 0x603000000010
+            READ of size 1 at 0x603000000010 thread T0
+                #0 0x55e100000001 in use /home/dev/proj/src/use.cpp:7:5
+            DEDUP_TOKEN: use--main--__libc_start_main
+            SUMMARY: AddressSanitizer: heap-use-after-free /home/dev/proj/src/use.cpp:7 in use
+            """.trimIndent() + "\n",
+        )
+        // The same token with different printed lines still merges: the token, not the
+        // frames, names the code the runtime blames.
+        parser.feed(
+            """
+            ==2==ERROR: AddressSanitizer: heap-use-after-free on address 0x603000000099
+            READ of size 1 at 0x603000000099 thread T0
+                #0 0x55e100000042 in use /home/dev/proj/src/use.cpp:8:11
+            DEDUP_TOKEN: use--main--__libc_start_main
+            SUMMARY: AddressSanitizer: heap-use-after-free /home/dev/proj/src/use.cpp:8 in use
+            """.trimIndent() + "\n",
+        )
+        val report = parser.finish("demo")
+
+        assertEquals(1, report.issues.size)
+        assertEquals(2, report.issues[0].count)
+    }
+
+    @Test
     fun `a plain run without findings reports nothing`() {
         val parser = SanitizerReportParser(SanitizerKind.ADDRESS)
         parser.feed("hello\nworld\n")

@@ -66,6 +66,11 @@
                     factoryClass="io.xmake.run.analysis.ui.AnalysisToolWindowFactory"
                     icon="/icons/xmake-dark.svg"/>
         <projectService serviceImplementation="io.xmake.run.analysis.ui.AnalysisEditorMarks"/>
+        <projectService serviceImplementation="io.xmake.run.analysis.AnalysisProblemReporter"/>
+
+        <!-- Without this filter the problem solver ignores findings for files whose
+             language another plugin owns; the plugin claims the C/C++ sources it builds. -->
+        <problemFileHighlightFilter implementation="io.xmake.run.analysis.AnalysisProblemFileFilter"/>
 
         <!-- run configurations -->
         <programRunner implementation="io.xmake.run.XMakeRunner"/>

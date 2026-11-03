@@ -102,6 +102,10 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
                     open.currentStack().add(parseFrame(line))
                 }
 
+                // The runtime's own dedup token names the same code this report blames;
+                // it groups repeats more stably than the frames it prints.
+                line.startsWith(DEDUP_PREFIX) -> open.dedupToken = line.substringAfter(DEDUP_PREFIX).trim()
+
                 // ThreadSanitizer's closing fence ends a report the SUMMARY never closed.
                 line.startsWith(FENCE) -> endOpenReport()
 
@@ -242,6 +246,7 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
     ) {
         val stacks = mutableListOf<AnalysisStack>()
         val trailer = mutableListOf<String>()
+        var dedupToken: String? = null
 
         fun openStack(title: String) {
             stacks += AnalysisStack(title, mutableListOf())
@@ -277,11 +282,17 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
             else -> AnalysisSeverity.ERROR
         }
 
-        /** Same type pointing at the same code: the first frames of the first stack. */
+        /** Same type pointing at the same code: the runtime's dedup token when it printed
+         *  one, else the first frames of the first stack. */
         private fun signature(kept: List<AnalysisStack>): String = buildString {
             append(type)
-            kept.firstOrNull()?.frames?.take(SIGNATURE_FRAMES)?.forEach {
-                append('|').append(it.signature)
+            val token = dedupToken
+            if (token != null) {
+                append('|').append(token)
+            } else {
+                kept.firstOrNull()?.frames?.take(SIGNATURE_FRAMES)?.forEach {
+                    append('|').append(it.signature)
+                }
             }
         }
     }
@@ -291,6 +302,7 @@ internal class SanitizerReportParser(private val kind: SanitizerKind) {
     private companion object {
         private val LINE_BREAKS = charArrayOf('\n', '\r')
         private const val SUMMARY_PREFIX = "SUMMARY: "
+        private const val DEDUP_PREFIX = "DEDUP_TOKEN: "
         private const val RUNTIME_ERROR = "runtime error: "
         private const val FENCE = "===="
         private const val STRAY_LIMIT = 50
