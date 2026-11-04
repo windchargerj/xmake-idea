@@ -306,13 +306,9 @@ internal class XMakePackagesPanel(
     /** The details pane's meta line: repository, resolved version, the project's ask. */
     private val detailsMeta = JBLabel().apply { foreground = infoForeground() }
 
-    /** The details header's one action: the install or uninstall this row asks for, the
-     *  way the Marketplace header carries the Install button. */
-    private val detailsAction = JButton()
-
-    /** The header stack: the title row - name, badges, the action at the right edge -
-     *  over the meta line, and a hairline under all of it; the Marketplace details
-     *  header's rows and insets, stacked on a GridBag. */
+    /** The header stack: the title row - name and its badges - over the meta line, and
+     *  a hairline under all of it. The actions live in the master column's toolbar; the
+     *  header only describes. */
     private val detailsHeader = JPanel(GridBagLayout()).apply {
         isOpaque = true
         background = mainBackground()
@@ -331,14 +327,10 @@ internal class XMakePackagesPanel(
                 insets = JBUI.insets(if (gridy == 0) 0 else 6, 0)
             },
         )
-        row(0, BorderLayoutPanel().apply {
-            isOpaque = false
-            addToCenter(javax.swing.Box.createHorizontalBox().apply {
-                add(detailsName)
-                add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
-                add(detailsBadges)
-            })
-            addToRight(detailsAction.apply { isOpaque = false })
+        row(0, javax.swing.Box.createHorizontalBox().apply {
+            add(detailsName)
+            add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
+            add(detailsBadges)
         })
         row(1, detailsMeta, stretch = false)
     }
@@ -652,11 +644,6 @@ internal class XMakePackagesPanel(
                 info?.version ?: row?.version?.let { "v$it" },
             ).joinToString(" · ").ifEmpty { " " }
         }
-        detailsAction.action = when {
-            info?.installed == true -> uninstallAction(name)
-            else -> installAction(name)
-        }
-        detailsAction.isEnabled = !service.busy
         renderInfoGrid(name, info)
     }
 
@@ -681,19 +668,6 @@ internal class XMakePackagesPanel(
         }
         detailsBadges.revalidate()
         detailsBadges.repaint()
-    }
-
-    /** The badge palette of one state word: green reads installed, blue available, gray declared. */
-    private fun badgeForeground(state: String): Color = when (state) {
-        INSTALLED -> JBColor(0x3F7E33, 0x57965C)
-        AVAILABLE -> JBColor(0x1D73BF, 0x4A88C7)
-        else -> infoForeground()
-    }
-
-    private fun badgeBackground(state: String): Color = when (state) {
-        INSTALLED -> JBColor(0xE1F6DA, 0x314131)
-        AVAILABLE -> JBColor(0xD8EDF8, 0x27363F)
-        else -> JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D))
     }
 
     /** Swaps the right pane between the details and the nothing-selected card. */
@@ -972,27 +946,10 @@ internal class XMakePackagesPanel(
         service.runPackageCommand(command, what)
     }
 
-    /** The Install flow the toolbar button, the details header, and a double-click on a
-     *  row share. */
+    /** The Install flow the toolbar button and a double-click on a row share. */
     private fun installPackage(name: String) {
         service.prepareCommand(prepare = { createRequireInstall(name) }) { command ->
             confirmAndRun("Install package", "Installing '$name' - xmake fetches, builds, and installs it.", command)
-        }
-    }
-
-    /** The details header's Install action for one package. */
-    private fun installAction(name: String) = object : AbstractAction("Install") {
-        override fun actionPerformed(event: ActionEvent) {
-            installPackage(name)
-        }
-    }
-
-    /** The details header's Uninstall action for one installed package. */
-    private fun uninstallAction(name: String) = object : AbstractAction("Uninstall") {
-        override fun actionPerformed(event: ActionEvent) {
-            service.prepareCommand(prepare = { createRequireUninstall(name) }) { command ->
-                confirmAndRun("Uninstall package", "Uninstalling '$name'.", command)
-            }
         }
     }
 
@@ -1148,10 +1105,6 @@ internal class XMakePackagesPanel(
 
         private const val LOADING = "Loading the declared packages... - or press Refresh"
 
-        private const val INSTALLED = "installed"
-        private const val DECLARED = "declared"
-        private const val AVAILABLE = "available"
-
         private const val COLUMN_NAME = 0
         private const val COLUMN_DESCRIPTION = 1
         private const val COLUMN_VERSION = 2
@@ -1161,27 +1114,44 @@ internal class XMakePackagesPanel(
 }
 
 /** The marketplace page's panel background, shared by the details pane and the list. */
-private fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())
+internal fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())
 
 /** The marketplace page's hairline color, shared by the row separators. */
 private fun infoBorderColor(): Color = JBColor.namedColor("Plugins.borderColor", JBColor.border())
 
 /** The gray the metadata reads in - the Marketplace meta line's color. */
-private fun infoForeground(): Color = JBColor.namedColor("Label.infoForeground", UIUtil.getLabelInfoForeground())
+internal fun infoForeground(): Color = JBColor.namedColor("Label.infoForeground", UIUtil.getLabelInfoForeground())
+
+/** The row's state words; the table, the details header, and the badges read them. */
+internal const val INSTALLED = "installed"
+internal const val DECLARED = "declared"
+internal const val AVAILABLE = "available"
 
 /** The badge palette of one state word: green reads installed, blue available, gray declared. */
-private data class Badge(val text: String, val foreground: Color, val background: Color)
+internal data class Badge(val text: String, val foreground: Color, val background: Color)
+
+internal fun badgeForeground(state: String): Color = when (state) {
+    INSTALLED -> JBColor(0x3F7E33, 0x57965C)
+    AVAILABLE -> JBColor(0x1D73BF, 0x4A88C7)
+    else -> infoForeground()
+}
+
+internal fun badgeBackground(state: String): Color = when (state) {
+    INSTALLED -> JBColor(0xE1F6DA, 0x314131)
+    AVAILABLE -> JBColor(0xD8EDF8, 0x27363F)
+    else -> JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D))
+}
 
 /** One badge: a rounded chip carrying a word - the state, or a platform the package
  *  answers - attached to the name, the way the Marketplace header carries its tags. */
-private class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
+internal class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
 
     private val label = JBLabel(text)
 
     init {
         isOpaque = false
         label.foreground = foreground
-        label.font = JBFont.label().biggerOn(-1f)
+        label.font = JBFont.label()
         add(label)
     }
 
@@ -1194,14 +1164,15 @@ private class Chip(text: String, foreground: Color, background: Color) : JPanel(
 
     override fun getPreferredSize(): java.awt.Dimension {
         val text = label.preferredSize
-        return java.awt.Dimension(text.width + PAD * 2, text.height + PAD)
+        return java.awt.Dimension(text.width + PAD_X * 2, text.height + PAD_Y * 2)
     }
 
     override fun doLayout() {
-        label.setBounds(PAD, PAD / 2, label.preferredSize.width, height - PAD)
+        label.setBounds(PAD_X, (height - label.preferredSize.height) / 2, label.preferredSize.width, label.preferredSize.height)
     }
 
     private companion object {
-        private const val PAD = 8
+        private const val PAD_X = 12
+        private const val PAD_Y = 4
     }
 }
