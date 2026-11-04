@@ -229,10 +229,15 @@ internal class XMakePackagesPanel(
         textEditor.emptyText.text = "Search packages"
         textEditor.addActionListener {
             val term = text.trim()
-            when {
-                term.isEmpty() -> service.exitSearch()
-                service.busy -> narrateBusyWait()
-                else -> service.search(term)
+            if (term.isEmpty()) {
+                service.exitSearch()
+            } else {
+                service.search(term)
+                // Behind a mutation the search queues; the line says so instead of the
+                // field going silent. A claim the search started names itself in the
+                // same line right away.
+                service.pendingSearch?.let { queued -> narrateQueuedSearch(queued) }
+                    ?: updateSummary(service.snapshot)
             }
         }
         exitSearchOnEscape(textEditor)
@@ -318,8 +323,8 @@ internal class XMakePackagesPanel(
         }
 
         // The search row sits above the split, outside the toolbar: focus survives
-        // toolbar rebuilds, and a term entered while an operation holds the lane is
-        // replayed when the lane frees.
+        // toolbar rebuilds, and a term typed while an operation holds the lane is queued
+        // by the service and searched when the lane frees.
         val searchRow = JPanel().apply { isOpaque = false }
         searchRow.layout = java.awt.GridBagLayout()
         val gc = java.awt.GridBagConstraints().apply {
@@ -707,12 +712,11 @@ internal class XMakePackagesPanel(
 
     /** Esc leaves search mode from the table as from the field - and empties the field,
      *  so it does not claim a term the view no longer filters by. Outside search mode it
-     *  is a no-op. */
+     *  is a no-op. A mutation started from a hit keeps the view (the hits ride across
+     *  its refresh); a read in flight is abandoned, a queued search dropped. */
     private fun leaveSearch() {
         if (service.snapshot?.searchResults == null) return
-        // The lane holds exitSearch until the operation ends; emptying the field before
-        // that would claim a term the view still filters by.
-        if (service.busy) return
+        if (service.busyWithMutation && service.pendingSearch == null) return
         searchField.text = ""
         service.exitSearch()
     }
@@ -727,15 +731,13 @@ internal class XMakePackagesPanel(
         })
     }
 
-    /** The narration an Enter pressed while an operation holds the lane gets - the same
-     *  "wait for the current operation" line the details pane shows, so the key press is
-     *  answered instead of silently dropped (docs/roadmap-designs/audit-packages.md,
-     *  section 3.3). The next publish overwrites it. */
-    private fun narrateBusyWait() {
+    /** The narration an Enter pressed while a mutation holds the lane gets - the search
+     *  is queued, so the line names what will run, not a retype (docs/roadmap-designs/
+     *  audit-packages.md, section 3.3). The next publish overwrites it. */
+    private fun narrateQueuedSearch(term: String) {
         statusLabel.text = buildString {
-            append("Waiting for the current operation to finish - ")
-            append(service.currentOperation ?: "working")
-            append(" - then try again")
+            append("Searching for '$term' once the current operation finishes")
+            service.currentOperation?.let { operation -> append(" - ").append(operation) }
             service.lastError?.let { append(" - last operation failed: ").append(it) }
         }
     }
