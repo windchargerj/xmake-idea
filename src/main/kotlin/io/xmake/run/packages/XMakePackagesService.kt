@@ -119,7 +119,7 @@ internal class XMakePackagesService(private val project: Project) {
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireSearch(term)),
             )
             (snapshot ?: XMakePackagesSnapshot(emptyList(), null))
-                .copy(searchResults = results, infos = emptyMap())
+                .copy(searchResults = results, infos = emptyMap(), closures = emptyMap())
         }
     }
 
@@ -136,7 +136,7 @@ internal class XMakePackagesService(private val project: Project) {
         inFlight?.takeIf { !busyWithMutation }?.cancel()
         val current = snapshot ?: return
         if (current.searchResults == null) return
-        snapshot = current.copy(searchResults = null, infos = emptyMap())
+        snapshot = current.copy(searchResults = null, infos = emptyMap(), closures = emptyMap())
         project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)
     }
 
@@ -154,13 +154,15 @@ internal class XMakePackagesService(private val project: Project) {
         if (current.infos.containsKey(packageName)) return
         claim(null) { factory ->
             val base = snapshot
-            val info = runCancellable {
-                XMakePackageParsers.parsePackageInfo(
-                    project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName)),
-                    packageName,
-                )
+            val output = runCancellable {
+                project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName))
             }.getOrNull()
-            base?.copy(infos = base.infos + (packageName to info))
+            // One query per package per context: a landed answer - a failed parse
+            // included - is the record, whatever it said. The closure rides with the
+            // asked package's own answer; it is what the query handed back.
+            val info = output?.let { runCancellable { XMakePackageParsers.parsePackageInfo(it, packageName) }.getOrNull() }
+            val closure = output?.let { runCancellable { XMakePackageParsers.parsePackageClosure(it) }.getOrNull() }.orEmpty()
+            base?.copy(infos = base.infos + (packageName to info), closures = base.closures + (packageName to closure))
         }
     }
 

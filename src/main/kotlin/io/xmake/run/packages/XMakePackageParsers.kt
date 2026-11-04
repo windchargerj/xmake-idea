@@ -123,30 +123,48 @@ internal object XMakePackageParsers {
             is JsonObject -> element
             else -> null
         } ?: return null
-        return XMakePackageInfo(
-            require = obj.string("require").orEmpty(),
-            version = obj.string("version"),
-            description = obj.string("description"),
-            repoName = obj.obj("repo")?.string("name"),
-            repoUrl = obj.obj("repo")?.string("url"),
-            installdir = obj.string("installdir"),
-            cachedir = obj.string("cachedir"),
-            platforms = (obj["platforms"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.content }
-                .orEmpty(),
-            references = obj["references"]?.let { refs ->
-                (refs as? JsonArray)?.mapNotNull { ref ->
-                    (ref as? JsonObject)?.let {
-                        XMakePackageReference(
-                            dir = it.string("dir"),
-                            date = it.string("date"),
-                            exists = (it["exists"] as? JsonPrimitive)?.booleanOrNull,
-                        )
-                    }
-                }
-            },
-        )
+        return packageInfo(obj)
     }
+
+    /**
+     * Parses everything one `--info --format=json` answer carried: every object of the
+     * dependency closure, in the order xmake reported it. The asked package's own answer
+     * is [parsePackageInfo]; this is the rest of what the query said, for the view to
+     * present. A single-object answer is a closure of one.
+     */
+    fun parsePackageClosure(output: String): List<XMakePackageInfo> {
+        val element = jsonPayload(stripAnsi(output)) ?: return emptyList()
+        return when (element) {
+            is JsonArray -> element.mapNotNull { it as? JsonObject }.map(::packageInfo)
+            is JsonObject -> listOf(packageInfo(element))
+            else -> emptyList()
+        }
+    }
+
+    /** The package info one info object carries. */
+    private fun packageInfo(obj: JsonObject): XMakePackageInfo = XMakePackageInfo(
+        require = obj.string("require").orEmpty(),
+        version = obj.string("version"),
+        description = obj.string("description"),
+        repoName = obj.obj("repo")?.string("name"),
+        repoUrl = obj.obj("repo")?.string("url"),
+        installdir = obj.string("installdir"),
+        cachedir = obj.string("cachedir"),
+        platforms = (obj["platforms"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.content }
+            .orEmpty(),
+        references = obj["references"]?.let { refs ->
+            (refs as? JsonArray)?.mapNotNull { ref ->
+                (ref as? JsonObject)?.let {
+                    XMakePackageReference(
+                        dir = it.string("dir"),
+                        date = it.string("date"),
+                        exists = (it["exists"] as? JsonPrimitive)?.booleanOrNull,
+                    )
+                }
+            }
+        },
+    )
 
     /**
      * Parses `--search` output into the repository hits plus the `note:`/`error:` lines

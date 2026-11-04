@@ -578,6 +578,10 @@ internal class XMakePackagesPanel(
         else -> DECLARED
     }
 
+    /** The bare package name, the way the closure's require fields read. */
+    private fun bareName(pkgRequire: String?): String? =
+        pkgRequire?.trim()?.substringBefore(" ")?.substringAfterLast("::")?.lowercase()
+
     /** The row's source: the external-manager prefix for `vcpkg::`/`conan::` names, else
      *  the repository `--info` reported. */
     private fun sourceLabel(name: String, info: XMakePackageInfo?): String? {
@@ -727,13 +731,35 @@ internal class XMakePackagesPanel(
                         },
                     ),
                 )
-                // `--info` carries no dependency field; the depgraph query is the honest
-                // source. A package outside the project's graph (a search hit) simply has
-                // no line here.
-                val dependencies = service.snapshot?.depgraph?.packages
-                    ?.firstOrNull { it.name == name }?.deps
-                if (!dependencies.isNullOrEmpty()) {
-                    addTextRow("Depends on", dependencies.joinToString(", "))
+                // The info query answers the package together with its whole dependency
+                // closure; what rode with the answer is presented here, name, resolved
+                // version, and description each. Where the query said nothing, the
+                // project's depgraph still names what the package needs.
+                val closure = service.snapshot?.closures?.get(name).orEmpty()
+                val asked = bareName(name)
+                val dependencies = closure.filter { bareName(it.require) != asked }
+                if (dependencies.isNotEmpty()) {
+                    addTextRow(
+                        "Dependencies",
+                        "${dependencies.size} package(s) came with this answer - xmake reports the whole closure",
+                    )
+                    dependencies.forEach { dependency ->
+                        val entry = JPanel(java.awt.GridLayout(0, 1)).apply {
+                            isOpaque = false
+                            add(JBLabel(listOfNotNull(dependency.require.ifEmpty { null }, dependency.version).joinToString("  ")))
+                            dependency.description?.let { add(wrappedText(it)) }
+                        }
+                        addRow("", entry)
+                    }
+                } else {
+                    // `--info` carries no dependency field of its own; the depgraph query
+                    // is the fallback source. A package outside the project's graph (a
+                    // search hit) simply has no line here.
+                    val declaredDependencies = service.snapshot?.depgraph?.packages
+                        ?.firstOrNull { it.name == name }?.deps
+                    if (!declaredDependencies.isNullOrEmpty()) {
+                        addTextRow("Depends on", declaredDependencies.joinToString(", "))
+                    }
                 }
                 info.installdir?.let { addWrappedRow("Install directory", it) }
                 info.cachedir?.let { addWrappedRow("Cache directory", it) }

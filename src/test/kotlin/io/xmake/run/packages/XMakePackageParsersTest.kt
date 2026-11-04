@@ -176,6 +176,38 @@ class XMakePackageParsersTest {
     }
 
     @Test
+    fun `the whole closure parses in the order xmake reported it`() {
+        val output = """
+            checking for platform ...
+            [
+                { "require": "openssl", "version": "1.1.1-w", "description": "A toolkit for TLS" },
+                { "require": "zstd", "version": "v1.5.7" },
+                { "require": "rsync", "version": "3.4.1", "description": "Fast incremental file transfer" }
+            ]
+        """.trimIndent()
+
+        val closure = XMakePackageParsers.parsePackageClosure(output)
+
+        assertEquals(listOf("openssl", "zstd", "rsync"), closure.map { it.require })
+        assertEquals("A toolkit for TLS", closure[0].description)
+        assertNull(closure[1].description)
+        assertEquals("Fast incremental file transfer", closure[2].description)
+    }
+
+    @Test
+    fun `a single-object info answer is a closure of one`() {
+        val closure = XMakePackageParsers.parsePackageClosure("""{ "require": "tinytest", "version": "1.0.0" }""")
+
+        assertEquals(1, closure.size)
+        assertEquals("tinytest", closure.single().require)
+    }
+
+    @Test
+    fun `junk closure output answers empty instead of throwing`() {
+        assertTrue(XMakePackageParsers.parsePackageClosure("checking for platform ...\nno json here\n").isEmpty())
+    }
+
+    @Test
     fun `parses search hits with description and repo`() {
         val output = """
             The package names:
