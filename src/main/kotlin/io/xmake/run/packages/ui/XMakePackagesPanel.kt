@@ -330,10 +330,12 @@ internal class XMakePackagesPanel(
     }
 
     /** The details grid: caption-value rows rebuilt per selection or info landing, in a
-     *  scroll pane that never scrolls sideways - the long values wrap instead. */
+     *  scroll pane that never scrolls sideways - the long values wrap instead. The side
+     *  insets match the header's, so one left edge runs down the pane. */
     private val detailsBody = JPanel(GridBagLayout()).apply {
         isOpaque = true
         background = mainBackground()
+        border = JBUI.Borders.empty(12, 20, 16, 20)
     }
 
     /** The details pane as the Marketplace page lays it out: the header fixed, the info
@@ -696,6 +698,14 @@ internal class XMakePackagesPanel(
     private fun renderInfoGrid(name: String, info: XMakePackageInfo?) {
         detailsBody.removeAll()
         var gridy = 0
+
+        // The caption column holds one fixed width, so every value starts on the same
+        // line and no row's label stretches the gutter for the others.
+        fun caption(text: String): JComponent = JBLabel(text).apply {
+            foreground = infoForeground()
+            preferredSize = Dimension(JBUI.scale(120), preferredSize.height)
+        }
+
         fun constraints(row: Int, column: Int, fillMode: Int): GridBagConstraints =
             GridBagConstraints().apply {
                 gridy = row
@@ -706,11 +716,15 @@ internal class XMakePackagesPanel(
                 insets = JBUI.insets(3, 0, 3, 8)
             }
 
-        fun addRow(caption: String, value: JComponent) {
-            detailsBody.add(
-                JBLabel(caption).apply { foreground = infoForeground() },
-                constraints(gridy, 0, GridBagConstraints.NONE),
-            )
+        fun addRow(captionText: String, value: JComponent) {
+            if (captionText.isEmpty()) {
+                detailsBody.add(value, constraints(gridy, 0, GridBagConstraints.HORIZONTAL).apply {
+                    gridwidth = GridBagConstraints.REMAINDER
+                })
+                gridy++
+                return
+            }
+            detailsBody.add(caption(captionText), constraints(gridy, 0, GridBagConstraints.NONE))
             detailsBody.add(value, constraints(gridy, 1, GridBagConstraints.HORIZONTAL))
             gridy++
         }
@@ -835,6 +849,8 @@ internal class XMakePackagesPanel(
                 if (dependencies.isNotEmpty()) {
                     addSection("DEPENDENCIES - ${dependencies.size}")
                     dependencies.forEach { dependency ->
+                        // Each dependency spans the full width: its name with the resolved
+                        // version on one line, its description grayed under it.
                         addRow(
                             "",
                             JPanel(java.awt.GridLayout(0, 1)).apply {
