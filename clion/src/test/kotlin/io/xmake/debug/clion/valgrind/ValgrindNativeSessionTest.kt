@@ -19,6 +19,8 @@ package io.xmake.debug.clion.valgrind
 import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.ui.ExecutionConsoleEx
 import com.intellij.execution.ui.RunnerLayoutUi
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.extensions.ExtensionPoint
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.testFramework.PlatformTestUtil
 import io.xmake.XMakePlatformTestCase
@@ -36,6 +38,23 @@ import javax.swing.tree.TreeNode
 class ValgrindNativeSessionTest : XMakePlatformTestCase() {
 
     private val tempRoots = mutableListOf<File>()
+
+    override fun setUp() {
+        super.setUp()
+        // The module's test container loads no plugin descriptor, so the extension point the
+        // module's own descriptor declares does not exist there; it is registered with the
+        // real factory to keep the path under test the production one.
+        val area = ApplicationManager.getApplication().extensionArea
+        if (!area.hasExtensionPoint(XMakeValgrindNativeSessionFactory.EP)) {
+            area.registerExtensionPoint(
+                XMakeValgrindNativeSessionFactory.EP.name,
+                XMakeValgrindNativeSessionFactory::class.java.name,
+                ExtensionPoint.Kind.INTERFACE,
+            )
+        }
+        area.getExtensionPoint(XMakeValgrindNativeSessionFactory.EP)
+            .registerExtension(ClionValgrindNativeSessionFactory(), testRootDisposable)
+    }
 
     override fun tearDown() {
         try {
