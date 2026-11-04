@@ -31,6 +31,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.util.text.StringUtil
+import com.intellij.ui.ColoredTableCellRenderer
 import com.intellij.ui.DoubleClickListener
 import com.intellij.ui.JBColor
 import com.intellij.ui.border.CustomLineBorder
@@ -63,14 +64,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
-import java.awt.Component
 import java.awt.Font
-import java.awt.FontMetrics
-import java.awt.Graphics
-import java.awt.Graphics2D
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
-import java.awt.RenderingHints
 import java.awt.event.ActionEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
@@ -82,14 +78,12 @@ import javax.swing.JTable
 import javax.swing.KeyStroke
 import javax.swing.ListSelectionModel
 import javax.swing.ScrollPaneConstants
-import javax.swing.table.TableCellRenderer
 
 /**
- * The XMake Packages view, in the Marketplace page's shape: the search field on top of
- * the master list, the packages as stacked rows (name, repository meta, description),
- * and the selected package's details in a headered pane on the right - the name in the
- * page title face, the repository meta beside it, the one action that fits the row, and
- * the `--info` data as the info grid below.
+ * The XMake Packages view: the search field over the package table, and the selected
+ * package's details in a headered pane on the right - the name in the Marketplace page's
+ * title face, the repository meta beside it, the one action that fits the row, and the
+ * `--info` data as the info grid below.
  *
  * The rows come from `require --list` - name, the version the project asks for, the
  * repository, and the installed/declared status that the lazily fetched, cached
@@ -107,28 +101,126 @@ internal class XMakePackagesPanel(
 
     private val service = XMakePackagesService.getInstance(project)
 
-    /** The one column of the list; the row renderer paints the Marketplace row shape. */
-    private val packageColumn = object : ColumnInfo<PackageRow, String>("Packages") {
+    /** The columns of the table: the name leading, the description the flexible one. */
+    private val nameColumn = object : ColumnInfo<PackageRow, String>("Name") {
 
         override fun valueOf(item: PackageRow): String = item.name
     }
 
-    private val tableModel = ListTableModel<PackageRow>(packageColumn)
+    private val versionColumn = object : ColumnInfo<PackageRow, String?>("Version") {
 
-    /** The list as a one-column table: the header goes away, the renderer stacks the
-     *  name, the meta line, and the description - the row the Marketplace page paints. */
+        /** The version of record: what `xmake.lua` pins, or what a hit's repository
+         *  offers. The resolved installed version reads in the details pane, where the
+         *  `--info` data lives. */
+        override fun valueOf(item: PackageRow): String? =
+            if (item.isHit) item.version else item.requirement
+    }
+
+    private val repoColumn = object : ColumnInfo<PackageRow, String?>("Repo") {
+
+        override fun valueOf(item: PackageRow): String? =
+            if (item.isHit) item.repo else sourceLabel(item.name, infoFor(item.name))
+    }
+
+    private val statusColumn = object : ColumnInfo<PackageRow, String?>("Status") {
+
+        override fun valueOf(item: PackageRow): String? = statusOf(item)
+    }
+
+    private val descriptionColumn = object : ColumnInfo<PackageRow, String?>("Description") {
+
+        override fun valueOf(item: PackageRow): String? = item.description
+    }
+
+    private val tableModel = ListTableModel<PackageRow>(
+        nameColumn,
+        descriptionColumn,
+        versionColumn,
+        repoColumn,
+        statusColumn,
+    )
+
     private val table = TableView(tableModel).apply {
         fillsViewportHeight = true
         selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        setTableHeader(null)
-        rowHeight = JBUI.scale(ROW_HEIGHT)
+        columnModel.getColumn(COLUMN_NAME).minWidth = JBUI.scale(100)
+        columnModel.getColumn(COLUMN_NAME).preferredWidth = JBUI.scale(120)
+        columnModel.getColumn(COLUMN_DESCRIPTION).minWidth = JBUI.scale(180)
+        columnModel.getColumn(COLUMN_DESCRIPTION).preferredWidth = JBUI.scale(400)
+        columnModel.getColumn(COLUMN_VERSION).preferredWidth = JBUI.scale(90)
+        columnModel.getColumn(COLUMN_REPO).preferredWidth = JBUI.scale(110)
+        columnModel.getColumn(COLUMN_STATUS).preferredWidth = JBUI.scale(90)
         emptyText.text = LOADING
     }
 
     /** The table's scroll pane; a rebuild restores its viewport so a refresh keeps the
      *  user's place instead of throwing the rows back to the top. */
-    private val tableScroll = ScrollPaneFactory.createScrollPane(table, true).apply {
-        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+    private val tableScroll = ScrollPaneFactory.createScrollPane(table, true)
+
+    /** The name cell: the package's own name in bold. */
+    private val nameCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+        }
+    }
+
+    /** The description cell: a hit's repository description, grayed - the column is the
+     *  flexible one, so the text has room before the narrow columns. */
+    private val descriptionCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+        }
+    }
+
+    /** The Repo cell: grayed, like the analysis view's Location column. */
+    private val repoCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            (value as? String)?.let { append(it, SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+        }
+    }
+
+    /** The Status cell: "installed" reads as the state, "declared" as the weaker one. */
+    private val statusCellRenderer = object : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            when (value as? String) {
+                INSTALLED -> append(INSTALLED, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                AVAILABLE -> append(AVAILABLE, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                DECLARED -> append(DECLARED, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                else -> {}
+            }
+        }
     }
 
     /** The snapshot the table was built from; an info-only update repaints, never
@@ -253,7 +345,10 @@ internal class XMakePackagesPanel(
     private val detailsCard = JPanel(BorderLayout())
 
     init {
-        table.columnModel.getColumn(0).cellRenderer = RowRenderer()
+        table.columnModel.getColumn(COLUMN_NAME).cellRenderer = nameCellRenderer
+        table.columnModel.getColumn(COLUMN_DESCRIPTION).cellRenderer = descriptionCellRenderer
+        table.columnModel.getColumn(COLUMN_REPO).cellRenderer = repoCellRenderer
+        table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
         TableSpeedSearch.installOn(table)
         // Selecting a row is what fetches its info; the cache makes re-selection free.
         table.selectionModel.addListSelectionListener { event ->
@@ -276,7 +371,7 @@ internal class XMakePackagesPanel(
             }
         }.installOn(table)
 
-        val split = OnePixelSplitter(false, SPLIT_KEY, 0.45f).apply {
+        val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
             firstComponent = tableScroll
             secondComponent = detailsCard
         }
@@ -385,7 +480,7 @@ internal class XMakePackagesPanel(
                     name = entry.name,
                     requirement = entry.requirement.ifEmpty { null },
                     version = null,
-                    description = null,
+                    description = infoFor(entry.name)?.description,
                     repo = null,
                     isHit = false,
                 )
@@ -474,7 +569,7 @@ internal class XMakePackagesPanel(
 
     private fun infoFor(name: String): XMakePackageInfo? = service.snapshot?.infos?.get(name)
 
-    /** The status of a row, in the row's own words: the installed truth when the info
+    /** The status of a row, in the table's own words: the installed truth when the info
      *  cache holds one, "declared" for a project requirement otherwise - a hit is neither
      *  until its info lands on selection. */
     private fun statusOf(row: PackageRow): String? = when {
@@ -483,19 +578,12 @@ internal class XMakePackagesPanel(
         else -> DECLARED
     }
 
-    /** The row's meta line: what the repository and the project say in one gray run -
-     *  the hit's version and repository, the declared entry's requirement and, once the
-     *  info landed, its resolved version and repository. */
-    private fun metaOf(row: PackageRow): String = buildList {
-        row.requirement?.let { add(it) }
-        (infoFor(row.name)?.version ?: row.version?.let { "v$it" })?.let { add(it) }
-        (infoFor(row.name)?.repoName ?: row.repo)?.let { add(it) }
-    }.joinToString(" · ")
-
-    /** The row's description: a hit's repository summary, else the `--info` one once the
-     *  selection fetched it. */
-    private fun descriptionOf(row: PackageRow): String? =
-        row.description ?: infoFor(row.name)?.description
+    /** The row's source: the external-manager prefix for `vcpkg::`/`conan::` names, else
+     *  the repository `--info` reported. */
+    private fun sourceLabel(name: String, info: XMakePackageInfo?): String? {
+        if ("::" in name) return "${name.substringBefore("::")}::"
+        return info?.repoName?.let { "from $it" }
+    }
 
     /**
      * Renders the selected package: the Marketplace header (name, meta, the one action
@@ -754,80 +842,6 @@ internal class XMakePackagesPanel(
         }
     }
 
-    /** The list's row, painted the Marketplace way: the name in bold on the first line,
-     *  the repository meta and the row's state on the gray line below it, the summary
-     *  under that - each line elided, the selection the table's own. */
-    private inner class RowRenderer : JPanel(null), TableCellRenderer {
-
-        private var row: PackageRow? = null
-
-        /** The row's fonts, resolved once; a repaint reuses them. */
-        private val nameFont = JBFont.label().deriveFont(Font.BOLD)
-        private val metaFont = JBFont.label()
-
-        override fun getTableCellRendererComponent(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            viewRow: Int,
-            column: Int,
-        ): Component {
-            row = tableModel.getItem(table.convertRowIndexToModel(viewRow))
-            if (selected) {
-                foreground = table.selectionForeground
-                background = table.selectionBackground
-            } else {
-                foreground = UIUtil.getListForeground()
-                background = UIUtil.getListBackground()
-            }
-            return this
-        }
-
-        override fun paintComponent(graphics: Graphics) {
-            val current = row ?: return
-            val g = graphics as Graphics2D
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-            val width = this.width
-            val metrics = g.fontMetrics
-            var y = JBUI.scale(7)
-
-            // The name in the label face, bold.
-            g.font = nameFont
-            val nameMetrics = g.fontMetrics
-            g.color = foreground
-            g.drawString(elide(current.name, nameMetrics, width - JBUI.scale(STATUS_RESERVE) - JBUI.scale(24)), JBUI.scale(12), y + nameMetrics.ascent)
-            y += nameMetrics.height + JBUI.scale(1)
-
-            // The meta line: the repository facts and, at the right edge, the row's state.
-            g.font = metaFont
-            g.color = infoForeground()
-            val meta = metaOf(current)
-            if (meta.isNotEmpty()) {
-                g.drawString(elide(meta, metrics, width - JBUI.scale(STATUS_RESERVE) - JBUI.scale(24)), JBUI.scale(12), y + metrics.ascent)
-            }
-            statusOf(current)?.let { status ->
-                g.drawString(status, width - JBUI.scale(12) - metrics.stringWidth(status), y + metrics.ascent)
-            }
-            y += metrics.height
-
-            // The summary: a hit's repository description, else the info's, grayed.
-            descriptionOf(current)?.let { description ->
-                g.drawString(elide(description, metrics, width - JBUI.scale(24)), JBUI.scale(12), y + metrics.ascent)
-            }
-        }
-
-        override fun getPreferredSize(): java.awt.Dimension = java.awt.Dimension(0, table.rowHeight)
-
-        /** Cuts [text] to [maxWidth] with an ellipsis, the way a label would. */
-        private fun elide(text: String, metrics: FontMetrics, maxWidth: Int): String {
-            if (metrics.stringWidth(text) <= maxWidth) return text
-            var end = text.length
-            while (end > 0 && metrics.stringWidth(text.substring(0, end) + "…") > maxWidth) end--
-            return text.substring(0, end) + "…"
-        }
-    }
-
     private inner class RefreshAction :
         DumbAwareAction("Refresh", "Re-probe the declared packages and the dependency graph", AllIcons.Actions.Refresh) {
 
@@ -952,11 +966,11 @@ internal class XMakePackagesPanel(
         private const val DECLARED = "declared"
         private const val AVAILABLE = "available"
 
-        /** The list row's height, in the Marketplace page's stacked-row scale. */
-        private const val ROW_HEIGHT = 46
-
-        /** The width the row keeps for the right-aligned state word. */
-        private const val STATUS_RESERVE = 72
+        private const val COLUMN_NAME = 0
+        private const val COLUMN_DESCRIPTION = 1
+        private const val COLUMN_VERSION = 2
+        private const val COLUMN_REPO = 3
+        private const val COLUMN_STATUS = 4
     }
 }
 
