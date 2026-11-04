@@ -82,6 +82,11 @@
         <toolWindow id="XMake Packages" anchor="bottom" secondary="true"
                     factoryClass="io.xmake.run.packages.ui.XMakePackagesToolWindowFactory"
                     icon="/icons/xmake-dark.svg"/>
+        <!-- The packages-list prototype preview: four tabs, one per candidate list
+             implementation. A design-review scaffold; removed once an option is picked. -->
+        <toolWindow id="XMake List Preview" anchor="bottom" secondary="true"
+                    factoryClass="io.xmake.run.packages.ui.XMakeListPreviewToolWindowFactory"
+                    icon="/icons/xmake-dark.svg"/>
         <!-- run configurations -->
         <programRunner implementation="io.xmake.run.XMakeRunner"/>
         <configurationType implementation="io.xmake.run.XMakeRunConfigurationType"/>

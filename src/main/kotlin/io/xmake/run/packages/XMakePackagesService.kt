@@ -160,8 +160,23 @@ internal class XMakePackagesService(private val project: Project) {
             // One query per package per context: a landed answer - a failed parse
             // included - is the record, whatever it said. The closure rides with the
             // asked package's own answer; it is what the query handed back.
-            val info = output?.let { runCancellable { XMakePackageParsers.parsePackageInfo(it, packageName) }.getOrNull() }
-            val closure = output?.let { runCancellable { XMakePackageParsers.parsePackageClosure(it) }.getOrNull() }.orEmpty()
+            var info = output?.let { runCancellable { XMakePackageParsers.parsePackageInfo(it, packageName) }.getOrNull() }
+            var closure = output?.let { runCancellable { XMakePackageParsers.parsePackageClosure(it) }.getOrNull() }.orEmpty()
+            // The JSON flag is newer than some toolkits: a 2.8.7 answers its usage text
+            // for --format=json. The plain --info form predates it and every toolkit
+            // reads it - the fallback fetch, same lane pass.
+            if (info == null) {
+                val plain = runCancellable {
+                    project.xmakeExecutor.captureStandardOutput(factory.createRequireInfoText(packageName))
+                }.getOrNull()
+                plain?.let { text ->
+                    runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
+                        ?.let { textInfo ->
+                            info = textInfo
+                            closure = emptyList()
+                        }
+                }
+            }
             base?.copy(infos = base.infos + (packageName to info), closures = base.closures + (packageName to closure))
         }
     }

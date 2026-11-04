@@ -148,6 +148,13 @@ internal class XMakePackagesPanel(
     private val table = TableView(tableModel).apply {
         fillsViewportHeight = true
         selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
+        // No grid, no cell spacing, taller rows: the stripes carry the rhythm instead of
+        // lines, and the text sits in padded, vertically centered cells.
+        rowHeight = JBUI.scale(28)
+        setShowGrid(false)
+        intercellSpacing = Dimension(0, 0)
+        tableHeader.font = JBFont.label().biggerOn(-1f).deriveFont(Font.BOLD)
+        tableHeader.reorderingAllowed = false
         columnModel.getColumn(COLUMN_NAME).minWidth = JBUI.scale(100)
         columnModel.getColumn(COLUMN_NAME).preferredWidth = JBUI.scale(120)
         columnModel.getColumn(COLUMN_DESCRIPTION).minWidth = JBUI.scale(180)
@@ -163,70 +170,77 @@ internal class XMakePackagesPanel(
     private val tableScroll = ScrollPaneFactory.createScrollPane(table, true)
 
     /** The name cell: the package's own name in bold. */
-    private val nameCellRenderer = object : ColoredTableCellRenderer() {
+    private val nameCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
+        override fun paintCell(value: Any?) {
             append(value?.toString().orEmpty(), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
         }
     }
 
     /** The description cell: a hit's repository description, grayed - the column is the
      *  flexible one, so the text has room before the narrow columns. */
-    private val descriptionCellRenderer = object : ColoredTableCellRenderer() {
+    private val descriptionCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            append(value?.toString().orEmpty(), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+        override fun paintCell(value: Any?) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground()))
         }
     }
 
     /** The Repo cell: grayed, like the analysis view's Location column. */
-    private val repoCellRenderer = object : ColoredTableCellRenderer() {
+    private val repoCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            (value as? String)?.let { append(it, SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+        override fun paintCell(value: Any?) {
+            (value as? String)?.let { append(it, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground())) }
         }
     }
 
-    /** The Status cell: "installed" reads as the state, "declared" as the weaker one. */
-    private val statusCellRenderer = object : ColoredTableCellRenderer() {
+    /** The Version cell: grayed like the other resolved facts. */
+    private val versionCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
+        override fun paintCell(value: Any?) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground()))
+        }
+    }
+
+    /** The Status cell: the state word in its badge color - the row and the details
+     *  header read as one language. */
+    private val statusCellRenderer = object : CellRenderer() {
+
+        override fun paintCell(value: Any?) {
             when (value as? String) {
-                INSTALLED -> append(INSTALLED, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                AVAILABLE -> append(AVAILABLE, SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                DECLARED -> append(DECLARED, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                INSTALLED -> append(INSTALLED, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, badgeForeground(INSTALLED)))
+                AVAILABLE -> append(AVAILABLE, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, badgeForeground(AVAILABLE)))
+                DECLARED -> append(DECLARED, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground()))
                 else -> {}
             }
         }
     }
+
+    /** The cell base: stripes the unselected rows, pads the cell so the text breathes
+     *  and sits centered in the taller row. */
+    private abstract inner class CellRenderer : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            border = JBUI.Borders.empty(5, 8, 5, 8)
+            if (!selected) {
+                background = if (row % 2 == 1) stripeColor() else UIUtil.getListBackground()
+            }
+            paintCell(value)
+        }
+
+        abstract fun paintCell(value: Any?)
+    }
+
+    /** The stripe one row deeper than the list background - the zebra that carries the
+     *  rhythm now the grid lines are gone. */
+    private fun stripeColor(): Color = JBColor.namedColor("Table.stripeColor", JBColor(0xF7F8FA, 0x40454B))
 
     /** The snapshot the table was built from; an info-only update repaints, never
      *  rebuilds, so a selection (and its loading detail) survives a background info
@@ -261,7 +275,7 @@ internal class XMakePackagesPanel(
         textEditor.putClientProperty("JTextField.Search.Gap", JBUI.scale(6))
         textEditor.putClientProperty("JTextField.Search.GapEmptyText", JBUI.scale(-1))
         textEditor.background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
-        preferredSize = Dimension(JBUI.scale(240), preferredSize.height)
+        preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
         textEditor.addActionListener {
             val term = text.trim()
             if (term.isEmpty()) {
@@ -292,19 +306,15 @@ internal class XMakePackagesPanel(
     /** The details pane's meta line: repository, resolved version, the project's ask. */
     private val detailsMeta = JBLabel().apply { foreground = infoForeground() }
 
-    /** The details header's one action: the install or uninstall this row asks for, the
-     *  way the Marketplace header carries the Install button. */
-    private val detailsAction = JButton()
-
-    /** The header stack: the title row - name, badges, the action at the right edge -
-     *  over the meta line, and a hairline under all of it; the Marketplace details
-     *  header's rows and insets, stacked on a GridBag. */
+    /** The header stack: the title row - name and its badges - over the meta line, and
+     *  a hairline under all of it. The actions live in the master column's toolbar; the
+     *  header only describes. */
     private val detailsHeader = JPanel(GridBagLayout()).apply {
         isOpaque = true
         background = mainBackground()
         border = JBUI.Borders.compound(
             CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
-            JBUI.Borders.empty(12, 20, 10, 20),
+            JBUI.Borders.empty(10, 16, 8, 16),
         )
         fun row(gridy: Int, component: JComponent, stretch: Boolean = true) = add(
             component,
@@ -314,26 +324,24 @@ internal class XMakePackagesPanel(
                 weightx = 1.0
                 anchor = GridBagConstraints.WEST
                 fill = if (stretch) GridBagConstraints.HORIZONTAL else GridBagConstraints.NONE
-                insets = JBUI.insets(if (gridy == 0) 0 else 8, 0)
+                insets = JBUI.insets(if (gridy == 0) 0 else 6, 0)
             },
         )
-        row(0, BorderLayoutPanel().apply {
-            isOpaque = false
-            addToCenter(javax.swing.Box.createHorizontalBox().apply {
-                add(detailsName)
-                add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
-                add(detailsBadges)
-            })
-            addToRight(detailsAction.apply { isOpaque = false })
+        row(0, javax.swing.Box.createHorizontalBox().apply {
+            add(detailsName)
+            add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
+            add(detailsBadges)
         })
         row(1, detailsMeta, stretch = false)
     }
 
     /** The details grid: caption-value rows rebuilt per selection or info landing, in a
-     *  scroll pane that never scrolls sideways - the long values wrap instead. */
+     *  scroll pane that never scrolls sideways - the long values wrap instead. The side
+     *  insets match the header's, so one left edge runs down the pane. */
     private val detailsBody = JPanel(GridBagLayout()).apply {
         isOpaque = true
         background = mainBackground()
+        border = JBUI.Borders.empty(8, 16, 12, 16)
     }
 
     /** The details pane as the Marketplace page lays it out: the header fixed, the info
@@ -365,6 +373,7 @@ internal class XMakePackagesPanel(
     init {
         table.columnModel.getColumn(COLUMN_NAME).cellRenderer = nameCellRenderer
         table.columnModel.getColumn(COLUMN_DESCRIPTION).cellRenderer = descriptionCellRenderer
+        table.columnModel.getColumn(COLUMN_VERSION).cellRenderer = versionCellRenderer
         table.columnModel.getColumn(COLUMN_REPO).cellRenderer = repoCellRenderer
         table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
         TableSpeedSearch.installOn(table)
@@ -389,18 +398,20 @@ internal class XMakePackagesPanel(
             }
         }.installOn(table)
 
-        // The search row rides the master column: the field belongs to the list it
-        // searches, at a width a search field is. A term typed while an operation holds
-        // the lane is queued by the service and searched when the lane frees. The
-        // hairline under it is the Marketplace page's line between the field and the rows.
-        val searchRow = JPanel(BorderLayout()).apply {
+        // The master column's own header: the search field and the package actions on
+        // one row - the tools live with the list they act on. A term typed while an
+        // operation holds the lane is queued by the service and searched when the lane
+        // frees. The hairline under the row is the Marketplace page's line between the
+        // search field and the rows.
+        val searchRow = BorderLayoutPanel().apply {
             isOpaque = true
             background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
             border = JBUI.Borders.compound(
                 CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
                 JBUI.Borders.empty(6, 8),
             )
-            add(searchField, BorderLayout.WEST)
+            addToCenter(searchField)
+            addToRight(toolbar().component)
         }
 
         val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
@@ -411,7 +422,6 @@ internal class XMakePackagesPanel(
             secondComponent = detailsCard
         }
 
-        toolbar = toolbar().component
         setContent(
             JBUI.Panels.simplePanel()
                 .addToCenter(split)
@@ -634,11 +644,6 @@ internal class XMakePackagesPanel(
                 info?.version ?: row?.version?.let { "v$it" },
             ).joinToString(" · ").ifEmpty { " " }
         }
-        detailsAction.action = when {
-            info?.installed == true -> uninstallAction(name)
-            else -> installAction(name)
-        }
-        detailsAction.isEnabled = !service.busy
         renderInfoGrid(name, info)
     }
 
@@ -665,19 +670,6 @@ internal class XMakePackagesPanel(
         detailsBadges.repaint()
     }
 
-    /** The badge palette of one state word: green reads installed, blue available, gray declared. */
-    private fun badgeForeground(state: String): Color = when (state) {
-        INSTALLED -> JBColor(0x3F7E33, 0x57965C)
-        AVAILABLE -> JBColor(0x1D73BF, 0x4A88C7)
-        else -> infoForeground()
-    }
-
-    private fun badgeBackground(state: String): Color = when (state) {
-        INSTALLED -> JBColor(0xE1F6DA, 0x314131)
-        AVAILABLE -> JBColor(0xD8EDF8, 0x27363F)
-        else -> JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D))
-    }
-
     /** Swaps the right pane between the details and the nothing-selected card. */
     private fun showDetailsPane(withDetails: Boolean) {
         detailsCard.removeAll()
@@ -696,6 +688,14 @@ internal class XMakePackagesPanel(
     private fun renderInfoGrid(name: String, info: XMakePackageInfo?) {
         detailsBody.removeAll()
         var gridy = 0
+
+        // The caption column holds one fixed width, so every value starts on the same
+        // line and no row's label stretches the gutter for the others.
+        fun caption(text: String): JComponent = JBLabel(text).apply {
+            foreground = infoForeground()
+            preferredSize = Dimension(JBUI.scale(120), preferredSize.height)
+        }
+
         fun constraints(row: Int, column: Int, fillMode: Int): GridBagConstraints =
             GridBagConstraints().apply {
                 gridy = row
@@ -706,12 +706,28 @@ internal class XMakePackagesPanel(
                 insets = JBUI.insets(3, 0, 3, 8)
             }
 
-        fun addRow(caption: String, value: JComponent) {
-            detailsBody.add(
-                JBLabel(caption).apply { foreground = infoForeground() },
-                constraints(gridy, 0, GridBagConstraints.NONE),
-            )
+        fun addRow(captionText: String, value: JComponent) {
+            if (captionText.isEmpty()) {
+                detailsBody.add(value, constraints(gridy, 0, GridBagConstraints.HORIZONTAL).apply {
+                    gridwidth = GridBagConstraints.REMAINDER
+                })
+                gridy++
+                return
+            }
+            detailsBody.add(caption(captionText), constraints(gridy, 0, GridBagConstraints.NONE))
             detailsBody.add(value, constraints(gridy, 1, GridBagConstraints.HORIZONTAL))
+            gridy++
+        }
+
+        /** An entry indented under its section heading - the hierarchy the page reads by. */
+        fun addIndented(value: JComponent) {
+            detailsBody.add(
+                value,
+                constraints(gridy, 0, GridBagConstraints.HORIZONTAL).apply {
+                    gridwidth = GridBagConstraints.REMAINDER
+                    insets = JBUI.insets(0, 12, 4, 0)
+                },
+            )
             gridy++
         }
 
@@ -727,7 +743,7 @@ internal class XMakePackagesPanel(
                     gridx = 0
                     gridwidth = GridBagConstraints.REMAINDER
                     anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(if (row == 0) 0 else 10, 0, 4, 0)
+                    insets = JBUI.insets(if (row == 0) 0 else 12, 0, 6, 0)
                 },
             )
             gridy++
@@ -744,7 +760,7 @@ internal class XMakePackagesPanel(
                     weightx = 1.0
                     fill = GridBagConstraints.HORIZONTAL
                     anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(2, 0)
+                    insets = JBUI.insets(2, 0, 8, 0)
                 },
             )
             gridy++
@@ -808,22 +824,10 @@ internal class XMakePackagesPanel(
                 addFiller()
             }
             else -> {
-                // The description leads: it is what the user came to read.
+                // The description leads: it is what the user came to read. The identity
+                // facts - requirement, resolved version, repository - already sit in the
+                // header's meta line; the body only carries what the header cannot.
                 info.description?.let { addParagraph(it) }
-                tableModel.items.firstOrNull { it.name == name }?.requirement
-                    ?.let { addRow("Requirement", JBLabel(it)) }
-                info.version?.let { addRow("Version", JBLabel(it)) }
-                addRow(
-                    "Repo",
-                    JBLabel(
-                        when {
-                            // A package that exists nowhere still reports version "latest"; the
-                            // missing repo is the "not found" signal, not a failed query.
-                            info.repoName == null -> "not found in the configured repositories"
-                            else -> listOfNotNull(info.repoName, info.repoUrl?.let { "($it)" }).joinToString(" ")
-                        },
-                    ),
-                )
 
                 // The closure the query answered, as its own section; where it said
                 // nothing, the project's depgraph still names what the package needs.
@@ -835,17 +839,28 @@ internal class XMakePackagesPanel(
                 if (dependencies.isNotEmpty()) {
                     addSection("DEPENDENCIES - ${dependencies.size}")
                     dependencies.forEach { dependency ->
-                        addRow(
-                            "",
+                        // Each entry indents under its heading: the name in bold with the
+                        // resolved version grayed beside it, its description grayed under,
+                        // a breath between entries.
+                        addIndented(
                             JPanel(java.awt.GridLayout(0, 1)).apply {
                                 isOpaque = false
                                 add(
-                                    JBLabel(
-                                        listOfNotNull(dependency.require.ifEmpty { null }, dependency.version)
-                                            .joinToString("   "),
-                                    ).apply { font = JBFont.label().deriveFont(Font.BOLD) },
+                                    javax.swing.Box.createHorizontalBox().apply {
+                                        add(
+                                            JBLabel(dependency.require.ifEmpty { "?" }).apply {
+                                                font = JBFont.label().deriveFont(Font.BOLD)
+                                            },
+                                        )
+                                        dependency.version?.let { version ->
+                                            add(javax.swing.Box.createHorizontalStrut(JBUI.scale(8)))
+                                            add(JBLabel(version).apply { foreground = infoForeground() })
+                                        }
+                                    },
                                 )
-                                dependency.description?.let { add(wrappedText(it).apply { foreground = infoForeground() }) }
+                                dependency.description?.let {
+                                    add(wrappedText(it).apply { foreground = infoForeground() })
+                                }
                             },
                         )
                     }
@@ -859,17 +874,20 @@ internal class XMakePackagesPanel(
                 if (info.installed) {
                     addRow("References", JBLabel("${info.references?.size ?: 0} - installed"))
                     info.references.orEmpty().forEach { reference ->
-                        val referenceLabel = JBLabel(
-                            buildString {
-                                append(reference.dir ?: "?")
-                                reference.date?.let { append("   ").append(it) }
+                        addIndented(
+                            JBLabel(
+                                buildString {
+                                    append(reference.dir ?: "?")
+                                    reference.date?.let { append("   ").append(it) }
+                                },
+                                AllIcons.Nodes.Folder,
+                                javax.swing.SwingConstants.LEFT,
+                            ).apply {
+                                foreground = infoForeground()
+                                reference.dir?.let { toolTipText = it }
                             },
-                        ).apply { foreground = infoForeground() }
-                        reference.dir?.let { referenceLabel.toolTipText = it }
-                        addRow("", referenceLabel)
+                        )
                     }
-                } else {
-                    addRow("References", JBLabel("none - not installed").apply { foreground = infoForeground() })
                 }
                 addFiller()
             }
@@ -881,7 +899,11 @@ internal class XMakePackagesPanel(
     /** A long path, kept legible: elided in the middle, whole in the tooltip, copyable
      *  on the label - the head (drive, toolchain root) and the tail (the package's own
      *  versioned directory) are the parts a user reads. */
-    private fun pathLabel(path: String): JComponent = JBLabel(elideMiddle(path, 64)).apply {
+    private fun pathLabel(path: String): JComponent = JBLabel(
+        elideMiddle(path, 64),
+        AllIcons.Nodes.Folder,
+        javax.swing.SwingConstants.LEFT,
+    ).apply {
         toolTipText = path
         setCopyable(true)
         font = JBFont.label()
@@ -924,27 +946,10 @@ internal class XMakePackagesPanel(
         service.runPackageCommand(command, what)
     }
 
-    /** The Install flow the toolbar button, the details header, and a double-click on a
-     *  row share. */
+    /** The Install flow the toolbar button and a double-click on a row share. */
     private fun installPackage(name: String) {
         service.prepareCommand(prepare = { createRequireInstall(name) }) { command ->
             confirmAndRun("Install package", "Installing '$name' - xmake fetches, builds, and installs it.", command)
-        }
-    }
-
-    /** The details header's Install action for one package. */
-    private fun installAction(name: String) = object : AbstractAction("Install") {
-        override fun actionPerformed(event: ActionEvent) {
-            installPackage(name)
-        }
-    }
-
-    /** The details header's Uninstall action for one installed package. */
-    private fun uninstallAction(name: String) = object : AbstractAction("Uninstall") {
-        override fun actionPerformed(event: ActionEvent) {
-            service.prepareCommand(prepare = { createRequireUninstall(name) }) { command ->
-                confirmAndRun("Uninstall package", "Uninstalling '$name'.", command)
-            }
         }
     }
 
@@ -1014,7 +1019,7 @@ internal class XMakePackagesPanel(
     private inner class UpgradeAction : DumbAwareAction(
         "Upgrade",
         "Upgrade every installed package after confirming the exact command",
-        AllIcons.Actions.Download,
+        AllIcons.Plugins.Updated,
     ) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -1100,10 +1105,6 @@ internal class XMakePackagesPanel(
 
         private const val LOADING = "Loading the declared packages... - or press Refresh"
 
-        private const val INSTALLED = "installed"
-        private const val DECLARED = "declared"
-        private const val AVAILABLE = "available"
-
         private const val COLUMN_NAME = 0
         private const val COLUMN_DESCRIPTION = 1
         private const val COLUMN_VERSION = 2
@@ -1113,27 +1114,44 @@ internal class XMakePackagesPanel(
 }
 
 /** The marketplace page's panel background, shared by the details pane and the list. */
-private fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())
+internal fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())
 
 /** The marketplace page's hairline color, shared by the row separators. */
 private fun infoBorderColor(): Color = JBColor.namedColor("Plugins.borderColor", JBColor.border())
 
 /** The gray the metadata reads in - the Marketplace meta line's color. */
-private fun infoForeground(): Color = JBColor.namedColor("Label.infoForeground", UIUtil.getLabelInfoForeground())
+internal fun infoForeground(): Color = JBColor.namedColor("Label.infoForeground", UIUtil.getLabelInfoForeground())
+
+/** The row's state words; the table, the details header, and the badges read them. */
+internal const val INSTALLED = "installed"
+internal const val DECLARED = "declared"
+internal const val AVAILABLE = "available"
 
 /** The badge palette of one state word: green reads installed, blue available, gray declared. */
-private data class Badge(val text: String, val foreground: Color, val background: Color)
+internal data class Badge(val text: String, val foreground: Color, val background: Color)
+
+internal fun badgeForeground(state: String): Color = when (state) {
+    INSTALLED -> JBColor(0x3F7E33, 0x57965C)
+    AVAILABLE -> JBColor(0x1D73BF, 0x4A88C7)
+    else -> infoForeground()
+}
+
+internal fun badgeBackground(state: String): Color = when (state) {
+    INSTALLED -> JBColor(0xE1F6DA, 0x314131)
+    AVAILABLE -> JBColor(0xD8EDF8, 0x27363F)
+    else -> JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D))
+}
 
 /** One badge: a rounded chip carrying a word - the state, or a platform the package
  *  answers - attached to the name, the way the Marketplace header carries its tags. */
-private class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
+internal class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
 
     private val label = JBLabel(text)
 
     init {
         isOpaque = false
         label.foreground = foreground
-        label.font = JBFont.label().biggerOn(-1f)
+        label.font = JBFont.label()
         add(label)
     }
 
@@ -1146,14 +1164,15 @@ private class Chip(text: String, foreground: Color, background: Color) : JPanel(
 
     override fun getPreferredSize(): java.awt.Dimension {
         val text = label.preferredSize
-        return java.awt.Dimension(text.width + PAD * 2, text.height + PAD)
+        return java.awt.Dimension(text.width + PAD_X * 2, text.height + PAD_Y * 2)
     }
 
     override fun doLayout() {
-        label.setBounds(PAD, PAD / 2, label.preferredSize.width, height - PAD)
+        label.setBounds(PAD_X, (height - label.preferredSize.height) / 2, label.preferredSize.width, label.preferredSize.height)
     }
 
     private companion object {
-        private const val PAD = 8
+        private const val PAD_X = 12
+        private const val PAD_Y = 4
     }
 }

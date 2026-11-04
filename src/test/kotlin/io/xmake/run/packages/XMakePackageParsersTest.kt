@@ -171,6 +171,56 @@ class XMakePackageParsersTest {
     }
 
     @Test
+    fun `the plain-text info answer parses the asked block`() {
+        val output = """
+            The package info of project:
+                require(openssl):
+                  -> description: A robust, commercial-grade, and full-featured toolkit for TLS and SSL.
+                  -> version: 1.1.1-w
+                  -> license: Apache-2.0
+                  -> repo: xmake-repo https://github.com/xmake-io/xmake-repo.git master
+                  -> cachedir: C:\packages\cache\openssl\1.1.1-w
+                  -> installdir: C:\packages\pkg\o\openssl\1.1.1-w\34138
+                  -> platforms: cross, harmony, bsd, linux, macosx, windows, mingw, iphoneos, android
+
+                require(ninja):
+                  -> description: Small build system for use with gyp or CMake.
+                  -> version: v1.13.2
+        """.trimIndent() + "\n"
+
+        val info = XMakePackageParsers.parsePackageInfoText(output, "openssl")!!
+
+        assertEquals("openssl", info.require)
+        assertEquals("1.1.1-w", info.version)
+        assertEquals("A robust, commercial-grade, and full-featured toolkit for TLS and SSL.", info.description)
+        assertEquals("xmake-repo", info.repoName)
+        assertEquals("https://github.com/xmake-io/xmake-repo.git", info.repoUrl)
+        assertEquals("C:\\packages\\pkg\\o\\openssl\\1.1.1-w\\34138", info.installdir)
+        assertTrue(info.platforms.containsAll(listOf("linux", "windows", "mingw")))
+        assertFalse(info.installed)
+    }
+
+    @Test
+    fun `the plain-text answer skips blocks that are not the asked package`() {
+        val output = """
+            require(ninja):
+              -> version: v1.13.2
+            require(rsync):
+              -> version: 3.4.1
+        """.trimIndent()
+
+        val info = XMakePackageParsers.parsePackageInfoText(output, "rsync")!!
+
+        assertEquals("3.4.1", info.version)
+        assertNull(XMakePackageParsers.parsePackageInfoText(output, "openssl"))
+    }
+
+    @Test
+    fun `junk plain-text info answers null instead of throwing`() {
+        assertNull(XMakePackageParsers.parsePackageInfoText("checking for platform ...\nnothing here\n", "rsync"))
+    }
+
+    @Test
     fun `junk info output answers null instead of throwing`() {
         assertNull(XMakePackageParsers.parsePackageInfo("checking for platform ...\nno json here\n", "tinytest"))
     }
