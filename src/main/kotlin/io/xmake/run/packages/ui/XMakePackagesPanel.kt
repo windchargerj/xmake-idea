@@ -49,6 +49,7 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
+import javax.swing.Box
 import com.intellij.util.ui.ListTableModel
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.components.BorderLayoutPanel
@@ -72,6 +73,7 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import javax.swing.AbstractAction
 import javax.swing.JComponent
+import javax.swing.BoxLayout
 import javax.swing.JPanel
 import javax.swing.JTable
 import javax.swing.KeyStroke
@@ -223,7 +225,19 @@ internal class XMakePackagesPanel(
     }
 
     /** The toolbar's search field; kept so an Esc exit can empty it with the view. */
-    private var searchField: SearchTextField? = null
+    private val searchField = SearchTextField(false).apply {
+        textEditor.emptyText.text = "Search packages"
+        textEditor.addActionListener {
+            val term = text.trim()
+            when {
+                term.isEmpty() -> service.exitSearch()
+                service.busy -> narrateBusyWait()
+                else -> service.search(term)
+            }
+        }
+        exitSearchOnEscape(textEditor)
+        preferredSize = Dimension(JBUI.scale(260), preferredSize.height)
+    }
 
     /** The details grid: caption-value rows rebuilt per selection or info landing, in a
      *  scroll pane that never scrolls sideways - the long values wrap instead, the way
@@ -281,10 +295,8 @@ internal class XMakePackagesPanel(
             }
         }.installOn(table)
 
-        toolbar = toolbar().component
         // The Analysis view's shape: the rows above, the selected package's data below,
-        // the split remembered between sessions; the status line rides under the whole
-        // split - it reports the list, not a pane of it.
+        // the split remembered between sessions.
         // Bottom tool windows run horizontal master-detail (table left, details right) -
         // the Services/Problems/VcsLog convention; the Details separator goes away, the
         // right pane's own content organizes it.
@@ -304,6 +316,28 @@ internal class XMakePackagesPanel(
                 )
             }
         }
+
+        // The search row sits above the split, outside the toolbar: focus survives
+        // toolbar rebuilds, and a term entered while an operation holds the lane is
+        // replayed when the lane frees.
+        val searchRow = JPanel().apply { isOpaque = false }
+        searchRow.layout = java.awt.GridBagLayout()
+        val gc = java.awt.GridBagConstraints().apply {
+            gridx = 0
+            weightx = 1.0
+            anchor = java.awt.GridBagConstraints.WEST
+            fill = java.awt.GridBagConstraints.HORIZONTAL
+            insets = JBUI.Borders.empty(4, 8).getBorderInsets(searchRow)
+        }
+        searchRow.add(searchField, gc)
+
+        toolbar = toolbar().component
+        setContent(
+            JBUI.Panels.simplePanel()
+                .addToTop(searchRow)
+                .addToCenter(split)
+                .addToBottom(statusPanel),
+        )
         setContent(JBUI.Panels.simplePanel().addToCenter(split).addToBottom(statusPanel))
 
         project.messageBus.connect(parentDisposable).subscribe(
@@ -326,7 +360,6 @@ internal class XMakePackagesPanel(
     private fun toolbar(): ActionToolbar {
         val group = DefaultActionGroup(
             RefreshAction(),
-            SearchAction(),
             Separator.create(),
             InstallAction(),
             UpgradeAction(),
@@ -681,7 +714,7 @@ internal class XMakePackagesPanel(
         // The lane holds exitSearch until the operation ends; emptying the field before
         // that would claim a term the view still filters by.
         if (service.busy) return
-        searchField?.text = ""
+        searchField.text = ""
         service.exitSearch()
     }
 
@@ -720,57 +753,6 @@ internal class XMakePackagesPanel(
         override fun actionPerformed(event: AnActionEvent) {
             service.refresh()
         }
-    }
-
-    /** The search field rides the toolbar as the action's custom component; Enter runs it. */
-    private inner class SearchAction : DumbAwareAction(
-        "Search Packages",
-        "Type a term and press Enter to search the configured repositories",
-        AllIcons.Actions.Search,
-    ),
-        CustomComponentAction {
-
-        override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            // The icon click re-runs the term the field already holds - the only search
-            // entry besides the field's own Enter.
-            searchField?.let { field ->
-                val term = field.text.trim()
-                when {
-                    term.isEmpty() -> service.exitSearch()
-                    service.busy -> narrateBusyWait()
-                    else -> service.search(term)
-                }
-            }
-        }
-
-        override fun createCustomComponent(presentation: Presentation, place: String): JComponent =
-            SearchTextField(false).apply {
-                textEditor.emptyText.text = "Search packages"
-                textEditor.addActionListener {
-                    val term = text.trim()
-                    when {
-                        term.isEmpty() ->
-                            // An emptied field plus Enter is one way out of search mode: the
-                            // declared list comes back from the snapshot the search rode on,
-                            // no lane time spent.
-                            service.exitSearch()
-                        service.busy ->
-                            // The field accepts keys between the toolbar's update() calls, so
-                            // an Enter can land mid-operation; narrate the wait, keep the term.
-                            narrateBusyWait()
-                        else -> service.search(term)
-                    }
-                }
-                // Esc is the other way out, from the field as from the table.
-                exitSearchOnEscape(textEditor)
-                preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
-            }.also { field -> searchField = field }
     }
 
     private inner class InstallAction : DumbAwareAction(
