@@ -338,7 +338,6 @@ internal class XMakePackagesPanel(
                 .addToCenter(split)
                 .addToBottom(statusPanel),
         )
-        setContent(JBUI.Panels.simplePanel().addToCenter(split).addToBottom(statusPanel))
 
         project.messageBus.connect(parentDisposable).subscribe(
             XMakePackagesService.TOPIC,
