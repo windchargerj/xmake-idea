@@ -148,6 +148,13 @@ internal class XMakePackagesPanel(
     private val table = TableView(tableModel).apply {
         fillsViewportHeight = true
         selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
+        // No grid, no cell spacing, taller rows: the stripes carry the rhythm instead of
+        // lines, and the text sits in padded, vertically centered cells.
+        rowHeight = JBUI.scale(28)
+        setShowGrid(false)
+        intercellSpacing = Dimension(0, 0)
+        tableHeader.font = JBFont.label().biggerOn(-1f).deriveFont(Font.BOLD)
+        tableHeader.reorderingAllowed = false
         columnModel.getColumn(COLUMN_NAME).minWidth = JBUI.scale(100)
         columnModel.getColumn(COLUMN_NAME).preferredWidth = JBUI.scale(120)
         columnModel.getColumn(COLUMN_DESCRIPTION).minWidth = JBUI.scale(180)
@@ -163,70 +170,77 @@ internal class XMakePackagesPanel(
     private val tableScroll = ScrollPaneFactory.createScrollPane(table, true)
 
     /** The name cell: the package's own name in bold. */
-    private val nameCellRenderer = object : ColoredTableCellRenderer() {
+    private val nameCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
+        override fun paintCell(value: Any?) {
             append(value?.toString().orEmpty(), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
         }
     }
 
     /** The description cell: a hit's repository description, grayed - the column is the
      *  flexible one, so the text has room before the narrow columns. */
-    private val descriptionCellRenderer = object : ColoredTableCellRenderer() {
+    private val descriptionCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            append(value?.toString().orEmpty(), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+        override fun paintCell(value: Any?) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground()))
         }
     }
 
     /** The Repo cell: grayed, like the analysis view's Location column. */
-    private val repoCellRenderer = object : ColoredTableCellRenderer() {
+    private val repoCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            (value as? String)?.let { append(it, SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+        override fun paintCell(value: Any?) {
+            (value as? String)?.let { append(it, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground())) }
         }
     }
 
-    /** The Status cell: "installed" reads as the state, "declared" as the weaker one. */
-    private val statusCellRenderer = object : ColoredTableCellRenderer() {
+    /** The Version cell: grayed like the other resolved facts. */
+    private val versionCellRenderer = object : CellRenderer() {
 
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
+        override fun paintCell(value: Any?) {
+            append(value?.toString().orEmpty(), SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground()))
+        }
+    }
+
+    /** The Status cell: the state word in its badge color - the row and the details
+     *  header read as one language. */
+    private val statusCellRenderer = object : CellRenderer() {
+
+        override fun paintCell(value: Any?) {
             when (value as? String) {
-                INSTALLED -> append(INSTALLED, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                AVAILABLE -> append(AVAILABLE, SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                DECLARED -> append(DECLARED, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                INSTALLED -> append(INSTALLED, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, badgeForeground(INSTALLED)))
+                AVAILABLE -> append(AVAILABLE, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, badgeForeground(AVAILABLE)))
+                DECLARED -> append(DECLARED, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, infoForeground()))
                 else -> {}
             }
         }
     }
+
+    /** The cell base: stripes the unselected rows, pads the cell so the text breathes
+     *  and sits centered in the taller row. */
+    private abstract inner class CellRenderer : ColoredTableCellRenderer() {
+
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            border = JBUI.Borders.empty(5, 8, 5, 8)
+            if (!selected) {
+                background = if (row % 2 == 1) stripeColor() else UIUtil.getListBackground()
+            }
+            paintCell(value)
+        }
+
+        abstract fun paintCell(value: Any?)
+    }
+
+    /** The stripe one row deeper than the list background - the zebra that carries the
+     *  rhythm now the grid lines are gone. */
+    private fun stripeColor(): Color = JBColor.namedColor("Table.stripeColor", JBColor(0xF7F8FA, 0x40454B))
 
     /** The snapshot the table was built from; an info-only update repaints, never
      *  rebuilds, so a selection (and its loading detail) survives a background info
@@ -367,6 +381,7 @@ internal class XMakePackagesPanel(
     init {
         table.columnModel.getColumn(COLUMN_NAME).cellRenderer = nameCellRenderer
         table.columnModel.getColumn(COLUMN_DESCRIPTION).cellRenderer = descriptionCellRenderer
+        table.columnModel.getColumn(COLUMN_VERSION).cellRenderer = versionCellRenderer
         table.columnModel.getColumn(COLUMN_REPO).cellRenderer = repoCellRenderer
         table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
         TableSpeedSearch.installOn(table)
