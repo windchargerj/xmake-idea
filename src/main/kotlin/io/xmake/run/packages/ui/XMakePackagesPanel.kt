@@ -745,6 +745,18 @@ internal class XMakePackagesPanel(
             gridy++
         }
 
+        /** An entry indented under its section heading - the hierarchy the page reads by. */
+        fun addIndented(value: JComponent) {
+            detailsBody.add(
+                value,
+                constraints(gridy, 0, GridBagConstraints.HORIZONTAL).apply {
+                    gridwidth = GridBagConstraints.REMAINDER
+                    insets = JBUI.insets(0, 12, 4, 0)
+                },
+            )
+            gridy++
+        }
+
         fun addSection(title: String) {
             val row = gridy
             detailsBody.add(
@@ -757,7 +769,7 @@ internal class XMakePackagesPanel(
                     gridx = 0
                     gridwidth = GridBagConstraints.REMAINDER
                     anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(if (row == 0) 0 else 8, 0, 2, 0)
+                    insets = JBUI.insets(if (row == 0) 0 else 12, 0, 6, 0)
                 },
             )
             gridy++
@@ -774,7 +786,7 @@ internal class XMakePackagesPanel(
                     weightx = 1.0
                     fill = GridBagConstraints.HORIZONTAL
                     anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(2, 0)
+                    insets = JBUI.insets(2, 0, 8, 0)
                 },
             )
             gridy++
@@ -853,21 +865,28 @@ internal class XMakePackagesPanel(
                 if (dependencies.isNotEmpty()) {
                     addSection("DEPENDENCIES - ${dependencies.size}")
                     dependencies.forEach { dependency ->
-                        // Each dependency spans the full width: its name with the resolved
-                        // version on one line, its description grayed under it, a breath
-                        // between entries.
-                        addRow(
-                            "",
+                        // Each entry indents under its heading: the name in bold with the
+                        // resolved version grayed beside it, its description grayed under,
+                        // a breath between entries.
+                        addIndented(
                             JPanel(java.awt.GridLayout(0, 1)).apply {
                                 isOpaque = false
-                                border = JBUI.Borders.emptyBottom(4)
                                 add(
-                                    JBLabel(
-                                        listOfNotNull(dependency.require.ifEmpty { null }, dependency.version)
-                                            .joinToString("   "),
-                                    ).apply { font = JBFont.label().deriveFont(Font.BOLD) },
+                                    javax.swing.Box.createHorizontalBox().apply {
+                                        add(
+                                            JBLabel(dependency.require.ifEmpty { "?" }).apply {
+                                                font = JBFont.label().deriveFont(Font.BOLD)
+                                            },
+                                        )
+                                        dependency.version?.let { version ->
+                                            add(javax.swing.Box.createHorizontalStrut(JBUI.scale(8)))
+                                            add(JBLabel(version).apply { foreground = infoForeground() })
+                                        }
+                                    },
                                 )
-                                dependency.description?.let { add(wrappedText(it).apply { foreground = infoForeground() }) }
+                                dependency.description?.let {
+                                    add(wrappedText(it).apply { foreground = infoForeground() })
+                                }
                             },
                         )
                     }
@@ -881,14 +900,19 @@ internal class XMakePackagesPanel(
                 if (info.installed) {
                     addRow("References", JBLabel("${info.references?.size ?: 0} - installed"))
                     info.references.orEmpty().forEach { reference ->
-                        val referenceLabel = JBLabel(
-                            buildString {
-                                append(reference.dir ?: "?")
-                                reference.date?.let { append("   ").append(it) }
+                        addIndented(
+                            JBLabel(
+                                buildString {
+                                    append(reference.dir ?: "?")
+                                    reference.date?.let { append("   ").append(it) }
+                                },
+                                AllIcons.Nodes.Folder,
+                                javax.swing.SwingConstants.LEFT,
+                            ).apply {
+                                foreground = infoForeground()
+                                reference.dir?.let { toolTipText = it }
                             },
-                        ).apply { foreground = infoForeground() }
-                        reference.dir?.let { referenceLabel.toolTipText = it }
-                        addRow("", referenceLabel)
+                        )
                     }
                 }
                 addFiller()
@@ -901,7 +925,11 @@ internal class XMakePackagesPanel(
     /** A long path, kept legible: elided in the middle, whole in the tooltip, copyable
      *  on the label - the head (drive, toolchain root) and the tail (the package's own
      *  versioned directory) are the parts a user reads. */
-    private fun pathLabel(path: String): JComponent = JBLabel(elideMiddle(path, 64)).apply {
+    private fun pathLabel(path: String): JComponent = JBLabel(
+        elideMiddle(path, 64),
+        AllIcons.Nodes.Folder,
+        javax.swing.SwingConstants.LEFT,
+    ).apply {
         toolTipText = path
         setCopyable(true)
         font = JBFont.label()
@@ -1034,7 +1062,7 @@ internal class XMakePackagesPanel(
     private inner class UpgradeAction : DumbAwareAction(
         "Upgrade",
         "Upgrade every installed package after confirming the exact command",
-        AllIcons.Actions.Download,
+        AllIcons.Plugins.Updated,
     ) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
