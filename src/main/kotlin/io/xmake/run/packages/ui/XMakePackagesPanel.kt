@@ -32,6 +32,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.ColoredTableCellRenderer
+import com.intellij.ui.ColorUtil
 import com.intellij.ui.DoubleClickListener
 import com.intellij.ui.JBColor
 import com.intellij.ui.border.CustomLineBorder
@@ -76,6 +77,7 @@ import java.awt.event.ActionEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import javax.swing.AbstractAction
+import javax.swing.JEditorPane
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -114,11 +116,14 @@ internal class XMakePackagesPanel(
 
     private val versionColumn = object : ColumnInfo<PackageRow, String?>("Version") {
 
-        /** The version of record: what `xmake.lua` pins, or what a hit's repository
-         *  offers. The resolved installed version reads in the details pane, where the
-         *  `--info` data lives. */
-        override fun valueOf(item: PackageRow): String? =
-            if (item.isHit) item.version else item.requirement
+        /** The version of record: what `xmake.lua` pins, or the leading version a hit's
+         *  repository offers - every further version counted beside it, the whole list
+         *  readable in the details pane where the install links live. */
+        override fun valueOf(item: PackageRow): String? = when {
+            !item.isHit -> item.requirement
+            item.versions.size > 1 -> item.version?.let { "$it (+${item.versions.size - 1})" }
+            else -> item.version
+        }
     }
 
     private val repoColumn = object : ColumnInfo<PackageRow, String?>("Repo") {
@@ -335,17 +340,42 @@ internal class XMakePackagesPanel(
         row(1, detailsMeta, stretch = false)
     }
 
-    /** The details grid: caption-value rows rebuilt per selection or info landing, in a
-     *  scroll pane that never scrolls sideways - the long values wrap instead. The side
-     *  insets match the header's, so one left edge runs down the pane. */
-    private val detailsBody = JPanel(GridBagLayout()).apply {
-        isOpaque = true
-        background = mainBackground()
+    /** The details page's body: one HTML document, so the typography is real - a
+     *  paragraph for the description, lettered section headings, indented dependency
+     *  entries, install and uninstall links beside each version. The links route back
+     *  to the same confirmation flows the toolbar uses. */
+    private val detailsBody = JEditorPane().apply {
+        isEditable = false
+        isOpaque = false
+        contentType = "text/html"
+        editorKit = htmlKit()
         border = JBUI.Borders.empty(8, 16, 12, 16)
+        addHyperlinkListener { event ->
+            if (event.eventType != javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) return@addHyperlinkListener
+            val target = event.description ?: return@addHyperlinkListener
+            when {
+                target.startsWith("action://install/") -> installPackage(target.removePrefix("action://install/"))
+                target.startsWith("action://uninstall/") -> uninstallPackage(target.removePrefix("action://uninstall/"))
+            }
+        }
     }
 
-    /** The details pane as the Marketplace page lays it out: the header fixed, the info
-     *  grid scrolling under it. */
+    /** The info query's spinner; reused across rebuilds so one icon animates the wait,
+     *  wherever the body currently sits. */
+    private val infoLoading = AsyncProcessIcon("XMakePackagesInfoLoading")
+
+    /** The loading card: the query rides the executor lane, over SSH in the worst case;
+     *  the spinner says the click was heard. */
+    private val detailsLoading = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+        isOpaque = true
+        background = mainBackground()
+        border = JBUI.Borders.empty(12, 16)
+        add(infoLoading)
+        add(JBLabel("Loading...").apply { foreground = infoForeground() })
+    }
+
+    /** The details pane as the Marketplace page lays it out: the header fixed, the page
+     *  scrolling under it. */
     private val detailsPane = JPanel(BorderLayout()).apply {
         isOpaque = true
         background = mainBackground()
@@ -367,7 +397,8 @@ internal class XMakePackagesPanel(
         emptyText.text = "Select a package to read its details"
     }
 
-    /** The right pane of the split; swaps between the details and the empty card. */
+    /** The right pane of the split; swaps between the details, the loading card, and
+     *  the nothing-selected card. */
     private val detailsCard = JPanel(BorderLayout())
 
     init {
@@ -487,7 +518,9 @@ internal class XMakePackagesPanel(
         }
     }
 
-    /** Swaps the rows: search results while searching, else the declared packages. A
+    /** Swaps the rows: search results while searching, else the declared packages. The
+     *  hits aggregate by name - one row per package carrying every version the repo
+     *  answered, the leading one in the Version cell and the rest counted there. A
      *  rebuild is a refresh, not a reset: the scroll position and the selection carry
      *  over, so a post-action refresh reads as the rows updating in place. */
     private fun rebuild(snapshot: XMakePackagesSnapshot?) {
@@ -495,16 +528,20 @@ internal class XMakePackagesPanel(
         val position = tableScroll.viewport.viewPosition
         val results = snapshot?.searchResults
         tableModel.items = if (results != null) {
-            results.hits.map { hit ->
-                PackageRow(
-                    name = hit.name,
-                    requirement = null,
-                    version = hit.version,
-                    description = hit.description,
-                    repo = hit.repo,
-                    isHit = true,
-                )
-            }
+            results.hits
+                .groupBy { it.name }
+                .map { (name, hits) ->
+                    val lead = hits.first()
+                    PackageRow(
+                        name = name,
+                        requirement = null,
+                        version = lead.version,
+                        description = lead.description,
+                        repo = lead.repo,
+                        isHit = true,
+                        versions = hits.mapNotNull { it.version },
+                    )
+                }
         } else {
             snapshot?.packages.orEmpty().map { entry ->
                 PackageRow(
@@ -621,30 +658,69 @@ internal class XMakePackagesPanel(
     }
 
     /**
-     * Renders the selected package: the Marketplace header (name, badges, meta, the one
-     * action that fits the row) over the info body, or the nothing-selected card.
+     * Renders the selected package: the header (name, badges, meta) over the details
+     * page, the loading card while the query rides the lane, or the nothing-selected
+     * card.
      */
     private fun renderDetails(name: String?) {
-        if (name == null) {
-            showDetailsPane(false)
-            return
+        detailsPackage = name
+        when {
+            name == null -> {
+                showDetailsCard(detailsEmpty)
+                return
+            }
+            // A busy pipeline with a named operation is not loading this info at all -
+            // the fetchInfo call was a no-op; say what the wait is really on.
+            infoFor(name) == null && service.busy && service.currentOperation != null -> {
+                showDetailsCard(detailsPane)
+                detailsName.text = name
+                renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
+                detailsMeta.text = " "
+                detailsBody.text = wrapHtml(
+                    "<p class='g'>Waiting for the current operation to finish before loading the info of " +
+                        "'${esc(name)}' - ${esc(service.currentOperation ?: "working")} - then the row loads " +
+                        "its info, or select it again</p>",
+                )
+                detailsBody.caretPosition = 0
+            }
+            infoFor(name) == null && service.busy -> {
+                showDetailsCard(detailsLoading)
+                return
+            }
+            infoFor(name) == null -> {
+                showDetailsCard(detailsPane)
+                detailsName.text = name
+                renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
+                detailsMeta.text = " "
+                detailsBody.text = wrapHtml(
+                    buildString {
+                        append("<p class='g'>No info available for '${esc(name)}' - the info query answered nothing usable")
+                        service.lastError?.let { append(": ").append(esc(it)) }
+                        append(". The plain-text fallback ran; updating xmake may fix it</p>")
+                    },
+                )
+                detailsBody.caretPosition = 0
+            }
+            else -> {
+                showDetailsCard(detailsPane)
+                detailsName.text = name
+                val row = tableModel.items.firstOrNull { it.name == name }
+                val info = infoFor(name)
+                renderBadges(name, row, info)
+                detailsMeta.text = when {
+                    // A package that exists nowhere still reports version "latest"; the
+                    // missing repo is the "not found" signal, not a failed query.
+                    info != null && info.repoName == null -> "not found in the configured repositories"
+                    else -> listOfNotNull(
+                        row?.requirement?.let { "requires $it" },
+                        info?.repoName ?: row?.repo,
+                        info?.version ?: row?.version?.let { "v$it" },
+                    ).joinToString(" · ").ifEmpty { " " }
+                }
+                detailsBody.text = wrapHtml(detailsHtml(name))
+                detailsBody.caretPosition = 0
+            }
         }
-        showDetailsPane(true)
-        detailsName.text = name
-        val row = tableModel.items.firstOrNull { it.name == name }
-        val info = infoFor(name)
-        renderBadges(name, row, info)
-        detailsMeta.text = when {
-            // A package that exists nowhere still reports version "latest"; the missing
-            // repo is the "not found" signal, not a failed query.
-            info != null && info.repoName == null -> "not found in the configured repositories"
-            else -> listOfNotNull(
-                row?.requirement?.let { "requires $it" },
-                info?.repoName ?: row?.repo,
-                info?.version ?: row?.version?.let { "v$it" },
-            ).joinToString(" · ").ifEmpty { " " }
-        }
-        renderInfoGrid(name, info)
     }
 
     /** The badges the title row carries: the row's state, then the platforms the package
@@ -670,244 +746,117 @@ internal class XMakePackagesPanel(
         detailsBadges.repaint()
     }
 
-    /** Swaps the right pane between the details and the nothing-selected card. */
-    private fun showDetailsPane(withDetails: Boolean) {
+    /** Swaps the right pane among the three cards: the nothing-selected state, the
+     *  details page, and the loading spinner. */
+    private fun showDetailsCard(card: JComponent) {
         detailsCard.removeAll()
-        detailsCard.add(if (withDetails) detailsPane else detailsEmpty, BorderLayout.CENTER)
+        detailsCard.add(card, BorderLayout.CENTER)
         detailsCard.revalidate()
         detailsCard.repaint()
     }
 
-    /** The info query's spinner; reused across rebuilds so one icon animates the wait,
-     *  wherever the body currently sits. */
-    private val infoLoading = AsyncProcessIcon("XMakePackagesInfoLoading")
-
-    /** Rebuilds the details body for [name]: the description as the lead paragraph, the
-     *  dependency closure the query answered as its own section, the facts as the info
-     *  section. The header above already carries the identity. */
-    private fun renderInfoGrid(name: String, info: XMakePackageInfo?) {
-        detailsBody.removeAll()
-        var gridy = 0
-
-        // The caption column holds one fixed width, so every value starts on the same
-        // line and no row's label stretches the gutter for the others.
-        fun caption(text: String): JComponent = JBLabel(text).apply {
-            foreground = infoForeground()
-            preferredSize = Dimension(JBUI.scale(120), preferredSize.height)
+    /** The HTML kit the details page renders with: the label font as the base, the
+     *  metadata gray for captions, the platform link color for the actions. */
+    private fun htmlKit(): javax.swing.text.html.HTMLEditorKit {
+        val kit = javax.swing.text.html.HTMLEditorKit()
+        val base = UIUtil.getLabelFont()
+        val gray = ColorUtil.toHex(infoForeground())
+        val link = ColorUtil.toHex(JBColor.namedColor("Link.activeForeground", JBColor(0x1D73BF, 0x4A88C7)))
+        kit.styleSheet.apply {
+            addRule("body { font-family: ${base.family}; font-size: ${base.size}pt; }")
+            addRule("p { margin: 0 0 8px; }")
+            addRule(".sec { font-weight: bold; color: #$gray; margin: 14px 0 4px; }")
+            addRule(".dep { margin: 0 0 8px 12px; }")
+            addRule(".v { color: #$gray; }")
+            addRule(".g { color: #$gray; }")
+            addRule("a { color: #$link; text-decoration: none; }")
         }
-
-        fun constraints(row: Int, column: Int, fillMode: Int): GridBagConstraints =
-            GridBagConstraints().apply {
-                gridy = row
-                gridx = column
-                anchor = GridBagConstraints.WEST
-                weightx = if (column == 0) 0.0 else 1.0
-                fill = fillMode
-                insets = JBUI.insets(3, 0, 3, 8)
-            }
-
-        fun addRow(captionText: String, value: JComponent) {
-            if (captionText.isEmpty()) {
-                detailsBody.add(value, constraints(gridy, 0, GridBagConstraints.HORIZONTAL).apply {
-                    gridwidth = GridBagConstraints.REMAINDER
-                })
-                gridy++
-                return
-            }
-            detailsBody.add(caption(captionText), constraints(gridy, 0, GridBagConstraints.NONE))
-            detailsBody.add(value, constraints(gridy, 1, GridBagConstraints.HORIZONTAL))
-            gridy++
-        }
-
-        /** An entry indented under its section heading - the hierarchy the page reads by. */
-        fun addIndented(value: JComponent) {
-            detailsBody.add(
-                value,
-                constraints(gridy, 0, GridBagConstraints.HORIZONTAL).apply {
-                    gridwidth = GridBagConstraints.REMAINDER
-                    insets = JBUI.insets(0, 12, 4, 0)
-                },
-            )
-            gridy++
-        }
-
-        fun addSection(title: String) {
-            val row = gridy
-            detailsBody.add(
-                JBLabel(title).apply {
-                    font = JBFont.label().biggerOn(-1f).deriveFont(Font.BOLD)
-                    foreground = infoForeground()
-                },
-                GridBagConstraints().apply {
-                    gridy = row
-                    gridx = 0
-                    gridwidth = GridBagConstraints.REMAINDER
-                    anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(if (row == 0) 0 else 12, 0, 6, 0)
-                },
-            )
-            gridy++
-        }
-
-        fun addParagraph(text: String, gray: Boolean = false) {
-            val row = gridy
-            detailsBody.add(
-                wrappedText(text).apply { if (gray) foreground = infoForeground() },
-                GridBagConstraints().apply {
-                    gridy = row
-                    gridx = 0
-                    gridwidth = GridBagConstraints.REMAINDER
-                    weightx = 1.0
-                    fill = GridBagConstraints.HORIZONTAL
-                    anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(2, 0, 8, 0)
-                },
-            )
-            gridy++
-        }
-
-        fun addFiller() {
-            val row = gridy
-            detailsBody.add(
-                JPanel().apply { isOpaque = false },
-                GridBagConstraints().apply {
-                    gridy = row
-                    gridx = 0
-                    gridwidth = GridBagConstraints.REMAINDER
-                    weighty = 1.0
-                    fill = GridBagConstraints.BOTH
-                },
-            )
-        }
-
-        when {
-            // A busy pipeline with a named operation is not loading this info at all - the
-            // fetchInfo call was a no-op; say what the wait is really on.
-            info == null && service.busy && service.currentOperation != null -> {
-                addParagraph(
-                    "Waiting for the current operation to finish before loading the info of '$name' - " +
-                        "${service.currentOperation} - then the row loads its info, or select it again",
-                    gray = true,
-                )
-                addFiller()
-            }
-            // The query rides the executor lane, over SSH in the worst case; the spinner
-            // says the click was heard and the answer is on its way.
-            info == null && service.busy -> {
-                val row = gridy
-                detailsBody.add(
-                    javax.swing.Box.createHorizontalBox().apply {
-                        add(infoLoading)
-                        add(javax.swing.Box.createHorizontalStrut(JBUI.scale(8)))
-                        add(JBLabel("Loading...").apply { foreground = infoForeground() })
-                    },
-                    GridBagConstraints().apply {
-                        gridy = row
-                        gridx = 0
-                        gridwidth = GridBagConstraints.REMAINDER
-                        anchor = GridBagConstraints.WEST
-                        insets = JBUI.insets(4, 0)
-                    },
-                )
-                gridy++
-                addFiller()
-            }
-            info == null -> {
-                addParagraph(
-                    buildString {
-                        append("No info available for '$name' - the info query answered nothing usable")
-                        service.lastError?.let { append(": ").append(it) }
-                        append(". The xmake on this host may not answer require --info --format=json; updating xmake may fix it")
-                    },
-                    gray = true,
-                )
-                addFiller()
-            }
-            else -> {
-                // The description leads: it is what the user came to read. The identity
-                // facts - requirement, resolved version, repository - already sit in the
-                // header's meta line; the body only carries what the header cannot.
-                info.description?.let { addParagraph(it) }
-
-                // The closure the query answered, as its own section; where it said
-                // nothing, the project's depgraph still names what the package needs.
-                val closure = service.snapshot?.closures?.get(name).orEmpty()
-                val asked = bareName(name)
-                val dependencies = closure.filter { bareName(it.require) != asked }
-                val declaredDependencies = service.snapshot?.depgraph?.packages
-                    ?.firstOrNull { it.name == name }?.deps
-                if (dependencies.isNotEmpty()) {
-                    addSection("DEPENDENCIES - ${dependencies.size}")
-                    dependencies.forEach { dependency ->
-                        // Each entry indents under its heading: the name in bold with the
-                        // resolved version grayed beside it, its description grayed under,
-                        // a breath between entries.
-                        addIndented(
-                            JPanel(java.awt.GridLayout(0, 1)).apply {
-                                isOpaque = false
-                                add(
-                                    javax.swing.Box.createHorizontalBox().apply {
-                                        add(
-                                            JBLabel(dependency.require.ifEmpty { "?" }).apply {
-                                                font = JBFont.label().deriveFont(Font.BOLD)
-                                            },
-                                        )
-                                        dependency.version?.let { version ->
-                                            add(javax.swing.Box.createHorizontalStrut(JBUI.scale(8)))
-                                            add(JBLabel(version).apply { foreground = infoForeground() })
-                                        }
-                                    },
-                                )
-                                dependency.description?.let {
-                                    add(wrappedText(it).apply { foreground = infoForeground() })
-                                }
-                            },
-                        )
-                    }
-                } else if (!declaredDependencies.isNullOrEmpty()) {
-                    addRow("Depends on", JBLabel(declaredDependencies.joinToString(", ")))
-                }
-
-                addSection("INFO")
-                info.installdir?.let { addRow("Install directory", pathLabel(it)) }
-                info.cachedir?.let { addRow("Cache directory", pathLabel(it)) }
-                if (info.installed) {
-                    addRow("References", JBLabel("${info.references?.size ?: 0} - installed"))
-                    info.references.orEmpty().forEach { reference ->
-                        addIndented(
-                            JBLabel(
-                                buildString {
-                                    append(reference.dir ?: "?")
-                                    reference.date?.let { append("   ").append(it) }
-                                },
-                                AllIcons.Nodes.Folder,
-                                javax.swing.SwingConstants.LEFT,
-                            ).apply {
-                                foreground = infoForeground()
-                                reference.dir?.let { toolTipText = it }
-                            },
-                        )
-                    }
-                }
-                addFiller()
-            }
-        }
-        detailsBody.revalidate()
-        detailsBody.repaint()
+        return kit
     }
 
-    /** A long path, kept legible: elided in the middle, whole in the tooltip, copyable
-     *  on the label - the head (drive, toolchain root) and the tail (the package's own
-     *  versioned directory) are the parts a user reads. */
-    private fun pathLabel(path: String): JComponent = JBLabel(
-        elideMiddle(path, 64),
-        AllIcons.Nodes.Folder,
-        javax.swing.SwingConstants.LEFT,
-    ).apply {
-        toolTipText = path
-        setCopyable(true)
-        font = JBFont.label()
+    /** Escapes [text] for the HTML document the details page renders. */
+    private fun esc(text: String): String = StringUtil.escapeXmlEntities(text)
+
+    /** The selected package the details page currently renders; the version links route
+     *  their confirmation flows through it. */
+    private var detailsPackage: String? = null
+
+    /** The document the details page renders for a package whose info landed. */
+    private fun detailsHtml(name: String): String {
+        val info = infoFor(name) ?: return ""
+        val row = tableModel.items.firstOrNull { it.name == name }
+        val page = StringBuilder()
+
+        // The description leads: it is what the user came to read.
+        info.description?.let { page.append("<p>").append(esc(it)).append("</p>") }
+
+        // The closure the query answered, as its own section; where it said nothing,
+        // the project's depgraph still names what the package needs.
+        val closure = service.snapshot?.closures?.get(name).orEmpty()
+        val asked = bareName(name)
+        val dependencies = closure.filter { bareName(it.require) != asked }
+        val declaredDependencies = service.snapshot?.depgraph?.packages
+            ?.firstOrNull { it.name == name }?.deps
+        if (dependencies.isNotEmpty()) {
+            page.append("<p class='sec'>DEPENDENCIES - ${dependencies.size}</p>")
+            dependencies.forEach { dependency ->
+                page.append("<div class='dep'><b>").append(esc(dependency.require.ifEmpty { "?" })).append("</b>")
+                dependency.version?.let { page.append(" <span class='v'>").append(esc(it)).append("</span>") }
+                dependency.description?.let { page.append("<br><span class='g'>").append(esc(it)).append("</span>") }
+                page.append("</div>")
+            }
+        } else if (!declaredDependencies.isNullOrEmpty()) {
+            page.append("<p class='sec'>DEPENDENCIES</p><div class='dep'><span class='g'>")
+                .append(esc(declaredDependencies.joinToString(", ")))
+                .append("</span></div>")
+        }
+
+        // The versions the view knows of: the ones the search answered, each installable
+        // at its pin; the installed reference, uninstallable. The toolbar's actions stay
+        // whole-package - this section is where a version chooses.
+        val versions = row?.versions.orEmpty()
+        val installedNow = info.version
+        if (versions.isNotEmpty() || info.installed) {
+            page.append("<p class='sec'>VERSIONS</p>")
+            versions.forEach { version ->
+                val pinned = "$name@$version"
+                page.append("<div class='dep'><b>").append(esc(version)).append("</b>")
+                if (version == installedNow) {
+                    page.append(" <span class='g'>installed</span>")
+                } else {
+                    page.append(" <span class='g'>available</span> <a href='action://install/").append(esc(pinned))
+                        .append("'>Install</a>")
+                }
+                page.append("</div>")
+            }
+            if (versions.isEmpty() && installedNow != null) {
+                page.append("<div class='dep'><b>").append(esc(installedNow))
+                    .append("</b> <span class='g'>installed</span> <a href='action://uninstall/").append(esc(name))
+                    .append("'>Uninstall</a></div>")
+            }
+            info.references.orEmpty().forEach { reference ->
+                page.append("<div class='dep'><span class='g'>")
+                    .append(esc(elideMiddle(reference.dir ?: "?", 56)))
+                reference.date?.let { page.append("   ").append(esc(it)) }
+                page.append("</span></div>")
+            }
+        }
+
+        // The facts the header cannot carry.
+        page.append("<p class='sec'>INFO</p>")
+        page.append("<div class='dep'>")
+        info.installdir?.let { page.append("<span class='g'>Install directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
+        info.cachedir?.let { page.append("<span class='g'>Cache directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
+        if (info.installed) {
+            page.append("<span class='g'>References:</span> ${info.references?.size ?: 0} - installed")
+        }
+        page.append("</div>")
+        return page.toString()
     }
+
+    /** Wraps [body] in the document shell the kit renders. */
+    private fun wrapHtml(body: String): String =
+        "<html><head></head><body>$body</body></html>"
 
     /** Cuts [text] through the middle once it passes [maxChars], keeping both ends. */
     private fun elideMiddle(text: String, maxChars: Int): String {
@@ -915,19 +864,6 @@ internal class XMakePackagesPanel(
         val head = maxChars / 2
         val tail = maxChars - head
         return text.take(head) + " ... " + text.takeLast(tail)
-    }
-
-    /** A value that wraps instead of widening the grid: the description, the paths. A
-     *  wrapping text area sized by GridBag settles at the pane width once laid out, and
-     *  the scroll pane never scrolls sideways - the old text pane's wrapping, kept per
-     *  value. */
-    private fun wrappedText(text: String): JComponent = JBTextArea(text).apply {
-        isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
-        isFocusable = false
-        isOpaque = false
-        font = JBFont.label()
     }
 
     /** The confirmation the mutating actions share: the exact command line, the packages
@@ -946,10 +882,19 @@ internal class XMakePackagesPanel(
         service.runPackageCommand(command, what)
     }
 
-    /** The Install flow the toolbar button and a double-click on a row share. */
-    private fun installPackage(name: String) {
-        service.prepareCommand(prepare = { createRequireInstall(name) }) { command ->
-            confirmAndRun("Install package", "Installing '$name' - xmake fetches, builds, and installs it.", command)
+    /** The Install flow the toolbar button, a double-click on a row, and the details
+     *  page's version links share. [spec] is the xmake package ask: a bare name, or a
+     *  name pinned to one version (`rsync@3.4.1`). */
+    private fun installPackage(spec: String) {
+        service.prepareCommand(prepare = { createRequireInstall(spec) }) { command ->
+            confirmAndRun("Install package", "Installing '$spec' - xmake fetches, builds, and installs it.", command)
+        }
+    }
+
+    /** The Uninstall flow the toolbar button and the details page's version link share. */
+    private fun uninstallPackage(name: String) {
+        service.prepareCommand(prepare = { createRequireUninstall(name) }) { command ->
+            confirmAndRun("Uninstall package", "Uninstalling '$name'.", command)
         }
     }
 
@@ -1018,7 +963,7 @@ internal class XMakePackagesPanel(
 
     private inner class UpgradeAction : DumbAwareAction(
         "Upgrade",
-        "Upgrade every installed package after confirming the exact command",
+        "Upgrade every installed package to the newest version its requirement allows (xmake require --upgrade)",
         AllIcons.Plugins.Updated,
     ) {
 
@@ -1030,7 +975,11 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             service.prepareCommand(prepare = { createRequireUpgrade() }) { command ->
-                confirmAndRun("Upgrade packages", "Upgrading every installed package.", command)
+                confirmAndRun(
+                    "Upgrade packages",
+                    "Upgrading every installed package to the newest version its requirement allows.",
+                    command,
+                )
             }
         }
     }
@@ -1081,8 +1030,9 @@ internal class XMakePackagesPanel(
     }
 
     /** One row of the packages table: a declared entry, or a repository hit while
-     *  searching. The info-driven cells (the resolved meta, the status) re-read the
-     *  service's snapshot on paint, so an info landing is a repaint, not a rebuild. */
+     *  searching. A hit's row aggregates every version the repo answered for the name -
+     *  the details page lists them with their install links. The info-driven cells (the
+     *  resolved meta, the status) re-read the service's snapshot on paint. */
     private class PackageRow(
         val name: String,
         val requirement: String?,
@@ -1090,6 +1040,7 @@ internal class XMakePackagesPanel(
         val description: String?,
         val repo: String?,
         val isHit: Boolean,
+        val versions: List<String> = emptyList(),
     ) {
 
         override fun toString(): String = name
