@@ -106,15 +106,20 @@ internal object XMakePackageParsers {
     }
 
     /**
-     * Parses one package's `--info --format=json` output: a JSON array whose first object
-     * carries the package's data, `references` present exactly when installed. Null answers
-     * "no usable info" - unknown shape, failed query, or a package that exists nowhere is
-     * still parsed (version `latest`, no repo).
+     * Parses one package's `--info --format=json` output: a JSON array whose objects
+     * carry the package's data, `references` present exactly when installed. The array
+     * is the package's whole dependency closure - the dependencies ride first and the
+     * requested package may sit anywhere in it (last in the observed 3.1.2 answers) -
+     * so [packageName] picks the element; the query's answer for another package is
+     * not this package's info, however well it parses. Null answers "no usable info" -
+     * unknown shape, no element carrying the asked name, failed query; a package that
+     * exists nowhere is still parsed (version `latest`, no repo).
      */
-    fun parsePackageInfo(output: String): XMakePackageInfo? {
+    fun parsePackageInfo(output: String, packageName: String): XMakePackageInfo? {
         val element = jsonPayload(stripAnsi(output)) ?: return null
         val obj = when (element) {
-            is JsonArray -> element.firstOrNull() as? JsonObject
+            is JsonArray -> element.filterIsInstance<JsonObject>()
+                .firstOrNull { it.requiredName() == askedName(packageName) }
             is JsonObject -> element
             else -> null
         } ?: return null
@@ -253,4 +258,13 @@ internal object XMakePackageParsers {
         (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
 
     private fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
+
+    /** The bare package name an info object answers: the `require` field may carry a
+     *  version ask ("python 3.x") and an external-manager prefix ("vcpkg::zlib"). */
+    private fun JsonObject.requiredName(): String? =
+        string("require")?.trim()?.substringBefore(" ")?.substringAfterLast("::")?.lowercase()
+
+    /** The bare name one query asks for, normalized the same way [requiredName] reads. */
+    private fun askedName(packageName: String): String =
+        packageName.trim().substringBefore(" ").substringAfterLast("::").lowercase()
 }

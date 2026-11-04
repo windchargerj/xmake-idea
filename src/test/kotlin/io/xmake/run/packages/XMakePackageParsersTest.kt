@@ -84,7 +84,7 @@ class XMakePackageParsersTest {
             ]
         """.trimIndent() + "\n"
 
-        val info = XMakePackageParsers.parsePackageInfo(output)!!
+        val info = XMakePackageParsers.parsePackageInfo(output, "tinytest")!!
 
         assertEquals("tinytest", info.require)
         assertEquals("1.0.0", info.version)
@@ -106,7 +106,7 @@ class XMakePackageParsersTest {
             ]
         """.trimIndent()
 
-        val info = XMakePackageParsers.parsePackageInfo(output)!!
+        val info = XMakePackageParsers.parsePackageInfo(output, "tinytest")!!
 
         assertFalse(info.installed)
         assertEquals("localrepo", info.repoName)
@@ -120,7 +120,7 @@ class XMakePackageParsersTest {
             [{"require": "tinytest", "version": "1.0.0"}]
         """.trimIndent() + "\n"
 
-        val info = XMakePackageParsers.parsePackageInfo(output)
+        val info = XMakePackageParsers.parsePackageInfo(output, "tinytest")
 
         assertEquals("1.0.0", info?.version)
     }
@@ -129,7 +129,7 @@ class XMakePackageParsersTest {
     fun `a package that exists nowhere parses as latest with no repo`() {
         val output = """[ { "require": "nosuchpkg", "version": "latest" } ]"""
 
-        val info = XMakePackageParsers.parsePackageInfo(output)!!
+        val info = XMakePackageParsers.parsePackageInfo(output, "nosuchpkg")!!
 
         assertEquals("latest", info.version)
         assertNull(info.repoName)
@@ -137,8 +137,42 @@ class XMakePackageParsersTest {
     }
 
     @Test
+    fun `the dependency closure answers the asked package, not the first element`() {
+        val output = """
+            checking for platform ...
+            [
+                { "require": "openssl", "version": "1.1.1-w", "description": "A toolkit for TLS" },
+                { "require": "zstd", "version": "v1.5.7", "description": "Fast real-time compression" },
+                { "require": "rsync", "version": "3.4.1", "description": "Fast incremental file transfer" }
+            ]
+        """.trimIndent()
+
+        val info = XMakePackageParsers.parsePackageInfo(output, "rsync")!!
+
+        assertEquals("rsync", info.require)
+        assertEquals("3.4.1", info.version)
+        assertEquals("Fast incremental file transfer", info.description)
+    }
+
+    @Test
+    fun `a name the closure does not carry answers null instead of another package`() {
+        val output = """[ { "require": "openssl", "version": "1.1.1-w" } ]"""
+
+        assertNull(XMakePackageParsers.parsePackageInfo(output, "rsync"))
+    }
+
+    @Test
+    fun `the asked name matches through a version ask and an external prefix`() {
+        val output = """[ { "require": "vcpkg::zlib >=1.3", "version": "1.3.1" } ]"""
+
+        val info = XMakePackageParsers.parsePackageInfo(output, "ZLIB")!!
+
+        assertEquals("1.3.1", info.version)
+    }
+
+    @Test
     fun `junk info output answers null instead of throwing`() {
-        assertNull(XMakePackageParsers.parsePackageInfo("checking for platform ...\nno json here\n"))
+        assertNull(XMakePackageParsers.parsePackageInfo("checking for platform ...\nno json here\n", "tinytest"))
     }
 
     @Test

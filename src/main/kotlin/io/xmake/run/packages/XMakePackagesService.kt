@@ -157,6 +157,7 @@ internal class XMakePackagesService(private val project: Project) {
             val info = runCancellable {
                 XMakePackageParsers.parsePackageInfo(
                     project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName)),
+                    packageName,
                 )
             }.getOrNull()
             base?.copy(infos = base.infos + (packageName to info))
