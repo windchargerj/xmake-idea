@@ -111,14 +111,14 @@ internal class XMakePackagesService(private val project: Project) {
 
     /**
      * Fetches one package's `--info` in the background - the installed marker and the
-     * details pane's data. Cached answers (including "no usable info") are not re-queried,
-     * so re-selecting a row costs nothing; [refresh] empties the cache and re-queries on
-     * selection.
+     * details pane's data. Always re-queries: the search hits and the declared list can
+     * carry the same name with different resolutions (a project pins one version, the
+     * repository offers another), and a cached answer from one context would misdescribe
+     * the row the user clicked in the other.
      */
     fun fetchInfo(packageName: String) {
         if (busy) return
         val current = snapshot ?: return
-        if (current.infos.containsKey(packageName)) return
         busy = true
         currentOperation = null
         project.xmakeExecutor.submit {
