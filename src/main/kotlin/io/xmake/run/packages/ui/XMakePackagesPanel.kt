@@ -360,6 +360,7 @@ internal class XMakePackagesPanel(
         selectedPackageName()?.let { name ->
             service.fetchInfo(name)
             renderDetails(name)
+            table.repaint()
         }
     }
 
