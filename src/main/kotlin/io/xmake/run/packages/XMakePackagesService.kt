@@ -105,7 +105,9 @@ internal class XMakePackagesService(private val project: Project) {
 
     /** Searches the configured repositories; the hits - and the `note:`/`error:` lines
      *  xmake printed around them - replace the tree's rows until [exitSearch]. A search
-     *  behind a read preempts it; behind a mutation it queues as [pendingSearch]. */
+     *  behind a read preempts it; behind a mutation it queues as [pendingSearch]. The
+     *  info cache clears with the mode: a name answered under search queries afresh as
+     *  declared, since the two contexts resolve differently. */
     fun search(term: String) {
         if (busy && busyWithMutation) {
             pendingSearch = term
@@ -116,7 +118,8 @@ internal class XMakePackagesService(private val project: Project) {
             val results = XMakePackageParsers.parseSearchResults(
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireSearch(term)),
             )
-            (snapshot ?: XMakePackagesSnapshot(emptyList(), null)).copy(searchResults = results)
+            (snapshot ?: XMakePackagesSnapshot(emptyList(), null))
+                .copy(searchResults = results, infos = emptyMap(), closures = emptyMap())
         }
     }
 
@@ -125,35 +128,41 @@ internal class XMakePackagesService(private val project: Project) {
      * snapshot the search rode on, so Esc, or an empty search box plus Enter, costs no
      * lane time. A read still in flight is abandoned, a queued search dropped; a
      * mutation keeps running and its trailing refresh keeps the exit (the snapshot it
-     * loads carries the cleared search results). No-op when search mode is not on.
+     * loads carries the cleared search results). The info cache clears with the mode,
+     * like [search]'s. No-op when search mode is not on.
      */
     fun exitSearch() {
         pendingSearch = null
         inFlight?.takeIf { !busyWithMutation }?.cancel()
         val current = snapshot ?: return
         if (current.searchResults == null) return
-        snapshot = current.copy(searchResults = null)
+        snapshot = current.copy(searchResults = null, infos = emptyMap(), closures = emptyMap())
         project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)
     }
 
     /**
      * Fetches one package's `--info` in the background - the installed marker and the
-     * details pane's data. Always re-queries: the search hits and the declared list can
-     * carry the same name with different resolutions (a project pins one version, the
-     * repository offers another), and a cached answer from one context would misdescribe
-     * the row the user clicked in the other. The snapshot merges at lane time, so a
-     * search entered while the fetch runs still lands on the snapshot it produced.
+     * details pane's data. One query per package per context: the landed answer, a
+     * failed parse included, is the info cache's record, so the view's publishes - each
+     * of which asks for the selected row's info again - stop at it instead of spawning
+     * the query forever. A mode flip clears the cache ([search], [exitSearch]), which
+     * is what keeps the two contexts' resolutions apart.
      */
     fun fetchInfo(packageName: String) {
-        if (busy || snapshot == null) return
+        val current = snapshot ?: return
+        if (busy) return
+        if (current.infos.containsKey(packageName)) return
         claim(null) { factory ->
             val base = snapshot
-            val info = runCancellable {
-                XMakePackageParsers.parsePackageInfo(
-                    project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName)),
-                )
+            val output = runCancellable {
+                project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName))
             }.getOrNull()
-            base?.copy(infos = base.infos + (packageName to info))
+            // One query per package per context: a landed answer - a failed parse
+            // included - is the record, whatever it said. The closure rides with the
+            // asked package's own answer; it is what the query handed back.
+            val info = output?.let { runCancellable { XMakePackageParsers.parsePackageInfo(it, packageName) }.getOrNull() }
+            val closure = output?.let { runCancellable { XMakePackageParsers.parsePackageClosure(it) }.getOrNull() }.orEmpty()
+            base?.copy(infos = base.infos + (packageName to info), closures = base.closures + (packageName to closure))
         }
     }
 

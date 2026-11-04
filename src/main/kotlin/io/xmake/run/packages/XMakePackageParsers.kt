@@ -106,42 +106,65 @@ internal object XMakePackageParsers {
     }
 
     /**
-     * Parses one package's `--info --format=json` output: a JSON array whose first object
-     * carries the package's data, `references` present exactly when installed. Null answers
-     * "no usable info" - unknown shape, failed query, or a package that exists nowhere is
-     * still parsed (version `latest`, no repo).
+     * Parses one package's `--info --format=json` output: a JSON array whose objects
+     * carry the package's data, `references` present exactly when installed. The array
+     * is the package's whole dependency closure - the dependencies ride first and the
+     * requested package may sit anywhere in it (last in the observed 3.1.2 answers) -
+     * so [packageName] picks the element; the query's answer for another package is
+     * not this package's info, however well it parses. Null answers "no usable info" -
+     * unknown shape, no element carrying the asked name, failed query; a package that
+     * exists nowhere is still parsed (version `latest`, no repo).
      */
-    fun parsePackageInfo(output: String): XMakePackageInfo? {
+    fun parsePackageInfo(output: String, packageName: String): XMakePackageInfo? {
         val element = jsonPayload(stripAnsi(output)) ?: return null
         val obj = when (element) {
-            is JsonArray -> element.firstOrNull() as? JsonObject
+            is JsonArray -> element.filterIsInstance<JsonObject>()
+                .firstOrNull { it.requiredName() == askedName(packageName) }
             is JsonObject -> element
             else -> null
         } ?: return null
-        return XMakePackageInfo(
-            require = obj.string("require").orEmpty(),
-            version = obj.string("version"),
-            description = obj.string("description"),
-            repoName = obj.obj("repo")?.string("name"),
-            repoUrl = obj.obj("repo")?.string("url"),
-            installdir = obj.string("installdir"),
-            cachedir = obj.string("cachedir"),
-            platforms = (obj["platforms"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.content }
-                .orEmpty(),
-            references = obj["references"]?.let { refs ->
-                (refs as? JsonArray)?.mapNotNull { ref ->
-                    (ref as? JsonObject)?.let {
-                        XMakePackageReference(
-                            dir = it.string("dir"),
-                            date = it.string("date"),
-                            exists = (it["exists"] as? JsonPrimitive)?.booleanOrNull,
-                        )
-                    }
-                }
-            },
-        )
+        return packageInfo(obj)
     }
+
+    /**
+     * Parses everything one `--info --format=json` answer carried: every object of the
+     * dependency closure, in the order xmake reported it. The asked package's own answer
+     * is [parsePackageInfo]; this is the rest of what the query said, for the view to
+     * present. A single-object answer is a closure of one.
+     */
+    fun parsePackageClosure(output: String): List<XMakePackageInfo> {
+        val element = jsonPayload(stripAnsi(output)) ?: return emptyList()
+        return when (element) {
+            is JsonArray -> element.mapNotNull { it as? JsonObject }.map(::packageInfo)
+            is JsonObject -> listOf(packageInfo(element))
+            else -> emptyList()
+        }
+    }
+
+    /** The package info one info object carries. */
+    private fun packageInfo(obj: JsonObject): XMakePackageInfo = XMakePackageInfo(
+        require = obj.string("require").orEmpty(),
+        version = obj.string("version"),
+        description = obj.string("description"),
+        repoName = obj.obj("repo")?.string("name"),
+        repoUrl = obj.obj("repo")?.string("url"),
+        installdir = obj.string("installdir"),
+        cachedir = obj.string("cachedir"),
+        platforms = (obj["platforms"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.content }
+            .orEmpty(),
+        references = obj["references"]?.let { refs ->
+            (refs as? JsonArray)?.mapNotNull { ref ->
+                (ref as? JsonObject)?.let {
+                    XMakePackageReference(
+                        dir = it.string("dir"),
+                        date = it.string("date"),
+                        exists = (it["exists"] as? JsonPrimitive)?.booleanOrNull,
+                    )
+                }
+            }
+        },
+    )
 
     /**
      * Parses `--search` output into the repository hits plus the `note:`/`error:` lines
@@ -253,4 +276,13 @@ internal object XMakePackageParsers {
         (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
 
     private fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
+
+    /** The bare package name an info object answers: the `require` field may carry a
+     *  version ask ("python 3.x") and an external-manager prefix ("vcpkg::zlib"). */
+    private fun JsonObject.requiredName(): String? =
+        string("require")?.trim()?.substringBefore(" ")?.substringAfterLast("::")?.lowercase()
+
+    /** The bare name one query asks for, normalized the same way [requiredName] reads. */
+    private fun askedName(packageName: String): String =
+        packageName.trim().substringBefore(" ").substringAfterLast("::").lowercase()
 }

@@ -84,7 +84,7 @@ class XMakePackageParsersTest {
             ]
         """.trimIndent() + "\n"
 
-        val info = XMakePackageParsers.parsePackageInfo(output)!!
+        val info = XMakePackageParsers.parsePackageInfo(output, "tinytest")!!
 
         assertEquals("tinytest", info.require)
         assertEquals("1.0.0", info.version)
@@ -106,7 +106,7 @@ class XMakePackageParsersTest {
             ]
         """.trimIndent()
 
-        val info = XMakePackageParsers.parsePackageInfo(output)!!
+        val info = XMakePackageParsers.parsePackageInfo(output, "tinytest")!!
 
         assertFalse(info.installed)
         assertEquals("localrepo", info.repoName)
@@ -120,7 +120,7 @@ class XMakePackageParsersTest {
             [{"require": "tinytest", "version": "1.0.0"}]
         """.trimIndent() + "\n"
 
-        val info = XMakePackageParsers.parsePackageInfo(output)
+        val info = XMakePackageParsers.parsePackageInfo(output, "tinytest")
 
         assertEquals("1.0.0", info?.version)
     }
@@ -129,7 +129,7 @@ class XMakePackageParsersTest {
     fun `a package that exists nowhere parses as latest with no repo`() {
         val output = """[ { "require": "nosuchpkg", "version": "latest" } ]"""
 
-        val info = XMakePackageParsers.parsePackageInfo(output)!!
+        val info = XMakePackageParsers.parsePackageInfo(output, "nosuchpkg")!!
 
         assertEquals("latest", info.version)
         assertNull(info.repoName)
@@ -137,8 +137,74 @@ class XMakePackageParsersTest {
     }
 
     @Test
+    fun `the dependency closure answers the asked package, not the first element`() {
+        val output = """
+            checking for platform ...
+            [
+                { "require": "openssl", "version": "1.1.1-w", "description": "A toolkit for TLS" },
+                { "require": "zstd", "version": "v1.5.7", "description": "Fast real-time compression" },
+                { "require": "rsync", "version": "3.4.1", "description": "Fast incremental file transfer" }
+            ]
+        """.trimIndent()
+
+        val info = XMakePackageParsers.parsePackageInfo(output, "rsync")!!
+
+        assertEquals("rsync", info.require)
+        assertEquals("3.4.1", info.version)
+        assertEquals("Fast incremental file transfer", info.description)
+    }
+
+    @Test
+    fun `a name the closure does not carry answers null instead of another package`() {
+        val output = """[ { "require": "openssl", "version": "1.1.1-w" } ]"""
+
+        assertNull(XMakePackageParsers.parsePackageInfo(output, "rsync"))
+    }
+
+    @Test
+    fun `the asked name matches through a version ask and an external prefix`() {
+        val output = """[ { "require": "vcpkg::zlib >=1.3", "version": "1.3.1" } ]"""
+
+        val info = XMakePackageParsers.parsePackageInfo(output, "ZLIB")!!
+
+        assertEquals("1.3.1", info.version)
+    }
+
+    @Test
     fun `junk info output answers null instead of throwing`() {
-        assertNull(XMakePackageParsers.parsePackageInfo("checking for platform ...\nno json here\n"))
+        assertNull(XMakePackageParsers.parsePackageInfo("checking for platform ...\nno json here\n", "tinytest"))
+    }
+
+    @Test
+    fun `the whole closure parses in the order xmake reported it`() {
+        val output = """
+            checking for platform ...
+            [
+                { "require": "openssl", "version": "1.1.1-w", "description": "A toolkit for TLS" },
+                { "require": "zstd", "version": "v1.5.7" },
+                { "require": "rsync", "version": "3.4.1", "description": "Fast incremental file transfer" }
+            ]
+        """.trimIndent()
+
+        val closure = XMakePackageParsers.parsePackageClosure(output)
+
+        assertEquals(listOf("openssl", "zstd", "rsync"), closure.map { it.require })
+        assertEquals("A toolkit for TLS", closure[0].description)
+        assertNull(closure[1].description)
+        assertEquals("Fast incremental file transfer", closure[2].description)
+    }
+
+    @Test
+    fun `a single-object info answer is a closure of one`() {
+        val closure = XMakePackageParsers.parsePackageClosure("""{ "require": "tinytest", "version": "1.0.0" }""")
+
+        assertEquals(1, closure.size)
+        assertEquals("tinytest", closure.single().require)
+    }
+
+    @Test
+    fun `junk closure output answers empty instead of throwing`() {
+        assertTrue(XMakePackageParsers.parsePackageClosure("checking for platform ...\nno json here\n").isEmpty())
     }
 
     @Test

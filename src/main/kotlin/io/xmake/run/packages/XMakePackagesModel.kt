@@ -97,13 +97,17 @@ data class XMakeDepNode(
 /**
  * The packages view's state at one moment. [infos] maps a queried package name to its info,
  * or to null when the query ran but produced nothing usable - the null stops the view from
- * re-querying on every selection. [searchResults] is non-null while the tree shows the hits
- * as its filtered view; the view survives refreshes (an install from a hit lands with the
- * hits still shown) and is left only by the explicit exits - Esc, or an emptied field.
+ * re-querying on every selection. [closures] maps the same name to everything the query
+ * answered: the package's whole dependency closure, the asked package included, each
+ * element carrying its resolved version and description. [searchResults] is non-null while
+ * the tree shows the hits as its filtered view; the view survives refreshes (an install
+ * from a hit lands with the hits still shown) and is left only by the explicit exits -
+ * Esc, or an emptied field.
  */
 data class XMakePackagesSnapshot(
     val packages: List<XMakeRequireEntry>,
     val depgraph: XMakePackageDepgraph?,
     val infos: Map<String, XMakePackageInfo?> = emptyMap(),
+    val closures: Map<String, List<XMakePackageInfo>> = emptyMap(),
     val searchResults: XMakeSearchResults? = null,
 )
