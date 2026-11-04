@@ -261,7 +261,7 @@ internal class XMakePackagesPanel(
         textEditor.putClientProperty("JTextField.Search.Gap", JBUI.scale(6))
         textEditor.putClientProperty("JTextField.Search.GapEmptyText", JBUI.scale(-1))
         textEditor.background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
-        preferredSize = Dimension(JBUI.scale(240), preferredSize.height)
+        preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
         textEditor.addActionListener {
             val term = text.trim()
             if (term.isEmpty()) {
@@ -304,7 +304,7 @@ internal class XMakePackagesPanel(
         background = mainBackground()
         border = JBUI.Borders.compound(
             CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
-            JBUI.Borders.empty(12, 20, 10, 20),
+            JBUI.Borders.empty(10, 16, 8, 16),
         )
         fun row(gridy: Int, component: JComponent, stretch: Boolean = true) = add(
             component,
@@ -314,7 +314,7 @@ internal class XMakePackagesPanel(
                 weightx = 1.0
                 anchor = GridBagConstraints.WEST
                 fill = if (stretch) GridBagConstraints.HORIZONTAL else GridBagConstraints.NONE
-                insets = JBUI.insets(if (gridy == 0) 0 else 8, 0)
+                insets = JBUI.insets(if (gridy == 0) 0 else 6, 0)
             },
         )
         row(0, BorderLayoutPanel().apply {
@@ -335,7 +335,7 @@ internal class XMakePackagesPanel(
     private val detailsBody = JPanel(GridBagLayout()).apply {
         isOpaque = true
         background = mainBackground()
-        border = JBUI.Borders.empty(12, 20, 16, 20)
+        border = JBUI.Borders.empty(8, 16, 12, 16)
     }
 
     /** The details pane as the Marketplace page lays it out: the header fixed, the info
@@ -391,18 +391,20 @@ internal class XMakePackagesPanel(
             }
         }.installOn(table)
 
-        // The search row rides the master column: the field belongs to the list it
-        // searches, at a width a search field is. A term typed while an operation holds
-        // the lane is queued by the service and searched when the lane frees. The
-        // hairline under it is the Marketplace page's line between the field and the rows.
-        val searchRow = JPanel(BorderLayout()).apply {
+        // The master column's own header: the search field and the package actions on
+        // one row - the tools live with the list they act on. A term typed while an
+        // operation holds the lane is queued by the service and searched when the lane
+        // frees. The hairline under the row is the Marketplace page's line between the
+        // search field and the rows.
+        val searchRow = BorderLayoutPanel().apply {
             isOpaque = true
             background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
             border = JBUI.Borders.compound(
                 CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
                 JBUI.Borders.empty(6, 8),
             )
-            add(searchField, BorderLayout.WEST)
+            addToCenter(searchField)
+            addToRight(toolbar().component)
         }
 
         val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
@@ -413,7 +415,6 @@ internal class XMakePackagesPanel(
             secondComponent = detailsCard
         }
 
-        toolbar = toolbar().component
         setContent(
             JBUI.Panels.simplePanel()
                 .addToCenter(split)
@@ -741,7 +742,7 @@ internal class XMakePackagesPanel(
                     gridx = 0
                     gridwidth = GridBagConstraints.REMAINDER
                     anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(if (row == 0) 0 else 10, 0, 4, 0)
+                    insets = JBUI.insets(if (row == 0) 0 else 8, 0, 2, 0)
                 },
             )
             gridy++
@@ -822,22 +823,10 @@ internal class XMakePackagesPanel(
                 addFiller()
             }
             else -> {
-                // The description leads: it is what the user came to read.
+                // The description leads: it is what the user came to read. The identity
+                // facts - requirement, resolved version, repository - already sit in the
+                // header's meta line; the body only carries what the header cannot.
                 info.description?.let { addParagraph(it) }
-                tableModel.items.firstOrNull { it.name == name }?.requirement
-                    ?.let { addRow("Requirement", JBLabel(it)) }
-                info.version?.let { addRow("Version", JBLabel(it)) }
-                addRow(
-                    "Repo",
-                    JBLabel(
-                        when {
-                            // A package that exists nowhere still reports version "latest"; the
-                            // missing repo is the "not found" signal, not a failed query.
-                            info.repoName == null -> "not found in the configured repositories"
-                            else -> listOfNotNull(info.repoName, info.repoUrl?.let { "($it)" }).joinToString(" ")
-                        },
-                    ),
-                )
 
                 // The closure the query answered, as its own section; where it said
                 // nothing, the project's depgraph still names what the package needs.
@@ -850,11 +839,13 @@ internal class XMakePackagesPanel(
                     addSection("DEPENDENCIES - ${dependencies.size}")
                     dependencies.forEach { dependency ->
                         // Each dependency spans the full width: its name with the resolved
-                        // version on one line, its description grayed under it.
+                        // version on one line, its description grayed under it, a breath
+                        // between entries.
                         addRow(
                             "",
                             JPanel(java.awt.GridLayout(0, 1)).apply {
                                 isOpaque = false
+                                border = JBUI.Borders.emptyBottom(4)
                                 add(
                                     JBLabel(
                                         listOfNotNull(dependency.require.ifEmpty { null }, dependency.version)
@@ -884,8 +875,6 @@ internal class XMakePackagesPanel(
                         reference.dir?.let { referenceLabel.toolTipText = it }
                         addRow("", referenceLabel)
                     }
-                } else {
-                    addRow("References", JBLabel("none - not installed").apply { foreground = infoForeground() })
                 }
                 addFiller()
             }
