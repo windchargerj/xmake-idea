@@ -308,12 +308,22 @@ class XMakeCommandFactory(
     /**
      * One `xmake require --info --format=json <package>`: the package's resolved data, whose
      * `references` key exists exactly when the package is installed. The JSON flag needs
-     * xmake 3.1.2; older toolkits reject it, the query fails, and the caller degrades to
-     * "no info" rather than falling back to the listing's lying `-> ` detail lines.
+     * xmake 3.1.2; older toolkits reject it, the query fails, and the caller falls back to
+     * [createRequireInfoText] instead.
      */
     fun createRequireInfo(packageName: String): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             require { info = true; json = true; packages = listOf(packageName) }
+        }
+
+    /**
+     * One `xmake require --info <package>`: the same answer in the plain-text form that
+     * predates the JSON flag - the form every toolkit answers, 2.8.7 included. The text
+     * reads as `require(name):` blocks of `-> key: value` lines.
+     */
+    fun createRequireInfoText(packageName: String): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { info = true; packages = listOf(packageName) }
         }
 
     /** One `xmake require --search <term>`: the repository hits, plain text only. */
