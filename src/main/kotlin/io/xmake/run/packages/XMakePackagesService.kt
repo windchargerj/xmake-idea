@@ -35,6 +35,8 @@ import io.xmake.run.target.activeOrSingleXMakeBuildProfile
 import io.xmake.utils.notify
 import io.xmake.utils.runCancellable
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The project's xrepo package state: the declared packages, the dependency graph, the
@@ -72,6 +74,23 @@ internal class XMakePackagesService(private val project: Project) {
     var currentOperation: String? = null
         private set
 
+    /** True when the operation holding the pipeline may not be abandoned: an install or
+     *  uninstall must run out, while a read (list, search, info) is safe to cancel. */
+    @Volatile
+    var busyWithMutation: Boolean = false
+        private set
+
+    /** The one command this service has on the executor's lane, so a newer request can
+     *  abandon a read ([inFlight] cancelled) and queue behind a mutation. */
+    @Volatile
+    private var inFlight: Deferred<*>? = null
+
+    /** A search typed while a mutation holds the pipeline; it is searched when the lane
+     *  frees, so the user's second Enter waits for the install rather than dying. */
+    @Volatile
+    var pendingSearch: String? = null
+        private set
+
     /**
      * Reloads the declared packages and the dependency graph. The graph is a nicety: a
      * failed graph only leaves the rows childless, while a failed listing is the failure
@@ -81,14 +100,19 @@ internal class XMakePackagesService(private val project: Project) {
      */
     fun refresh() {
         if (busy) return
-        runQuery("refreshing the package list") { factory -> loadSnapshot(factory) }
+        claim("refreshing the package list") { factory -> loadSnapshot(factory) }
     }
 
     /** Searches the configured repositories; the hits - and the `note:`/`error:` lines
-     *  xmake printed around them - replace the tree's rows until [exitSearch]. */
+     *  xmake printed around them - replace the tree's rows until [exitSearch]. A search
+     *  behind a read preempts it; behind a mutation it queues as [pendingSearch]. */
     fun search(term: String) {
-        if (busy) return
-        runQuery("searching the repositories for '$term'") { factory ->
+        if (busy && busyWithMutation) {
+            pendingSearch = term
+            return
+        }
+        inFlight?.takeIf { !busyWithMutation }?.cancel()
+        claim("searching the repositories for '$term'") { factory ->
             val results = XMakePackageParsers.parseSearchResults(
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireSearch(term)),
             )
@@ -99,10 +123,13 @@ internal class XMakePackagesService(private val project: Project) {
     /**
      * Leaves search mode without re-querying: the declared packages come back from the
      * snapshot the search rode on, so Esc, or an empty search box plus Enter, costs no
-     * lane time. No-op while an operation holds the pipeline or search mode is not on.
+     * lane time. A read still in flight is abandoned, a queued search dropped; a
+     * mutation keeps running and its trailing refresh keeps the exit (the snapshot it
+     * loads carries the cleared search results). No-op when search mode is not on.
      */
     fun exitSearch() {
-        if (busy) return
+        pendingSearch = null
+        inFlight?.takeIf { !busyWithMutation }?.cancel()
         val current = snapshot ?: return
         if (current.searchResults == null) return
         snapshot = current.copy(searchResults = null)
@@ -114,30 +141,19 @@ internal class XMakePackagesService(private val project: Project) {
      * details pane's data. Always re-queries: the search hits and the declared list can
      * carry the same name with different resolutions (a project pins one version, the
      * repository offers another), and a cached answer from one context would misdescribe
-     * the row the user clicked in the other.
+     * the row the user clicked in the other. The snapshot merges at lane time, so a
+     * search entered while the fetch runs still lands on the snapshot it produced.
      */
     fun fetchInfo(packageName: String) {
-        if (busy) return
-        val current = snapshot ?: return
-        busy = true
-        currentOperation = null
-        project.xmakeExecutor.submit {
-            try {
-                val factory = packageFactory()
-                val info = runCancellable {
-                    XMakePackageParsers.parsePackageInfo(
-                        project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName)),
-                    )
-                }.getOrNull()
-                finish(current.copy(infos = current.infos + (packageName to info)), null)
-            } catch (cancellation: CancellationException) {
-                busy = false
-                currentOperation = null
-                throw cancellation
-            } catch (error: Exception) {
-                Log.warn("XMake package info query failed for '$packageName'", error)
-                finish(current, error.message ?: error.toString())
-            }
+        if (busy || snapshot == null) return
+        claim(null) { factory ->
+            val base = snapshot
+            val info = runCancellable {
+                XMakePackageParsers.parsePackageInfo(
+                    project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName)),
+                )
+            }.getOrNull()
+            base?.copy(infos = base.infos + (packageName to info))
         }
     }
 
@@ -149,29 +165,26 @@ internal class XMakePackagesService(private val project: Project) {
      */
     fun prepareCommand(prepare: XMakeCommandFactory.() -> XMakeCommand, onReady: (XMakeCommand) -> Unit) {
         if (busy) return
-        busy = true
-        currentOperation = "preparing the package command"
-        project.xmakeExecutor.submit {
+        val token = holdClaim(mutation = true, doing = "preparing the package command")
+        val deferred = project.xmakeExecutor.submit {
             var command: XMakeCommand? = null
             var failure: String? = null
             try {
                 command = packageFactory().prepare()
-            } catch (cancellation: CancellationException) {
-                busy = false
-                currentOperation = null
-                throw cancellation
             } catch (error: Exception) {
+                if (error is CancellationException) throw error
                 Log.warn("XMake package command preparation failed", error)
                 failure = error.message ?: error.toString()
             }
             invokeLater {
                 if (project.isDisposed) return@invokeLater
-                busy = false
-                currentOperation = null
+                releaseClaim(token)
                 failure?.let { project.notify("XMake packages", StringUtil.escapeXmlEntities(it)) }
                 command?.let(onReady)
             }
         }
+        inFlight = deferred
+        deferred.invokeOnCompletion { releaseClaim(token) }
     }
 
     /**
@@ -182,20 +195,16 @@ internal class XMakePackagesService(private val project: Project) {
      */
     fun runPackageCommand(command: XMakeCommand, description: String) {
         if (busy) return
-        busy = true
-        currentOperation = description
-        project.xmakeExecutor.submit {
+        val token = holdClaim(mutation = true, doing = description)
+        val deferred = project.xmakeExecutor.submit {
             var failed: Exception? = null
             try {
                 val console = XMakeConsoleManager.getInstance(project).awaitReady()
                 console.clear()
                 console.print("xmake: $description\n", ConsoleViewContentType.SYSTEM_OUTPUT)
                 project.xmakeExecutor.execute(console, command, XMakeConsoleOptions(showConsole = true))
-            } catch (cancellation: CancellationException) {
-                busy = false
-                currentOperation = null
-                throw cancellation
             } catch (error: Exception) {
+                if (error is CancellationException) throw error
                 failed = error
                 Log.warn("XMake package command failed: $description", error)
             }
@@ -203,6 +212,9 @@ internal class XMakePackagesService(private val project: Project) {
             // a change raises a balloon with a Show diff action (docs/roadmap-designs/xrepo-packages.md).
             invokeLater {
                 if (project.isDisposed) return@invokeLater
+                // Released before the refresh is asked for, so the refresh's busy gate
+                // opens on this EDT pass rather than racing the completion handler.
+                releaseClaim(token)
                 failed?.let { error ->
                     // The balloon names the exact command line, not the confirmation-flow
                     // sentence: "$description" is the long "Installing 'x' - xmake fetches,
@@ -215,32 +227,71 @@ internal class XMakePackagesService(private val project: Project) {
                             StringUtil.escapeXmlEntities(error.message ?: "an unknown error"),
                     )
                 }
-                runQuery("refreshing the package list") { factory -> loadSnapshot(factory) }
+                refresh()
             }
         }
+        inFlight = deferred
+        deferred.invokeOnCompletion { releaseClaim(token) }
     }
 
-    /** One read-only pipeline run: profile in, snapshot out, failure into [lastError].
-     *  [doing] names the run for the view, which has no other way to tell a grayed
-     *  refresh from a grayed install. */
-    private fun runQuery(
-        doing: String,
-        operation: suspend (factory: XMakeCommandFactory) -> XMakePackagesSnapshot,
+    /**
+     * Claims the pipeline for one read - list, search, info - and records its command,
+     * so a newer request can abandon it. The read's snapshot is published by [finish];
+     * it answers null when there is nothing to publish. The claim releases when the
+     * command's task completes - through [finish], a failure, or a cancellation that
+     * stops the task before its first line.
+     */
+    private fun claim(
+        doing: String?,
+        operation: suspend (factory: XMakeCommandFactory) -> XMakePackagesSnapshot?,
     ) {
-        busy = true
-        currentOperation = doing
-        project.xmakeExecutor.submit {
+        val token = holdClaim(mutation = false, doing = doing)
+        val deferred = project.xmakeExecutor.submit {
             try {
-                finish(operation(packageFactory()), null)
-            } catch (cancellation: CancellationException) {
-                busy = false
-                currentOperation = null
-                throw cancellation
+                operation(packageFactory())?.let { finish(it, null) }
             } catch (error: Exception) {
+                if (error is CancellationException) throw error
                 Log.warn("XMake packages query failed", error)
                 finish(snapshot, error.message ?: error.toString())
             }
         }
+        inFlight = deferred
+        deferred.invokeOnCompletion {
+            releaseClaim(token)
+            invokeLater { drainPendingSearch() }
+        }
+    }
+
+    /** Marks the pipeline held by the caller's claim token. Set before the command is
+     *  submitted, so no completion can outrun the claim it belongs to. */
+    private fun holdClaim(mutation: Boolean, doing: String?): ClaimToken {
+        busy = true
+        busyWithMutation = mutation
+        currentOperation = doing
+        val token = ClaimToken()
+        claimToken.set(token)
+        return token
+    }
+
+    /** Releases the claim [token] stands for; a claim already taken over or released
+     *  stays untouched. */
+    private fun releaseClaim(token: ClaimToken) {
+        if (!claimToken.compareAndSet(token, null)) return
+        busy = false
+        busyWithMutation = false
+        currentOperation = null
+    }
+
+    /** The pipeline's current claim, or null when the lane is free for a new request. */
+    private val claimToken = AtomicReference<ClaimToken?>(null)
+
+    private class ClaimToken
+
+    /** Runs the search queued behind a mutation, once the lane has freed. */
+    private fun drainPendingSearch() {
+        val next = pendingSearch ?: return
+        pendingSearch = null
+        search(next)
     }
 
     /** The fresh state one refresh answers: the declared packages, plus the dependency graph
