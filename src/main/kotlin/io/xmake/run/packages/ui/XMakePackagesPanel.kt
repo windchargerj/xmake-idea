@@ -1,6 +1,6 @@
 /*!A Xmake integration in IntelliJ IDEA/Clion
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * Licensed under the Apache License 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -23,9 +23,7 @@ import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.actionSystem.Separator
-import com.intellij.openapi.actionSystem.ex.CustomComponentAction
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.DumbAwareAction
@@ -33,23 +31,22 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.util.text.StringUtil
-import com.intellij.ui.ColoredTableCellRenderer
 import com.intellij.ui.DoubleClickListener
 import com.intellij.ui.JBColor
+import com.intellij.ui.border.CustomLineBorder
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SearchTextField
-import com.intellij.ui.SideBorder
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.TableSpeedSearch
-import com.intellij.ui.table.TableView
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBPanelWithEmptyText
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.table.TableView
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
-import javax.swing.Box
 import com.intellij.util.ui.ListTableModel
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.components.BorderLayoutPanel
@@ -64,38 +61,44 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.awt.Dimension
+import java.awt.BorderLayout
+import java.awt.Color
+import java.awt.Component
 import java.awt.Font
+import java.awt.FontMetrics
+import java.awt.Graphics
+import java.awt.Graphics2D
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.RenderingHints
 import java.awt.event.ActionEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import javax.swing.AbstractAction
+import javax.swing.JButton
 import javax.swing.JComponent
-import javax.swing.BoxLayout
 import javax.swing.JPanel
 import javax.swing.JTable
 import javax.swing.KeyStroke
 import javax.swing.ListSelectionModel
 import javax.swing.ScrollPaneConstants
+import javax.swing.table.TableCellRenderer
 
 /**
- * The XMake Packages view: the declared packages as one table, the selected package's
- * `--info` data beneath, and the toolbar's search and confirmed package actions.
+ * The XMake Packages view, in the Marketplace page's shape: the search field on top of
+ * the master list, the packages as stacked rows (name, repository meta, description),
+ * and the selected package's details in a headered pane on the right - the name in the
+ * page title face, the repository meta beside it, the one action that fits the row, and
+ * the `--info` data as the info grid below.
  *
  * The rows come from `require --list` - name, the version the project asks for, the
  * repository, and the installed/declared status that the lazily fetched, cached
- * `require --info` reports (its `references` key is the installed badge, because the
- * listing's own detail lines survive an uninstall). Search swaps the rows to the
- * repository hits in the same table - version, description in the name cell, repository
- * - and Esc, or an emptied field plus Enter, brings the declared list back. Dependencies
- * are not rows: the depgraph's answer for the selected package reads in the details
- * pane, beside the description and the install directory - the information a tree row
- * only hinted at, spelled out instead. Two clicks on a row open the install flow.
- * Everything mutates only through a confirmation naming the exact command line, then
- * streams into the XMake console. The view reflects; it never computes package state
- * itself.
+ * `require --info` reports. Search swaps the rows to the repository hits, and Esc, or
+ * an emptied field plus Enter, brings the declared list back. Dependencies are not
+ * rows: the depgraph's answer for the selected package reads in the details grid.
+ * Two clicks on a row open the install flow. Everything mutates only through a
+ * confirmation naming the exact command line, then streams into the XMake console.
+ * The view reflects; it never computes package state itself.
  */
 internal class XMakePackagesPanel(
     private val project: Project,
@@ -104,152 +107,28 @@ internal class XMakePackagesPanel(
 
     private val service = XMakePackagesService.getInstance(project)
 
-    private val nameColumn = object : ColumnInfo<PackageRow, String>("Name") {
+    /** The one column of the list; the row renderer paints the Marketplace row shape. */
+    private val packageColumn = object : ColumnInfo<PackageRow, String>("Packages") {
 
         override fun valueOf(item: PackageRow): String = item.name
     }
 
-    private val versionColumn = object : ColumnInfo<PackageRow, String?>("Version") {
+    private val tableModel = ListTableModel<PackageRow>(packageColumn)
 
-        /** The version of record: what `xmake.lua` pins, or what a hit's repository
-         *  offers. The resolved installed version reads in the details pane, where the
-         *  `--info` data lives. */
-        override fun valueOf(item: PackageRow): String? =
-            if (item.isHit) item.version else item.requirement
-    }
-
-    private val repoColumn = object : ColumnInfo<PackageRow, String?>("Repo") {
-
-        override fun valueOf(item: PackageRow): String? =
-            if (item.isHit) item.repo else sourceLabel(item.name, infoFor(item.name))
-    }
-
-    private val statusColumn = object : ColumnInfo<PackageRow, String?>("Status") {
-
-        override fun valueOf(item: PackageRow): String? = statusOf(item)
-    }
-
-    private val descriptionColumn = object : ColumnInfo<PackageRow, String?>("Description") {
-
-        override fun valueOf(item: PackageRow): String? = item.description
-    }
-
-    private val tableModel = ListTableModel<PackageRow>(
-        nameColumn,
-        descriptionColumn,
-        versionColumn,
-        repoColumn,
-        statusColumn,
-    )
+    /** The list as a one-column table: the header goes away, the renderer stacks the
+     *  name, the meta line, and the description - the row the Marketplace page paints. */
     private val table = TableView(tableModel).apply {
         fillsViewportHeight = true
         selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        columnModel.getColumn(COLUMN_NAME).minWidth = JBUI.scale(100)
-        columnModel.getColumn(COLUMN_NAME).preferredWidth = JBUI.scale(120)
-        columnModel.getColumn(COLUMN_DESCRIPTION).minWidth = JBUI.scale(180)
-        columnModel.getColumn(COLUMN_DESCRIPTION).preferredWidth = JBUI.scale(400)
-        columnModel.getColumn(COLUMN_VERSION).preferredWidth = JBUI.scale(90)
-        columnModel.getColumn(COLUMN_REPO).preferredWidth = JBUI.scale(110)
-        columnModel.getColumn(COLUMN_STATUS).preferredWidth = JBUI.scale(90)
+        setTableHeader(null)
+        rowHeight = JBUI.scale(ROW_HEIGHT)
         emptyText.text = LOADING
     }
 
     /** The table's scroll pane; a rebuild restores its viewport so a refresh keeps the
      *  user's place instead of throwing the rows back to the top. */
-    private val tableScroll = ScrollPaneFactory.createScrollPane(table, true)
-
-    /** The name cell: the package's own name in bold. */
-    private val nameCellRenderer = object : ColoredTableCellRenderer() {
-
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            append(value?.toString().orEmpty(), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-        }
-    }
-
-    /** The description cell: a hit's repository description, grayed - the column is the
-     *  flexible one, so the text has room before the narrow columns. */
-    private val descriptionCellRenderer = object : ColoredTableCellRenderer() {
-
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            append(value?.toString().orEmpty(), SimpleTextAttributes.GRAYED_ATTRIBUTES)
-        }
-    }
-
-    /** The Repo cell: grayed, like the analysis view's Location column. */
-    private val repoCellRenderer = object : ColoredTableCellRenderer() {
-
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            (value as? String)?.let { append(it, SimpleTextAttributes.GRAYED_ATTRIBUTES) }
-        }
-    }
-
-    /** The Status cell: "installed" reads as the state, "declared" as the weaker one. */
-    private val statusCellRenderer = object : ColoredTableCellRenderer() {
-
-        override fun customizeCellRenderer(
-            table: JTable,
-            value: Any?,
-            selected: Boolean,
-            focused: Boolean,
-            row: Int,
-            column: Int,
-        ) {
-            when (value as? String) {
-                INSTALLED -> append(INSTALLED, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                AVAILABLE -> append(AVAILABLE, SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                DECLARED -> append(DECLARED, SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                else -> {}
-            }
-        }
-    }
-
-    /** The toolbar's search field; kept so an Esc exit can empty it with the view. */
-    private val searchField = SearchTextField(false).apply {
-        textEditor.emptyText.text = "Search packages"
-        textEditor.addActionListener {
-            val term = text.trim()
-            if (term.isEmpty()) {
-                service.exitSearch()
-            } else {
-                service.search(term)
-                // Behind a mutation the search queues; the line says so instead of the
-                // field going silent. A claim the search started names itself in the
-                // same line right away.
-                service.pendingSearch?.let { queued -> narrateQueuedSearch(queued) }
-                    ?: updateSummary(service.snapshot)
-            }
-        }
-        exitSearchOnEscape(textEditor)
-        preferredSize = Dimension(JBUI.scale(260), preferredSize.height)
-    }
-
-    /** The details grid: caption-value rows rebuilt per selection or info landing, in a
-     *  scroll pane that never scrolls sideways - the long values wrap instead, the way
-     *  the old text pane wrapped them. */
-    private val detailsBody = JPanel(GridBagLayout()).apply {
-        isOpaque = false
-        border = JBUI.Borders.empty(4, 12, 8, 12)
+    private val tableScroll = ScrollPaneFactory.createScrollPane(table, true).apply {
+        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
     }
 
     /** The snapshot the table was built from; an info-only update repaints, never
@@ -269,15 +148,112 @@ internal class XMakePackagesPanel(
      *  the run. */
     private val statusPanel = BorderLayoutPanel().apply {
         isOpaque = false
-        border = JBUI.Borders.compound(SideBorder(JBColor.border(), SideBorder.TOP), JBUI.Borders.empty(4, 8))
+        border = JBUI.Borders.compound(
+            CustomLineBorder(infoBorderColor(), JBUI.insetsTop(1)),
+            JBUI.Borders.empty(4, 8),
+        )
         addToCenter(statusLabel)
     }
 
+    /** The toolbar's search field; kept so an Esc exit can empty it with the view. The
+     *  history popup and the tuned paddings are the Marketplace search field's. */
+    private val searchField = SearchTextField(true).apply {
+        textEditor.emptyText.text = "Search packages"
+        textEditor.putClientProperty("JTextField.Search.Gap", JBUI.scale(6))
+        textEditor.putClientProperty("JTextField.Search.GapEmptyText", JBUI.scale(-1))
+        textEditor.background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
+        textEditor.addActionListener {
+            val term = text.trim()
+            if (term.isEmpty()) {
+                service.exitSearch()
+            } else {
+                service.search(term)
+                // Behind a mutation the search queues; the line says so instead of the
+                // field going silent. A claim the search started names itself in the
+                // same line right away.
+                service.pendingSearch?.let { queued -> narrateQueuedSearch(queued) }
+                    ?: updateSummary(service.snapshot)
+            }
+        }
+        exitSearchOnEscape(textEditor)
+    }
+
+    /** The details pane's title: the package name in the Marketplace header face. */
+    private val detailsName = JBLabel().apply {
+        font = JBFont.create(UIUtil.getLabelFont().deriveFont(Font.BOLD, 18f))
+    }
+
+    /** The details pane's meta line: repository, resolved version, the project's ask. */
+    private val detailsMeta = JBLabel().apply { foreground = infoForeground() }
+
+    /** The details header's one action: the install or uninstall this row asks for, the
+     *  way the Marketplace header carries the Install button. */
+    private val detailsAction = JButton()
+
+    /** The header stack: name, meta, and the action row, over a hairline - the
+     *  Marketplace details header's rows and insets, stacked on a GridBag. */
+    private val detailsHeader = JPanel(GridBagLayout()).apply {
+        isOpaque = true
+        background = mainBackground()
+        border = JBUI.Borders.compound(
+            CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
+            JBUI.Borders.empty(12, 20, 10, 20),
+        )
+        fun row(gridy: Int, component: JComponent, stretch: Boolean = true) = add(
+            component,
+            GridBagConstraints().apply {
+                this.gridy = gridy
+                gridx = 0
+                weightx = 1.0
+                anchor = GridBagConstraints.WEST
+                fill = if (stretch) GridBagConstraints.HORIZONTAL else GridBagConstraints.NONE
+                insets = JBUI.insets(if (gridy == 0) 0 else 8, 0)
+            },
+        )
+        row(0, detailsName)
+        row(1, detailsMeta, stretch = false)
+        row(2, BorderLayoutPanel().apply {
+            isOpaque = false
+            addToCenter(JPanel().apply { isOpaque = false })
+            addToRight(detailsAction.apply { isOpaque = false })
+        }, stretch = false)
+    }
+
+    /** The details grid: caption-value rows rebuilt per selection or info landing, in a
+     *  scroll pane that never scrolls sideways - the long values wrap instead. */
+    private val detailsBody = JPanel(GridBagLayout()).apply {
+        isOpaque = true
+        background = mainBackground()
+    }
+
+    /** The details pane as the Marketplace page lays it out: the header fixed, the info
+     *  grid scrolling under it. */
+    private val detailsPane = JPanel(BorderLayout()).apply {
+        isOpaque = true
+        background = mainBackground()
+        add(detailsHeader, BorderLayout.NORTH)
+        add(
+            JBScrollPane(
+                detailsBody,
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
+            ).apply { border = JBUI.Borders.empty() },
+            BorderLayout.CENTER,
+        )
+    }
+
+    /** The nothing-selected card the Marketplace page shows instead of the details. */
+    private val detailsEmpty = JBPanelWithEmptyText().apply {
+        isOpaque = true
+        background = mainBackground()
+        emptyText.text = "Select a package to read its details"
+    }
+
+    /** The right pane of the split; swaps between the details and the empty card. */
+    private val detailsCard = JPanel(BorderLayout())
+
     init {
-        table.columnModel.getColumn(COLUMN_NAME).cellRenderer = nameCellRenderer
-        table.columnModel.getColumn(COLUMN_DESCRIPTION).cellRenderer = descriptionCellRenderer
-        table.columnModel.getColumn(COLUMN_REPO).cellRenderer = repoCellRenderer
-        table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
+        table.columnModel.getColumn(0).cellRenderer = RowRenderer()
         TableSpeedSearch.installOn(table)
         // Selecting a row is what fetches its info; the cache makes re-selection free.
         table.selectionModel.addListSelectionListener { event ->
@@ -288,7 +264,7 @@ internal class XMakePackagesPanel(
             } ?: renderDetails(null)
         }
         // Esc leaves search mode from wherever focus sits; the search field gets the same
-        // binding when the toolbar creates it below.
+        // binding when it is created.
         exitSearchOnEscape(table)
         // The platform's own double-click handling (the Analysis view's pattern): two
         // clicks on a row are the Install entry - where a search hit starts its flow.
@@ -300,41 +276,24 @@ internal class XMakePackagesPanel(
             }
         }.installOn(table)
 
-        // The Analysis view's shape: the rows above, the selected package's data below,
-        // the split remembered between sessions.
-        // Bottom tool windows run horizontal master-detail (table left, details right) -
-        // the Services/Problems/VcsLog convention; the Details separator goes away, the
-        // right pane's own content organizes it.
-        val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
+        val split = OnePixelSplitter(false, SPLIT_KEY, 0.45f).apply {
             firstComponent = tableScroll
-            secondComponent = JBUI.Panels.simplePanel().apply {
-                addToTop(JBLabel("Details").apply {
-                    font = JBFont.label()
-                    border = JBUI.Borders.empty(8, 12, 4, 8)
-                })
-                addToCenter(
-                    JBScrollPane(
-                        detailsBody,
-                        ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
-                        ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
-                    ),
-                )
-            }
+            secondComponent = detailsCard
         }
 
         // The search row sits above the split, outside the toolbar: focus survives
         // toolbar rebuilds, and a term typed while an operation holds the lane is queued
-        // by the service and searched when the lane frees.
-        val searchRow = JPanel().apply { isOpaque = false }
-        searchRow.layout = java.awt.GridBagLayout()
-        val gc = java.awt.GridBagConstraints().apply {
-            gridx = 0
-            weightx = 1.0
-            anchor = java.awt.GridBagConstraints.WEST
-            fill = java.awt.GridBagConstraints.HORIZONTAL
-            insets = JBUI.Borders.empty(4, 8).getBorderInsets(searchRow)
+        // by the service and searched when the lane frees. The hairline under it is the
+        // Marketplace page's line between the search field and the rows.
+        val searchRow = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
+            border = JBUI.Borders.compound(
+                CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
+                JBUI.Borders.empty(6, 8),
+            )
+            add(searchField, BorderLayout.CENTER)
         }
-        searchRow.add(searchField, gc)
 
         toolbar = toolbar().component
         setContent(
@@ -353,6 +312,7 @@ internal class XMakePackagesPanel(
         // Whatever the service already holds, then the first load; the subscription is in
         // place first so an in-flight refresh cannot land unseen.
         onSnapshot(service.snapshot)
+        renderDetails(null)
         service.refresh()
     }
 
@@ -388,7 +348,7 @@ internal class XMakePackagesPanel(
         if (structureChanged || (snapshot == null && service.lastError != null)) {
             rebuild(snapshot)
         } else {
-            // The info cache moved: the Repo and Status cells re-read it on paint.
+            // The info cache moved: the rows' meta and status re-read it on paint.
             table.repaint()
         }
         updateSummary(snapshot)
@@ -425,7 +385,7 @@ internal class XMakePackagesPanel(
                     name = entry.name,
                     requirement = entry.requirement.ifEmpty { null },
                     version = null,
-                    description = infoFor(entry.name)?.description,
+                    description = null,
                     repo = null,
                     isHit = false,
                 )
@@ -512,15 +472,9 @@ internal class XMakePackagesPanel(
     /** The package name the selection carries. */
     private fun selectedPackageName(): String? = table.selectedObject?.name
 
-    /** The model row a cell renderer paints, through the view-to-model conversion. */
-    private fun rowAt(viewRow: Int): PackageRow? {
-        val row = table.convertRowIndexToModel(viewRow)
-        return if (row >= 0 && row < tableModel.rowCount) tableModel.getItem(row) else null
-    }
-
     private fun infoFor(name: String): XMakePackageInfo? = service.snapshot?.infos?.get(name)
 
-    /** The status of a row, in the table's own words: the installed truth when the info
+    /** The status of a row, in the row's own words: the installed truth when the info
      *  cache holds one, "declared" for a project requirement otherwise - a hit is neither
      *  until its info lands on selection. */
     private fun statusOf(row: PackageRow): String? = when {
@@ -529,9 +483,62 @@ internal class XMakePackagesPanel(
         else -> DECLARED
     }
 
-    /** Rebuilds the details grid for [name], or shows the nothing-selected line. The
-     *  narration while the info has not landed is the same one the old text pane gave. */
+    /** The row's meta line: what the repository and the project say in one gray run -
+     *  the hit's version and repository, the declared entry's requirement and, once the
+     *  info landed, its resolved version and repository. */
+    private fun metaOf(row: PackageRow): String = buildList {
+        row.requirement?.let { add(it) }
+        (infoFor(row.name)?.version ?: row.version?.let { "v$it" })?.let { add(it) }
+        (infoFor(row.name)?.repoName ?: row.repo)?.let { add(it) }
+    }.joinToString(" · ")
+
+    /** The row's description: a hit's repository summary, else the `--info` one once the
+     *  selection fetched it. */
+    private fun descriptionOf(row: PackageRow): String? =
+        row.description ?: infoFor(row.name)?.description
+
+    /**
+     * Renders the selected package: the Marketplace header (name, meta, the one action
+     * that fits the row) over the info grid, or the nothing-selected card. The
+     * narration while the info has not landed is the same one the old text pane gave.
+     */
     private fun renderDetails(name: String?) {
+        if (name == null) {
+            showDetailsPane(false)
+            return
+        }
+        showDetailsPane(true)
+        detailsName.text = name
+        val row = tableModel.items.firstOrNull { it.name == name }
+        val info = infoFor(name)
+        detailsMeta.text = when {
+            // A package that exists nowhere still reports version "latest"; the missing
+            // repo is the "not found" signal, not a failed query.
+            info != null && info.repoName == null -> "not found in the configured repositories"
+            else -> listOfNotNull(
+                row?.requirement?.let { "requires $it" },
+                info?.repoName ?: row?.repo,
+                info?.version ?: row?.version?.let { "v$it" },
+            ).joinToString(" · ").ifEmpty { " " }
+        }
+        detailsAction.action = when {
+            info?.installed == true -> uninstallAction(name)
+            else -> installAction(name)
+        }
+        detailsAction.isEnabled = !service.busy
+        renderInfoGrid(name, info)
+    }
+
+    /** Swaps the right pane between the details and the nothing-selected card. */
+    private fun showDetailsPane(withDetails: Boolean) {
+        detailsCard.removeAll()
+        detailsCard.add(if (withDetails) detailsPane else detailsEmpty, BorderLayout.CENTER)
+        detailsCard.revalidate()
+        detailsCard.repaint()
+    }
+
+    /** Rebuilds the details grid for [name]; the header already carries the identity. */
+    private fun renderInfoGrid(name: String, info: XMakePackageInfo?) {
         detailsBody.removeAll()
         var gridy = 0
         fun constraints(row: Int, column: Int, insetsLeft: Int, fillMode: Int): GridBagConstraints =
@@ -546,8 +553,8 @@ internal class XMakePackagesPanel(
 
         fun addRow(caption: String, value: JComponent) {
             detailsBody.add(
-                JBLabel(caption).apply { foreground = SimpleTextAttributes.GRAYED_ATTRIBUTES.fgColor },
-                constraints(gridy, 0, 8, GridBagConstraints.NONE),
+                JBLabel(caption).apply { foreground = infoForeground() },
+                constraints(gridy, 0, 20, GridBagConstraints.NONE),
             )
             detailsBody.add(value, constraints(gridy, 1, 12, GridBagConstraints.HORIZONTAL))
             gridy++
@@ -572,9 +579,10 @@ internal class XMakePackagesPanel(
                     weightx = 1.0
                     fill = GridBagConstraints.HORIZONTAL
                     anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(4, 8)
+                    insets = JBUI.insets(4, 20)
                 },
             )
+            gridy++
         }
 
         fun addFiller() {
@@ -591,12 +599,7 @@ internal class XMakePackagesPanel(
             )
         }
 
-        val info = name?.let { service.snapshot?.infos?.get(it) }
         when {
-            name == null -> {
-                addNarration("Select a package to read its details")
-                addFiller()
-            }
             // A busy pipeline with a named operation is not loading this info at all - the
             // fetchInfo call was a no-op; say what the wait is really on.
             info == null && service.busy && service.currentOperation != null -> {
@@ -615,7 +618,6 @@ internal class XMakePackagesPanel(
                 addFiller()
             }
             else -> {
-                addRow("Package", JBLabel(name).apply { font = JBFont.label().deriveFont(Font.BOLD) })
                 tableModel.items.firstOrNull { it.name == name }?.requirement
                     ?.let { addTextRow("Requirement", it) }
                 info.version?.let { addTextRow("Version", it) }
@@ -680,13 +682,6 @@ internal class XMakePackagesPanel(
         font = JBFont.label()
     }
 
-    /** The row's source: the external-manager prefix for `vcpkg::`/`conan::` names, else
-     *  the repository `--info` reported. */
-    private fun sourceLabel(name: String, info: XMakePackageInfo?): String? {
-        if ("::" in name) return "${name.substringBefore("::")}::"
-        return info?.repoName?.let { "from $it" }
-    }
-
     /** The confirmation the mutating actions share: the exact command line, the packages
      *  it touches, then the run with `-y` already baked in. */
     private fun confirmAndRun(title: String, what: String, command: XMakeCommand) {
@@ -703,10 +698,27 @@ internal class XMakePackagesPanel(
         service.runPackageCommand(command, what)
     }
 
-    /** The Install flow the toolbar button and a double-click on a row share. */
+    /** The Install flow the toolbar button, the details header, and a double-click on a
+     *  row share. */
     private fun installPackage(name: String) {
         service.prepareCommand(prepare = { createRequireInstall(name) }) { command ->
             confirmAndRun("Install package", "Installing '$name' - xmake fetches, builds, and installs it.", command)
+        }
+    }
+
+    /** The details header's Install action for one package. */
+    private fun installAction(name: String) = object : AbstractAction("Install") {
+        override fun actionPerformed(event: ActionEvent) {
+            installPackage(name)
+        }
+    }
+
+    /** The details header's Uninstall action for one installed package. */
+    private fun uninstallAction(name: String) = object : AbstractAction("Uninstall") {
+        override fun actionPerformed(event: ActionEvent) {
+            service.prepareCommand(prepare = { createRequireUninstall(name) }) { command ->
+                confirmAndRun("Uninstall package", "Uninstalling '$name'.", command)
+            }
         }
     }
 
@@ -739,6 +751,80 @@ internal class XMakePackagesPanel(
             append("Searching for '$term' once the current operation finishes")
             service.currentOperation?.let { operation -> append(" - ").append(operation) }
             service.lastError?.let { append(" - last operation failed: ").append(it) }
+        }
+    }
+
+    /** The list's row, painted the Marketplace way: the name in bold on the first line,
+     *  the repository meta and the row's state on the gray line below it, the summary
+     *  under that - each line elided, the selection the table's own. */
+    private inner class RowRenderer : JPanel(null), TableCellRenderer {
+
+        private var row: PackageRow? = null
+
+        /** The row's fonts, resolved once; a repaint reuses them. */
+        private val nameFont = JBFont.label().deriveFont(Font.BOLD)
+        private val metaFont = JBFont.label()
+
+        override fun getTableCellRendererComponent(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            focused: Boolean,
+            viewRow: Int,
+            column: Int,
+        ): Component {
+            row = tableModel.getItem(table.convertRowIndexToModel(viewRow))
+            if (selected) {
+                foreground = table.selectionForeground
+                background = table.selectionBackground
+            } else {
+                foreground = UIUtil.getListForeground()
+                background = UIUtil.getListBackground()
+            }
+            return this
+        }
+
+        override fun paintComponent(graphics: Graphics) {
+            val current = row ?: return
+            val g = graphics as Graphics2D
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+            val width = this.width
+            val metrics = g.fontMetrics
+            var y = JBUI.scale(7)
+
+            // The name in the label face, bold.
+            g.font = nameFont
+            val nameMetrics = g.fontMetrics
+            g.color = foreground
+            g.drawString(elide(current.name, nameMetrics, width - JBUI.scale(STATUS_RESERVE) - JBUI.scale(24)), JBUI.scale(12), y + nameMetrics.ascent)
+            y += nameMetrics.height + JBUI.scale(1)
+
+            // The meta line: the repository facts and, at the right edge, the row's state.
+            g.font = metaFont
+            g.color = infoForeground()
+            val meta = metaOf(current)
+            if (meta.isNotEmpty()) {
+                g.drawString(elide(meta, metrics, width - JBUI.scale(STATUS_RESERVE) - JBUI.scale(24)), JBUI.scale(12), y + metrics.ascent)
+            }
+            statusOf(current)?.let { status ->
+                g.drawString(status, width - JBUI.scale(12) - metrics.stringWidth(status), y + metrics.ascent)
+            }
+            y += metrics.height
+
+            // The summary: a hit's repository description, else the info's, grayed.
+            descriptionOf(current)?.let { description ->
+                g.drawString(elide(description, metrics, width - JBUI.scale(24)), JBUI.scale(12), y + metrics.ascent)
+            }
+        }
+
+        override fun getPreferredSize(): java.awt.Dimension = java.awt.Dimension(0, table.rowHeight)
+
+        /** Cuts [text] to [maxWidth] with an ellipsis, the way a label would. */
+        private fun elide(text: String, metrics: FontMetrics, maxWidth: Int): String {
+            if (metrics.stringWidth(text) <= maxWidth) return text
+            var end = text.length
+            while (end > 0 && metrics.stringWidth(text.substring(0, end) + "…") > maxWidth) end--
+            return text.substring(0, end) + "…"
         }
     }
 
@@ -838,7 +924,7 @@ internal class XMakePackagesPanel(
     }
 
     /** One row of the packages table: a declared entry, or a repository hit while
-     *  searching. The info-driven cells (version resolved, repo, status) re-read the
+     *  searching. The info-driven cells (the resolved meta, the status) re-read the
      *  service's snapshot on paint, so an info landing is a repaint, not a rebuild. */
     private class PackageRow(
         val name: String,
@@ -866,10 +952,19 @@ internal class XMakePackagesPanel(
         private const val DECLARED = "declared"
         private const val AVAILABLE = "available"
 
-        private const val COLUMN_NAME = 0
-        private const val COLUMN_DESCRIPTION = 1
-        private const val COLUMN_VERSION = 2
-        private const val COLUMN_REPO = 3
-        private const val COLUMN_STATUS = 4
+        /** The list row's height, in the Marketplace page's stacked-row scale. */
+        private const val ROW_HEIGHT = 46
+
+        /** The width the row keeps for the right-aligned state word. */
+        private const val STATUS_RESERVE = 72
     }
 }
+
+/** The marketplace page's panel background, shared by the details pane and the list. */
+private fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())
+
+/** The marketplace page's hairline color, shared by the row separators. */
+private fun infoBorderColor(): Color = JBColor.namedColor("Plugins.borderColor", JBColor.border())
+
+/** The gray the metadata reads in - the Marketplace meta line's color. */
+private fun infoForeground(): Color = JBColor.namedColor("Label.infoForeground", UIUtil.getLabelInfoForeground())
