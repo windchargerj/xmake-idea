@@ -115,6 +115,16 @@ internal object XMakePackageParsers {
      * unknown shape, no element carrying the asked name, failed query; a package that
      * exists nowhere is still parsed (version `latest`, no repo).
      */
+    /**
+     * Parses one package's `--info --format=json` output: a JSON array whose objects
+     * carry the package's data, `references` present exactly when installed. The array
+     * is the package's whole dependency closure - the dependencies ride first and the
+     * requested package may sit anywhere in it (last in the observed 3.1.2 answers) -
+     * so [packageName] picks the element; the query's answer for another package is
+     * not this package's info, however well it parses. Null answers "no usable info" -
+     * unknown shape, no element carrying the asked name, failed query; a package that
+     * exists nowhere is still parsed (version `latest`, no repo).
+     */
     fun parsePackageInfo(output: String, packageName: String): XMakePackageInfo? {
         val element = jsonPayload(stripAnsi(output)) ?: return null
         val obj = when (element) {
@@ -139,6 +149,67 @@ internal object XMakePackageParsers {
             is JsonObject -> listOf(packageInfo(element))
             else -> emptyList()
         }
+    }
+
+    /**
+     * Parses the plain-text `--info` answer - the form that predates `--format=json`
+     * and the one older toolkits (2.8.7 among them) still answer. The text opens one
+     * `require(name):` block per package of the closure, each fact on a `-> key: value`
+     * line; the asked name picks its block. The text form carries no `references`
+     * section, so the answer reads as not-installed - the honest reading it can give.
+     */
+    fun parsePackageInfoText(output: String, packageName: String): XMakePackageInfo? {
+        val asked = askedName(packageName)
+        return textInfoBlocks(stripAnsi(output)).firstOrNull { it.name == asked }?.toInfo()
+    }
+
+    /** One parsed `require(name):` block: the block's name and its `-> key: value` facts. */
+    private class TextInfoBlock(val name: String, val facts: Map<String, String>) {
+
+        fun toInfo(): XMakePackageInfo {
+            val repo = facts["repo"]?.split(Regex("\\s+")).orEmpty()
+            return XMakePackageInfo(
+                require = name,
+                version = facts["version"],
+                description = facts["description"],
+                repoName = repo.firstOrNull(),
+                repoUrl = repo.getOrNull(1),
+                installdir = facts["installdir"],
+                cachedir = facts["cachedir"],
+                platforms = facts["platforms"]
+                    ?.split(",")
+                    ?.map(String::trim)
+                    ?.filter(String::isNotEmpty)
+                    .orEmpty(),
+                references = null,
+            )
+        }
+    }
+
+    /** Splits the text answer into its `require(name):` blocks. */
+    private fun textInfoBlocks(text: String): List<TextInfoBlock> {
+        val blockName = Regex("""^\s*require\((.+?)\):""")
+        val factLine = Regex("""^\s*->\s*([A-Za-z ]+):\s?(.*)$""")
+        val blocks = mutableListOf<TextInfoBlock>()
+        var name: String? = null
+        val facts = mutableMapOf<String, String>()
+        fun close() {
+            name?.let { blocks.add(TextInfoBlock(it, facts.toMap())) }
+            facts.clear()
+        }
+        text.lineSequence().forEach { line ->
+            val block = blockName.find(line)
+            if (block != null) {
+                close()
+                name = block.groupValues[1].trim().substringBefore(" ").substringAfterLast("::").lowercase()
+                return@forEach
+            }
+            if (name == null) return@forEach
+            val fact = factLine.find(line) ?: return@forEach
+            facts.putIfAbsent(fact.groupValues[1].trim().lowercase(), fact.groupValues[2].trim())
+        }
+        close()
+        return blocks
     }
 
     /** The package info one info object carries. */
