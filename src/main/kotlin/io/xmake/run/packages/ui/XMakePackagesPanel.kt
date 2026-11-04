@@ -45,6 +45,7 @@ import com.intellij.ui.components.JBPanelWithEmptyText
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.table.TableView
+import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -64,9 +65,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Dimension
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.RenderingHints
 import java.awt.event.ActionEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
@@ -248,12 +253,15 @@ internal class XMakePackagesPanel(
     }
 
     /** The toolbar's search field; kept so an Esc exit can empty it with the view. The
-     *  history popup and the tuned paddings are the Marketplace search field's. */
+     *  history popup and the tuned paddings are the Marketplace search field's, and it
+     *  sits over the list - the master column's own header - at a width a search field
+     *  is, not the column's. */
     private val searchField = SearchTextField(true).apply {
         textEditor.emptyText.text = "Search packages"
         textEditor.putClientProperty("JTextField.Search.Gap", JBUI.scale(6))
         textEditor.putClientProperty("JTextField.Search.GapEmptyText", JBUI.scale(-1))
         textEditor.background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
+        preferredSize = Dimension(JBUI.scale(240), preferredSize.height)
         textEditor.addActionListener {
             val term = text.trim()
             if (term.isEmpty()) {
@@ -275,6 +283,12 @@ internal class XMakePackagesPanel(
         font = JBFont.create(UIUtil.getLabelFont().deriveFont(Font.BOLD, 18f))
     }
 
+    /** The badges the title row carries: the row's state and the platforms the package
+     *  answers - the Marketplace header's tag row, attached to the name. */
+    private val detailsBadges = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        isOpaque = false
+    }
+
     /** The details pane's meta line: repository, resolved version, the project's ask. */
     private val detailsMeta = JBLabel().apply { foreground = infoForeground() }
 
@@ -282,8 +296,9 @@ internal class XMakePackagesPanel(
      *  way the Marketplace header carries the Install button. */
     private val detailsAction = JButton()
 
-    /** The header stack: name, meta, and the action row, over a hairline - the
-     *  Marketplace details header's rows and insets, stacked on a GridBag. */
+    /** The header stack: the title row - name, badges, the action at the right edge -
+     *  over the meta line, and a hairline under all of it; the Marketplace details
+     *  header's rows and insets, stacked on a GridBag. */
     private val detailsHeader = JPanel(GridBagLayout()).apply {
         isOpaque = true
         background = mainBackground()
@@ -302,13 +317,16 @@ internal class XMakePackagesPanel(
                 insets = JBUI.insets(if (gridy == 0) 0 else 8, 0)
             },
         )
-        row(0, detailsName)
-        row(1, detailsMeta, stretch = false)
-        row(2, BorderLayoutPanel().apply {
+        row(0, BorderLayoutPanel().apply {
             isOpaque = false
-            addToCenter(JPanel().apply { isOpaque = false })
+            addToCenter(javax.swing.Box.createHorizontalBox().apply {
+                add(detailsName)
+                add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
+                add(detailsBadges)
+            })
             addToRight(detailsAction.apply { isOpaque = false })
-        }, stretch = false)
+        })
+        row(1, detailsMeta, stretch = false)
     }
 
     /** The details grid: caption-value rows rebuilt per selection or info landing, in a
@@ -371,15 +389,10 @@ internal class XMakePackagesPanel(
             }
         }.installOn(table)
 
-        val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
-            firstComponent = tableScroll
-            secondComponent = detailsCard
-        }
-
-        // The search row sits above the split, outside the toolbar: focus survives
-        // toolbar rebuilds, and a term typed while an operation holds the lane is queued
-        // by the service and searched when the lane frees. The hairline under it is the
-        // Marketplace page's line between the search field and the rows.
+        // The search row rides the master column: the field belongs to the list it
+        // searches, at a width a search field is. A term typed while an operation holds
+        // the lane is queued by the service and searched when the lane frees. The
+        // hairline under it is the Marketplace page's line between the field and the rows.
         val searchRow = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
@@ -387,13 +400,20 @@ internal class XMakePackagesPanel(
                 CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
                 JBUI.Borders.empty(6, 8),
             )
-            add(searchField, BorderLayout.CENTER)
+            add(searchField, BorderLayout.WEST)
+        }
+
+        val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
+            firstComponent = JPanel(BorderLayout()).apply {
+                add(searchRow, BorderLayout.NORTH)
+                add(tableScroll, BorderLayout.CENTER)
+            }
+            secondComponent = detailsCard
         }
 
         toolbar = toolbar().component
         setContent(
             JBUI.Panels.simplePanel()
-                .addToTop(searchRow)
                 .addToCenter(split)
                 .addToBottom(statusPanel),
         )
@@ -414,6 +434,7 @@ internal class XMakePackagesPanel(
     /** The subscriptions ride on the content's disposal; nothing else outlives the panel. */
     override fun dispose() {
         consoleScope.cancel()
+        infoLoading.dispose()
     }
 
     private fun toolbar(): ActionToolbar {
@@ -590,9 +611,8 @@ internal class XMakePackagesPanel(
     }
 
     /**
-     * Renders the selected package: the Marketplace header (name, meta, the one action
-     * that fits the row) over the info grid, or the nothing-selected card. The
-     * narration while the info has not landed is the same one the old text pane gave.
+     * Renders the selected package: the Marketplace header (name, badges, meta, the one
+     * action that fits the row) over the info body, or the nothing-selected card.
      */
     private fun renderDetails(name: String?) {
         if (name == null) {
@@ -603,6 +623,7 @@ internal class XMakePackagesPanel(
         detailsName.text = name
         val row = tableModel.items.firstOrNull { it.name == name }
         val info = infoFor(name)
+        renderBadges(name, row, info)
         detailsMeta.text = when {
             // A package that exists nowhere still reports version "latest"; the missing
             // repo is the "not found" signal, not a failed query.
@@ -621,6 +642,42 @@ internal class XMakePackagesPanel(
         renderInfoGrid(name, info)
     }
 
+    /** The badges the title row carries: the row's state, then the platforms the package
+     *  answers - read fresh on every render, the way the meta line is. */
+    private fun renderBadges(name: String, row: PackageRow?, info: XMakePackageInfo?) {
+        detailsBadges.removeAll()
+        val state = when {
+            info?.installed == true -> Badge(INSTALLED, badgeForeground(INSTALLED), badgeBackground(INSTALLED))
+            row?.isHit == true -> Badge(AVAILABLE, badgeForeground(AVAILABLE), badgeBackground(AVAILABLE))
+            else -> Badge(DECLARED, badgeForeground(DECLARED), badgeBackground(DECLARED))
+        }
+        detailsBadges.add(Chip(state.text, state.foreground, state.background))
+        info?.platforms?.forEach { platform ->
+            detailsBadges.add(
+                Chip(
+                    platform,
+                    infoForeground(),
+                    JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D)),
+                ),
+            )
+        }
+        detailsBadges.revalidate()
+        detailsBadges.repaint()
+    }
+
+    /** The badge palette of one state word: green reads installed, blue available, gray declared. */
+    private fun badgeForeground(state: String): Color = when (state) {
+        INSTALLED -> JBColor(0x3F7E33, 0x57965C)
+        AVAILABLE -> JBColor(0x1D73BF, 0x4A88C7)
+        else -> infoForeground()
+    }
+
+    private fun badgeBackground(state: String): Color = when (state) {
+        INSTALLED -> JBColor(0xE1F6DA, 0x314131)
+        AVAILABLE -> JBColor(0xD8EDF8, 0x27363F)
+        else -> JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D))
+    }
+
     /** Swaps the right pane between the details and the nothing-selected card. */
     private fun showDetailsPane(withDetails: Boolean) {
         detailsCard.removeAll()
@@ -629,41 +686,57 @@ internal class XMakePackagesPanel(
         detailsCard.repaint()
     }
 
-    /** Rebuilds the details grid for [name]; the header already carries the identity. */
+    /** The info query's spinner; reused across rebuilds so one icon animates the wait,
+     *  wherever the body currently sits. */
+    private val infoLoading = AsyncProcessIcon("XMakePackagesInfoLoading")
+
+    /** Rebuilds the details body for [name]: the description as the lead paragraph, the
+     *  dependency closure the query answered as its own section, the facts as the info
+     *  section. The header above already carries the identity. */
     private fun renderInfoGrid(name: String, info: XMakePackageInfo?) {
         detailsBody.removeAll()
         var gridy = 0
-        fun constraints(row: Int, column: Int, insetsLeft: Int, fillMode: Int): GridBagConstraints =
+        fun constraints(row: Int, column: Int, fillMode: Int): GridBagConstraints =
             GridBagConstraints().apply {
                 gridy = row
                 gridx = column
                 anchor = GridBagConstraints.WEST
                 weightx = if (column == 0) 0.0 else 1.0
                 fill = fillMode
-                insets = JBUI.insets(3, insetsLeft, 3, 8)
+                insets = JBUI.insets(3, 0, 3, 8)
             }
 
         fun addRow(caption: String, value: JComponent) {
             detailsBody.add(
                 JBLabel(caption).apply { foreground = infoForeground() },
-                constraints(gridy, 0, 20, GridBagConstraints.NONE),
+                constraints(gridy, 0, GridBagConstraints.NONE),
             )
-            detailsBody.add(value, constraints(gridy, 1, 12, GridBagConstraints.HORIZONTAL))
+            detailsBody.add(value, constraints(gridy, 1, GridBagConstraints.HORIZONTAL))
             gridy++
         }
 
-        fun addTextRow(caption: String, text: String?) {
-            if (!text.isNullOrEmpty()) addRow(caption, JBLabel(text))
-        }
-
-        fun addWrappedRow(caption: String, text: String) {
-            addRow(caption, wrappedText(text))
-        }
-
-        fun addNarration(text: String) {
+        fun addSection(title: String) {
             val row = gridy
             detailsBody.add(
-                wrappedText(text),
+                JBLabel(title).apply {
+                    font = JBFont.label().biggerOn(-1f).deriveFont(Font.BOLD)
+                    foreground = infoForeground()
+                },
+                GridBagConstraints().apply {
+                    gridy = row
+                    gridx = 0
+                    gridwidth = GridBagConstraints.REMAINDER
+                    anchor = GridBagConstraints.WEST
+                    insets = JBUI.insets(if (row == 0) 0 else 10, 0, 4, 0)
+                },
+            )
+            gridy++
+        }
+
+        fun addParagraph(text: String, gray: Boolean = false) {
+            val row = gridy
+            detailsBody.add(
+                wrappedText(text).apply { if (gray) foreground = infoForeground() },
                 GridBagConstraints().apply {
                     gridy = row
                     gridx = 0
@@ -671,7 +744,7 @@ internal class XMakePackagesPanel(
                     weightx = 1.0
                     fill = GridBagConstraints.HORIZONTAL
                     anchor = GridBagConstraints.WEST
-                    insets = JBUI.insets(4, 20)
+                    insets = JBUI.insets(2, 0)
                 },
             )
             gridy++
@@ -695,31 +768,51 @@ internal class XMakePackagesPanel(
             // A busy pipeline with a named operation is not loading this info at all - the
             // fetchInfo call was a no-op; say what the wait is really on.
             info == null && service.busy && service.currentOperation != null -> {
-                addNarration(
-                    "Waiting for the current operation to finish before loading the info of '$name'... - " +
+                addParagraph(
+                    "Waiting for the current operation to finish before loading the info of '$name' - " +
                         "${service.currentOperation} - then the row loads its info, or select it again",
+                    gray = true,
                 )
                 addFiller()
             }
+            // The query rides the executor lane, over SSH in the worst case; the spinner
+            // says the click was heard and the answer is on its way.
             info == null && service.busy -> {
-                addNarration("Loading the info of '$name'... - xmake require --info --format=json $name")
+                val row = gridy
+                detailsBody.add(
+                    javax.swing.Box.createHorizontalBox().apply {
+                        add(infoLoading)
+                        add(javax.swing.Box.createHorizontalStrut(JBUI.scale(8)))
+                        add(JBLabel("Loading...").apply { foreground = infoForeground() })
+                    },
+                    GridBagConstraints().apply {
+                        gridy = row
+                        gridx = 0
+                        gridwidth = GridBagConstraints.REMAINDER
+                        anchor = GridBagConstraints.WEST
+                        insets = JBUI.insets(4, 0)
+                    },
+                )
+                gridy++
                 addFiller()
             }
             info == null -> {
-                addNarration(
+                addParagraph(
                     buildString {
                         append("No info available for '$name' - the info query answered nothing usable")
                         service.lastError?.let { append(": ").append(it) }
                         append(". The xmake on this host may not answer require --info --format=json; updating xmake may fix it")
                     },
+                    gray = true,
                 )
                 addFiller()
             }
             else -> {
+                // The description leads: it is what the user came to read.
+                info.description?.let { addParagraph(it) }
                 tableModel.items.firstOrNull { it.name == name }?.requirement
-                    ?.let { addTextRow("Requirement", it) }
-                info.version?.let { addTextRow("Version", it) }
-                info.description?.let { addWrappedRow("Description", it) }
+                    ?.let { addRow("Requirement", JBLabel(it)) }
+                info.version?.let { addRow("Version", JBLabel(it)) }
                 addRow(
                     "Repo",
                     JBLabel(
@@ -731,62 +824,75 @@ internal class XMakePackagesPanel(
                         },
                     ),
                 )
-                // The info query answers the package together with its whole dependency
-                // closure; what rode with the answer is presented here, name, resolved
-                // version, and description each. Where the query said nothing, the
-                // project's depgraph still names what the package needs.
+
+                // The closure the query answered, as its own section; where it said
+                // nothing, the project's depgraph still names what the package needs.
                 val closure = service.snapshot?.closures?.get(name).orEmpty()
                 val asked = bareName(name)
                 val dependencies = closure.filter { bareName(it.require) != asked }
+                val declaredDependencies = service.snapshot?.depgraph?.packages
+                    ?.firstOrNull { it.name == name }?.deps
                 if (dependencies.isNotEmpty()) {
-                    addTextRow(
-                        "Dependencies",
-                        "${dependencies.size} package(s) came with this answer - xmake reports the whole closure",
-                    )
+                    addSection("DEPENDENCIES - ${dependencies.size}")
                     dependencies.forEach { dependency ->
-                        val entry = JPanel(java.awt.GridLayout(0, 1)).apply {
-                            isOpaque = false
-                            add(JBLabel(listOfNotNull(dependency.require.ifEmpty { null }, dependency.version).joinToString("  ")))
-                            dependency.description?.let { add(wrappedText(it)) }
-                        }
-                        addRow("", entry)
-                    }
-                } else {
-                    // `--info` carries no dependency field of its own; the depgraph query
-                    // is the fallback source. A package outside the project's graph (a
-                    // search hit) simply has no line here.
-                    val declaredDependencies = service.snapshot?.depgraph?.packages
-                        ?.firstOrNull { it.name == name }?.deps
-                    if (!declaredDependencies.isNullOrEmpty()) {
-                        addTextRow("Depends on", declaredDependencies.joinToString(", "))
-                    }
-                }
-                info.installdir?.let { addWrappedRow("Install directory", it) }
-                info.cachedir?.let { addWrappedRow("Cache directory", it) }
-                if (info.platforms.isNotEmpty()) {
-                    addTextRow("Platforms", info.platforms.joinToString(", "))
-                }
-                if (info.installed) {
-                    addTextRow("References", "${info.references?.size ?: 0} - installed")
-                    info.references.orEmpty().forEach { reference ->
                         addRow(
                             "",
-                            JBLabel(
-                                buildString {
-                                    append(reference.dir ?: "?")
-                                    reference.date?.let { append("  (").append(it).append(')') }
-                                },
-                            ),
+                            JPanel(java.awt.GridLayout(0, 1)).apply {
+                                isOpaque = false
+                                add(
+                                    JBLabel(
+                                        listOfNotNull(dependency.require.ifEmpty { null }, dependency.version)
+                                            .joinToString("   "),
+                                    ).apply { font = JBFont.label().deriveFont(Font.BOLD) },
+                                )
+                                dependency.description?.let { add(wrappedText(it).apply { foreground = infoForeground() }) }
+                            },
                         )
                     }
+                } else if (!declaredDependencies.isNullOrEmpty()) {
+                    addRow("Depends on", JBLabel(declaredDependencies.joinToString(", ")))
+                }
+
+                addSection("INFO")
+                info.installdir?.let { addRow("Install directory", pathLabel(it)) }
+                info.cachedir?.let { addRow("Cache directory", pathLabel(it)) }
+                if (info.installed) {
+                    addRow("References", JBLabel("${info.references?.size ?: 0} - installed"))
+                    info.references.orEmpty().forEach { reference ->
+                        val referenceLabel = JBLabel(
+                            buildString {
+                                append(reference.dir ?: "?")
+                                reference.date?.let { append("   ").append(it) }
+                            },
+                        ).apply { foreground = infoForeground() }
+                        reference.dir?.let { referenceLabel.toolTipText = it }
+                        addRow("", referenceLabel)
+                    }
                 } else {
-                    addTextRow("References", "none - not installed")
+                    addRow("References", JBLabel("none - not installed").apply { foreground = infoForeground() })
                 }
                 addFiller()
             }
         }
         detailsBody.revalidate()
         detailsBody.repaint()
+    }
+
+    /** A long path, kept legible: elided in the middle, whole in the tooltip, copyable
+     *  on the label - the head (drive, toolchain root) and the tail (the package's own
+     *  versioned directory) are the parts a user reads. */
+    private fun pathLabel(path: String): JComponent = JBLabel(elideMiddle(path, 64)).apply {
+        toolTipText = path
+        setCopyable(true)
+        font = JBFont.label()
+    }
+
+    /** Cuts [text] through the middle once it passes [maxChars], keeping both ends. */
+    private fun elideMiddle(text: String, maxChars: Int): String {
+        if (text.length <= maxChars) return text
+        val head = maxChars / 2
+        val tail = maxChars - head
+        return text.take(head) + " ... " + text.takeLast(tail)
     }
 
     /** A value that wraps instead of widening the grid: the description, the paths. A
@@ -1014,3 +1120,40 @@ private fun infoBorderColor(): Color = JBColor.namedColor("Plugins.borderColor",
 
 /** The gray the metadata reads in - the Marketplace meta line's color. */
 private fun infoForeground(): Color = JBColor.namedColor("Label.infoForeground", UIUtil.getLabelInfoForeground())
+
+/** The badge palette of one state word: green reads installed, blue available, gray declared. */
+private data class Badge(val text: String, val foreground: Color, val background: Color)
+
+/** One badge: a rounded chip carrying a word - the state, or a platform the package
+ *  answers - attached to the name, the way the Marketplace header carries its tags. */
+private class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
+
+    private val label = JBLabel(text)
+
+    init {
+        isOpaque = false
+        label.foreground = foreground
+        label.font = JBFont.label().biggerOn(-1f)
+        add(label)
+    }
+
+    override fun paintComponent(graphics: Graphics) {
+        val g = graphics as Graphics2D
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g.color = background
+        g.fillRoundRect(0, 0, width, height, height, height)
+    }
+
+    override fun getPreferredSize(): java.awt.Dimension {
+        val text = label.preferredSize
+        return java.awt.Dimension(text.width + PAD * 2, text.height + PAD)
+    }
+
+    override fun doLayout() {
+        label.setBounds(PAD, PAD / 2, label.preferredSize.width, height - PAD)
+    }
+
+    private companion object {
+        private const val PAD = 8
+    }
+}
