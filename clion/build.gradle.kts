@@ -54,3 +54,10 @@ dependencies {
         testFramework(TestFrameworkType.Platform)
     }
 }
+
+// The two platform-fixture suites fight for the machine when they run side by side -
+// one fixture's RD/VFS watcher logs during the other's teardown and the test logger
+// turns that logged error into a failure. One after the other, never together.
+tasks.named("test") {
+    mustRunAfter(rootProject.tasks.named("test"))
+}
