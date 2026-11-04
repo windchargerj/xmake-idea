@@ -702,7 +702,13 @@ internal class XMakePackagesPanel(
                 addFiller()
             }
             info == null -> {
-                addNarration("No info available for '$name' - the query failed or produced nothing usable")
+                addNarration(
+                    buildString {
+                        append("No info available for '$name' - the info query answered nothing usable")
+                        service.lastError?.let { append(": ").append(it) }
+                        append(". The xmake on this host may not answer require --info --format=json; updating xmake may fix it")
+                    },
+                )
                 addFiller()
             }
             else -> {
