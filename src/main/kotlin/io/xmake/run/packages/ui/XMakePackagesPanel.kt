@@ -171,6 +171,9 @@ internal class XMakePackagesPanel(
         intercellSpacing = Dimension(0, 0)
         tableHeader.font = JBFont.label().biggerOn(-1f).deriveFont(Font.BOLD)
         tableHeader.reorderingAllowed = false
+        // The header sorts on click; the hand says so. A column's edge still drags its
+        // width - the drag works even while the hand shows.
+        tableHeader.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
         columnModel.getColumn(COLUMN_NAME).minWidth = JBUI.scale(100)
         columnModel.getColumn(COLUMN_NAME).preferredWidth = JBUI.scale(120)
         columnModel.getColumn(COLUMN_DESCRIPTION).minWidth = JBUI.scale(180)
@@ -311,12 +314,14 @@ internal class XMakePackagesPanel(
     /** The details pane's title: the package name in the Marketplace header face. */
     private val detailsName = JBLabel().apply {
         font = JBFont.create(UIUtil.getLabelFont().deriveFont(Font.BOLD, 18f))
+        alignmentY = 0.5f
     }
 
     /** The badges the title row carries: the row's state and the platforms the package
      *  answers - the Marketplace header's tag row, attached to the name. */
-    private val detailsBadges = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+    private val detailsBadges = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
         isOpaque = false
+        alignmentY = 0.5f
     }
 
     /** The details pane's meta line: repository, resolved version, the project's ask. */
@@ -1141,15 +1146,18 @@ internal fun badgeBackground(state: String): Color = when (state) {
 }
 
 /** One badge: a rounded chip carrying a word - the state, or a platform the package
- *  answers - attached to the name, the way the Marketplace header carries its tags. */
+ *  answers - attached to the name, the way the Marketplace header carries its tags. The
+ *  chip is sized for the title row: the label face at full size, a soft fill, a same-
+ *  tone border, and enough air that the words do not touch the curve. */
 internal class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
 
     private val label = JBLabel(text)
 
     init {
         isOpaque = false
+        alignmentY = 0.5f
         label.foreground = foreground
-        label.font = JBFont.label()
+        label.font = JBFont.label().biggerOn(0.5f)
         add(label)
     }
 
@@ -1158,11 +1166,13 @@ internal class Chip(text: String, foreground: Color, background: Color) : JPanel
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g.color = background
         g.fillRoundRect(0, 0, width, height, height, height)
+        g.color = ColorUtil.toAlpha(foreground, 70)
+        g.drawRoundRect(0, 0, width - 1, height - 1, height, height)
     }
 
-    override fun getPreferredSize(): java.awt.Dimension {
+    override fun getPreferredSize(): Dimension {
         val text = label.preferredSize
-        return java.awt.Dimension(text.width + PAD_X * 2, text.height + PAD_Y * 2)
+        return Dimension(text.width + PAD_X * 2, text.height + PAD_Y * 2)
     }
 
     override fun doLayout() {
@@ -1171,6 +1181,6 @@ internal class Chip(text: String, foreground: Color, background: Color) : JPanel
 
     private companion object {
         private const val PAD_X = 12
-        private const val PAD_Y = 4
+        private const val PAD_Y = 6
     }
 }
