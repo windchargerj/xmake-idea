@@ -774,12 +774,6 @@ internal class XMakePackagesPanel(
      *  answers - read fresh on every render, the way the meta line is. */
     private fun renderBadges(name: String, row: PackageRow?, info: XMakePackageInfo?) {
         detailsBadges.removeAll()
-        val state = when {
-            info?.installed == true -> Badge(INSTALLED, badgeForeground(INSTALLED), badgeBackground(INSTALLED))
-            row?.isHit == true -> Badge(AVAILABLE, badgeForeground(AVAILABLE), badgeBackground(AVAILABLE))
-            else -> Badge(DECLARED, badgeForeground(DECLARED), badgeBackground(DECLARED))
-        }
-        detailsBadges.add(Chip(state.text, state.foreground, state.background))
         info?.platforms?.forEach { platform ->
             detailsBadges.add(
                 Chip(
@@ -1131,8 +1125,6 @@ internal const val DECLARED = "declared"
 internal const val AVAILABLE = "available"
 
 /** The badge palette of one state word: green reads installed, blue available, gray declared. */
-internal data class Badge(val text: String, val foreground: Color, val background: Color)
-
 internal fun badgeForeground(state: String): Color = when (state) {
     INSTALLED -> JBColor(0x3F7E33, 0x57965C)
     AVAILABLE -> JBColor(0x1D73BF, 0x4A88C7)

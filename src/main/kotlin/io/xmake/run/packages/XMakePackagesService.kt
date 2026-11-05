@@ -320,7 +320,9 @@ internal class XMakePackagesService(private val project: Project) {
 
     /** The fresh state one refresh answers: the declared packages, plus the dependency graph
      *  when xmake produced one. The search results ride over unchanged - the hits stay the
-     *  tree's filtered view across a refresh; nothing but [exitSearch] clears them. */
+     *  tree's filtered view across a refresh; nothing but [exitSearch] clears them. The info
+     *  and closure caches drop: a refresh is a new context, and a cached empty answer - from
+     *  a query that failed while the toolchain was mid-upgrade, say - must not outlive it. */
     private suspend fun loadSnapshot(factory: XMakeCommandFactory): XMakePackagesSnapshot {
         val packages = XMakePackageParsers.parseRequireList(
             project.xmakeExecutor.captureStandardOutput(factory.createRequireList()),
@@ -330,7 +332,11 @@ internal class XMakePackagesService(private val project: Project) {
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireDepgraph()),
             )
         }.getOrNull()
-        return XMakePackagesSnapshot(packages, depgraph, searchResults = snapshot?.searchResults)
+        return XMakePackagesSnapshot(
+            packages,
+            depgraph,
+            searchResults = snapshot?.searchResults,
+        )
     }
 
     private fun packageFactory(): XMakeCommandFactory {
