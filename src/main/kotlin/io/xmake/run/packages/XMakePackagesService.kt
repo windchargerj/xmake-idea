@@ -151,7 +151,10 @@ internal class XMakePackagesService(private val project: Project) {
     fun fetchInfo(packageName: String) {
         val current = snapshot ?: return
         if (busy) return
-        if (current.infos.containsKey(packageName)) return
+        // The closure is what a selection still needs: the batched prefetch already
+        // answered the row's facts, but only a single-package ask can attribute the
+        // closure to the package that needs it.
+        if (current.closures.containsKey(packageName)) return
         claim(null) { factory ->
             val base = snapshot
             val output = runCancellable {
@@ -164,7 +167,8 @@ internal class XMakePackagesService(private val project: Project) {
             var closure = output?.let { runCancellable { XMakePackageParsers.parsePackageClosure(it) }.getOrNull() }.orEmpty()
             // The JSON flag is newer than some toolkits: a 2.8.7 answers its usage text
             // for --format=json. The plain --info form predates it and every toolkit
-            // reads it - the fallback fetch, same lane pass.
+            // reads it - the fallback fetch, same lane pass, closure included: the text
+            // answer lists the whole dependency closure as its blocks.
             if (info == null) {
                 val plain = runCancellable {
                     project.xmakeExecutor.captureStandardOutput(factory.createRequireInfoText(packageName))
@@ -173,13 +177,17 @@ internal class XMakePackagesService(private val project: Project) {
                     runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
                         ?.let { textInfo ->
                             info = textInfo
-                            closure = emptyList()
+                            closure = runCancellable {
+                                XMakePackageParsers.parsePackageClosureText(text)
+                            }.getOrNull().orEmpty()
                         }
                 }
             }
             base?.copy(infos = base.infos + (packageName to info), closures = base.closures + (packageName to closure))
         }
     }
+
+
 
     /**
      * Builds one package command on the executor lane and hands it to [onReady] on the EDT.
@@ -320,7 +328,9 @@ internal class XMakePackagesService(private val project: Project) {
 
     /** The fresh state one refresh answers: the declared packages, plus the dependency graph
      *  when xmake produced one. The search results ride over unchanged - the hits stay the
-     *  tree's filtered view across a refresh; nothing but [exitSearch] clears them. */
+     *  tree's filtered view across a refresh; nothing but [exitSearch] clears them. The info
+     *  and closure caches drop: a refresh is a new context, and a cached empty answer - from
+     *  a query that failed while the toolchain was mid-upgrade, say - must not outlive it. */
     private suspend fun loadSnapshot(factory: XMakeCommandFactory): XMakePackagesSnapshot {
         val packages = XMakePackageParsers.parseRequireList(
             project.xmakeExecutor.captureStandardOutput(factory.createRequireList()),
@@ -330,7 +340,11 @@ internal class XMakePackagesService(private val project: Project) {
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireDepgraph()),
             )
         }.getOrNull()
-        return XMakePackagesSnapshot(packages, depgraph, searchResults = snapshot?.searchResults)
+        return XMakePackagesSnapshot(
+            packages,
+            depgraph,
+            searchResults = snapshot?.searchResults,
+        )
     }
 
     private fun packageFactory(): XMakeCommandFactory {
