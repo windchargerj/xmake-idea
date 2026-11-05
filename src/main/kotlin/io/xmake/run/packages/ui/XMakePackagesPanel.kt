@@ -310,13 +310,34 @@ internal class XMakePackagesPanel(
         textEditor.document.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
             override fun textChanged(event: javax.swing.event.DocumentEvent) {
                 applyRowFilter(text)
+                // The rows already narrow as the letters land; the repositories are asked
+                // once the typing pauses - the Marketplace page's own bargain between
+                // feeling instant and not firing a remote query per keystroke.
+                searchDebounce.restart()
             }
         })
         textEditor.addActionListener {
-            val term = text.trim()
-            if (term.isEmpty()) {
-                service.exitSearch()
-            } else {
+            // Enter asks now rather than on the pause: the user has said the term is done.
+            searchDebounce.stop()
+            searchNow(text)
+        }
+        exitSearchOnEscape(textEditor)
+    }
+
+    /** Fires the repository query once typing pauses; one timer for the field's life, so
+     *  every keystroke replaces the pending ask instead of stacking one. */
+    private val searchDebounce: javax.swing.Timer by lazy {
+        javax.swing.Timer(SEARCH_DEBOUNCE_MS) { searchNow(searchField.text) }
+    }
+
+    /** Hands [term] to the repositories - the debounce and Enter both land here. An
+     *  empty term leaves search mode; a one-letter term waits for a fuller ask. */
+    private fun searchNow(rawTerm: String) {
+        val term = rawTerm.trim()
+        when {
+            term.isEmpty() -> service.exitSearch()
+            term.length < MIN_SEARCH_LENGTH -> Unit
+            else -> {
                 service.search(term)
                 // Behind a mutation the search queues; the line says so instead of the
                 // field going silent. A claim the search started names itself in the
@@ -325,7 +346,6 @@ internal class XMakePackagesPanel(
                     ?: updateSummary(service.snapshot)
             }
         }
-        exitSearchOnEscape(textEditor)
     }
 
     /** Filters the rows in view by [term]: the name, the description, or the status word
@@ -346,6 +366,15 @@ internal class XMakePackagesPanel(
                         statusOf(pkg)?.lowercase()?.contains(query) == true
                 }
             }
+        }
+        // The empty state speaks for what is on screen: a filter that hides every row
+        // says so with the term, instead of repeating the list-level narration.
+        val empty = table.emptyText
+        if (query.isNotEmpty() && table.rowCount == 0) {
+            empty.clear()
+            empty.text = "No package matches '$query'"
+        } else {
+            applyEmptyText(service.snapshot)
         }
     }
 
@@ -371,21 +400,42 @@ internal class XMakePackagesPanel(
      *  whole label rather than mutating it. */
     private var detailsRepoLink: JComponent = JPanel()
 
-    /** Builds the repository link for [url], or null when there is no page to open. */
-    private fun repoLinkFor(url: String?): JComponent? {
-        if (url.isNullOrEmpty()) return null
-        return com.intellij.ui.components.labels.LinkLabel<String>(
-            "Open repository",
-            com.intellij.icons.AllIcons.Ide.External_link_arrow,
-        ).apply {
-            verticalAlignment = javax.swing.SwingConstants.CENTER
-            setListener(
-                { _, target: String? ->
-                    target?.takeIf(String::isNotEmpty)?.let(com.intellij.ide.BrowserUtil::browse)
+    /** The header's link row: the official xrepo page for the package - the canonical
+     *  entry in the xmake project's own index, whatever mirror the toolchain uses - and
+     *  the repository the package was resolved from, named by its host. */
+    private fun repoLinkFor(name: String, repoUrl: String?): JComponent? {
+        val links = javax.swing.Box.createHorizontalBox()
+        var any = false
+        fun addLink(label: String, url: String) {
+            if (any) links.add(javax.swing.Box.createHorizontalStrut(JBUI.scale(12)))
+            links.add(
+                com.intellij.ui.components.labels.LinkLabel<String>(
+                    label,
+                    com.intellij.icons.AllIcons.Ide.External_link_arrow,
+                ).apply {
+                    verticalAlignment = javax.swing.SwingConstants.CENTER
+                    setListener(
+                        { _, target: String? ->
+                            target?.takeIf(String::isNotEmpty)?.let(com.intellij.ide.BrowserUtil::browse)
+                        },
+                        url,
+                    )
                 },
-                url,
+            )
+            any = true
+        }
+        addLink("Package page", XREPO_PACKAGE_URL + name)
+        if (!repoUrl.isNullOrEmpty()) {
+            addLink(
+                when {
+                    "github.com" in repoUrl -> "GitHub"
+                    "gitee.com" in repoUrl -> "Gitee"
+                    else -> "Repository"
+                },
+                repoUrl,
             )
         }
+        return links.takeIf { any }
     }
 
     /** The header's right slot: the repository link when the query carried one, empty
@@ -565,6 +615,7 @@ internal class XMakePackagesPanel(
     /** The subscriptions ride on the content's disposal; nothing else outlives the panel. */
     override fun dispose() {
         consoleScope.cancel()
+        searchDebounce.stop()
         infoLoading.dispose()
     }
 
@@ -726,9 +777,12 @@ internal class XMakePackagesPanel(
             snapshot != null -> "${snapshot.packages.size} declared package(s)"
             else -> "Press Refresh to list the declared packages"
         }
+        val filtered = table.rowCount
+        val allRows = tableModel.rowCount
         val error = service.lastError
         statusLabel.text = buildString {
             append(base)
+            if (filtered != allRows) append(" - ").append(filtered).append(" of ").append(allRows).append(" shown")
             // While an operation holds the pipeline the grayed buttons need their reason on
             // show - the same narration the Services panel's message line gives.
             service.currentOperation?.let { operation -> append(" - ").append(operation) }
@@ -811,7 +865,7 @@ internal class XMakePackagesPanel(
                 detailsName.text = name
                 renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
                 detailsMeta.text = " "
-                renderRepoLink(null)
+                renderRepoLink(null, null)
                 detailsBody.text = wrapHtml(
                     buildString {
                         append("<p class='g'>No info available for '${esc(name)}' - the info query answered nothing usable")
@@ -839,7 +893,7 @@ internal class XMakePackagesPanel(
                         info?.version ?: row?.version?.let { "v$it" },
                     ).joinToString(" · ").ifEmpty { " " }
                 }
-                renderRepoLink(info?.repoUrl)
+                renderRepoLink(name, info?.repoUrl)
                 detailsBody.text = wrapHtml(detailsHtml(name))
                 detailsBody.caretPosition = 0
             }
@@ -865,9 +919,9 @@ internal class XMakePackagesPanel(
     }
 
     /** Puts the repository link - or nothing - in the header's right slot. */
-    private fun renderRepoLink(url: String?) {
+    private fun renderRepoLink(name: String?, url: String?) {
         detailsRepoSlot.removeAll()
-        repoLinkFor(url)?.let { detailsRepoSlot.addToRight(it) }
+        if (name != null) repoLinkFor(name, url)?.let { detailsRepoSlot.addToRight(it) }
         detailsRepoSlot.revalidate()
         detailsRepoSlot.repaint()
     }
@@ -1084,7 +1138,9 @@ internal class XMakePackagesPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
+            val name = selectedPackageName()
+            event.presentation.isEnabled = !service.busy && name != null &&
+                infoFor(name)?.installed != true
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -1124,7 +1180,9 @@ internal class XMakePackagesPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
+            val name = selectedPackageName()
+            event.presentation.isEnabled = !service.busy && name != null &&
+                infoFor(name)?.installed == true
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -1186,6 +1244,16 @@ internal class XMakePackagesPanel(
         private const val EXIT_SEARCH = "XMakePackages.exitSearch"
 
         private const val LOADING = "Loading the declared packages... - or press Refresh"
+
+        /** The official package page in the xmake project's own index. */
+        private const val XREPO_PACKAGE_URL = "https://xrepo.xmake.io/#/packages/"
+
+        /** How long typing must pause before the repositories are asked. */
+        private const val SEARCH_DEBOUNCE_MS = 600
+
+        /** Shorter than this, a term asks nothing of the repositories - one letter
+         *  matches too much to be worth a remote round trip. */
+        private const val MIN_SEARCH_LENGTH = 2
 
         private const val COLUMN_NAME = 0
         private const val COLUMN_DESCRIPTION = 1
