@@ -23,6 +23,8 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import io.xmake.utils.cli.XMakeServiceKind
+import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.Icon
@@ -84,7 +86,12 @@ internal fun serviceStatusIcon(state: XMakeServiceState, probed: Boolean): Icon 
  * command on the executor lane and re-probes - the panel itself never touches the
  * toolkit, a socket, or a file.
  */
-class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServiceKind) : JPanel(GridBagLayout()) {
+class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServiceKind) : JPanel(BorderLayout()) {
+
+    /** The rows live in their own grid, anchored to the top of the pane: a GridBag in a
+     *  BorderLayout's NORTH keeps its own height instead of floating in the middle of an
+     *  otherwise empty page. */
+    private val rows = JPanel(GridBagLayout())
 
     private val statusLabel = JBLabel()
     private val endpointField = JBTextField(18).apply { emptyText.text = "host:port" }
@@ -101,22 +108,30 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
 
     init {
         isOpaque = false
+        border = JBUI.Borders.empty(12, 16, 12, 16)
+        rows.isOpaque = false
+        add(rows, BorderLayout.NORTH)
 
-        // Row 0: the summary line - name, status icon, short state. The full state
+        // Row 0: the summary line - name and the state beside it. The full state
         // sentence rides the tooltip, the way the Services tree nodes do.
         addRow(
             0,
-            JBLabel(kindName(kind)).apply { font = JBFont.label().biggerOn(1f).deriveFont(java.awt.Font.BOLD) },
+            JBLabel(kindName(kind)).apply { font = JBFont.label().biggerOn(2f).deriveFont(java.awt.Font.BOLD) },
             statusLabel,
         )
 
-        // Row 1: the endpoint field stretches; Connect and Disconnect are mutually
-        // exclusive on show (serial-monitor's button rows), Apply stays for mouse users.
-        addRow(1, endpointField, applyButton, clearButton, connectButton, disconnectButton)
-        // Row 2: what the connection is missing - the hint the panel used to set and
-        // never show: it is added here, and its text decides that it is worth a row.
+        // Row 1: what the kind needs, captioned, then the controls on one line - the
+        // field a field's width, the buttons at their natural size.
+        addRow(1, caption("Endpoint"), endpointField.apply {
+            preferredSize = Dimension(JBUI.scale(260), preferredSize.height)
+        }, applyButton, clearButton)
+
+        // Row 2: the connection verbs, mutually exclusive as before.
+        addRow(2, caption("Connection"), connectButton, disconnectButton)
+
+        // Row 3: what the connection is missing; the row hides itself when empty.
         hintLabel.foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
-        addRow(2, hintLabel)
+        addRow(3, hintLabel)
 
         applyButton.addActionListener {
             project.xmakeServicesSnapshots.applyEndpoint(kind, endpointField.text)
@@ -137,14 +152,21 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
         }
     }
 
+    /** A caption in the label's gray, the same rule the details pages use for theirs. */
+    private fun caption(text: String): JComponent = JBLabel(text).apply {
+        foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+        preferredSize = Dimension(JBUI.scale(84), preferredSize.height)
+    }
+
     private fun addRow(row: Int, vararg components: JComponent) {
         val constraints = GridBagConstraints().apply {
             gridy = row
             gridx = 0
             weightx = 1.0
             anchor = GridBagConstraints.WEST
+            // A summary line keeps its own height; control rows stretch across the page.
             fill = if (row == 0) GridBagConstraints.NONE else GridBagConstraints.HORIZONTAL
-            insets = JBUI.insets(2, 0)
+            insets = JBUI.insets(if (row == 0) 0 else 8, 0)
         }
         val line = JPanel(GridBagLayout()).apply { isOpaque = false }
         components.forEachIndexed { index, component ->
@@ -153,13 +175,13 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
                 GridBagConstraints().apply {
                     gridx = index
                     anchor = GridBagConstraints.WEST
-                    fill = if (component === endpointField) GridBagConstraints.HORIZONTAL else GridBagConstraints.NONE
-                    weightx = if (component === endpointField) 1.0 else 0.0
-                    insets = JBUI.insetsRight(6)
+                    fill = GridBagConstraints.NONE
+                    weightx = 0.0
+                    insets = JBUI.insetsRight(if (index == 0) 10 else 6)
                 },
             )
         }
-        add(line, constraints)
+        rows.add(line, constraints)
     }
 
     /** Renders one probe result. A focused endpoint field keeps the user's typing: the
