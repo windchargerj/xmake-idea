@@ -984,7 +984,7 @@ internal class XMakePackagesPanel(
     private inner class UpgradeAction : DumbAwareAction(
         "Upgrade",
         "Upgrade every installed package to the newest version its requirement allows (xmake require --upgrade)",
-        AllIcons.Plugins.Updated,
+        AllIcons.Vcs.Fetch,
     ) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
