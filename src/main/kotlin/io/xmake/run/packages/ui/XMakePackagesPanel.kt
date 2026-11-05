@@ -450,10 +450,28 @@ internal class XMakePackagesPanel(
         addToRight(detailsRepoSlot)
     }
 
+    /** The band the master column's two header strips occupy - the search row plus the
+     *  table header - measured from the components themselves. The details header takes
+     *  this height, so the two hairlines under the strips land on the same y. */
+    internal fun headerBandHeight(): Int =
+        if (::searchRow.isInitialized) {
+            searchRow.preferredSize.height + table.tableHeader.preferredSize.height
+        } else {
+            0
+        }
+
+    /** The master column's header strip; assigned in init, before any layout runs. */
+    private lateinit var searchRow: JPanel
+
     /** The header stack: the title row - name and its badges - over the facts row, and
-     *  a hairline under all of it. The actions live in the master column's toolbar; the
-     *  header only describes. */
-    private val detailsHeader = JPanel(GridBagLayout()).apply {
+     *  a hairline under all of it, at the master column's band height. The actions live
+     *  in the master column's toolbar; the header only describes. */
+    private val detailsHeader = object : JPanel(GridBagLayout()) {
+        override fun getPreferredSize(): Dimension {
+            val own = super.preferredSize
+            return Dimension(own.width, maxOf(own.height, headerBandHeight()))
+        }
+    }.apply {
         isOpaque = true
         background = mainBackground()
         border = JBUI.Borders.compound(
@@ -574,14 +592,14 @@ internal class XMakePackagesPanel(
         // operation holds the lane is queued by the service and searched when the lane
         // frees. The hairline under the row is the Marketplace page's line between the
         // search field and the rows.
-        val searchRow = BorderLayoutPanel().apply {
+        searchRow = BorderLayoutPanel().apply {
             isOpaque = true
             background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
             border = JBUI.Borders.compound(
                 CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
                 JBUI.Borders.empty(6, 8),
             )
-            addToCenter(searchField)
+            addToLeft(searchField)
             addToRight(toolbar().component)
         }
 
