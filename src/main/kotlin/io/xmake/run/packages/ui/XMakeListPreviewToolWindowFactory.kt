@@ -65,7 +65,7 @@ import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreeSelectionModel
 
 /**
- * The packages-list prototype preview: four tabs, one per candidate the master list may
+ * The packages-list prototype preview: five tabs, one per candidate the master list may
  * move to, each labeled, each carrying the same fake packages, the same live filter, and
  * the same sort - the choice the user makes by looking. A design-review scaffold, to be
  * removed once the option is picked.
@@ -76,6 +76,8 @@ import javax.swing.tree.TreeSelectionModel
  *     themselves are @ApiStatus.Internal and bind their own model).
  * D - a fully hand-drawn panel: rounded selection, hover, the Marketplace feel, at the
  *     price of hand-rolled behavior.
+ * E - a simulated table: the column grid the user settled on, hand-painted - aligned
+ *     columns, zebra rows, hover and rounded selection, no JTable.
  */
 internal class XMakeListPreviewToolWindowFactory : ToolWindowFactory, DumbAware {
 
@@ -85,6 +87,7 @@ internal class XMakeListPreviewToolWindowFactory : ToolWindowFactory, DumbAware 
             "B · SimpleTree 分组树" to optionB(),
             "C · Marketplace 内部样式（模拟）" to optionC(),
             "D · 自绘 Panel（悬浮+圆角选中）" to optionD(),
+            "E · 模拟表格（手绘网格）" to optionE(),
         )
         val contents = options.map { (label, component) ->
             com.intellij.ui.content.ContentFactory.getInstance()
@@ -409,6 +412,123 @@ private fun optionD(): JComponent {
 private fun listSelectionColor(): Color = JBColor.namedColor("Plugins.lightSelectionBackground", UIUtil.getListSelectionBackground(false))
 
 private fun listHoverColor(): Color = JBColor.namedColor("Plugins.hoverBackground", UIUtil.getListSelectionBackground(true))
+
+/** Option E: the column grid the user settled on, hand-painted - a header row, aligned
+ *  columns, zebra rows, hover and a rounded selection, and no JTable underneath. */
+private fun optionE(): JComponent {
+    val all = previewPackages()
+    val rows = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+    var hovered: PreviewPkg? = null
+    var selected: PreviewPkg? = null
+
+    // The columns' x offsets, from the left: name, description, version, status.
+    val nameX = 10
+    val descX = 160
+    val versionX = 520
+    val statusX = 600
+
+    fun rebuild(term: String, key: SortKey) {
+        rows.removeAll()
+        all.filtered(term).sortedBy(key).forEach { pkg ->
+            val row = object : JPanel(null) {
+                init {
+                    isOpaque = false
+                    preferredSize = Dimension(0, JBUI.scale(30))
+                    addMouseListener(object : MouseAdapter() {
+                        override fun mouseClicked(event: MouseEvent) {
+                            selected = if (selected === pkg) null else pkg
+                            rows.repaint()
+                        }
+
+                        override fun mouseExited(event: MouseEvent) {
+                            hovered = null
+                            rows.repaint()
+                        }
+                    })
+                    addMouseMotionListener(object : MouseMotionAdapter() {
+                        override fun mouseMoved(event: MouseEvent) {
+                            hovered = pkg
+                            rows.repaint()
+                        }
+                    })
+                }
+
+                override fun paintComponent(graphics: Graphics) {
+                    val g = graphics as Graphics2D
+                    g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+                    val width = width
+                    when {
+                        selected === pkg -> {
+                            g.color = listSelectionColor()
+                            g.fillRect(0, 0, width, height)
+                        }
+                        hovered === pkg -> {
+                            g.color = listHoverColor()
+                            g.fillRect(0, 0, width, height)
+                        }
+                        rows.getComponentZOrder(this) % 2 == 1 -> {
+                            g.color = JBColor.namedColor("Table.stripeColor", JBColor(0xF7F8FA, 0x40454B))
+                            g.fillRect(0, 0, width, height)
+                        }
+                    }
+                    val labelFont = JBFont.label()
+                    val metrics = g.fontMetrics
+                    val y = (height + metrics.ascent) / 2 - 2
+                    g.font = labelFont
+                    g.color = if (selected === pkg) listSelectionForeground() else UIUtil.getListForeground()
+                    g.drawString(elide(pkg.name, g.fontMetrics, descX - nameX - 8), nameX, y)
+                    g.font = labelFont
+                    g.color = infoForeground()
+                    g.drawString(elide(pkg.description, g.fontMetrics, versionX - descX - 8), descX, y)
+                    g.drawString(elide(pkg.version, g.fontMetrics, statusX - versionX - 8), versionX, y)
+                    g.color = badgeForeground(pkg.status)
+                    g.drawString(pkg.status, statusX, y)
+                }
+            }
+            rows.add(row)
+        }
+        rows.revalidate()
+        rows.repaint()
+    }
+    val header = object : JPanel(null) {
+        init {
+            isOpaque = false
+            preferredSize = Dimension(0, JBUI.scale(26))
+            border = javax.swing.BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
+        }
+
+        override fun paintComponent(graphics: Graphics) {
+            val g = graphics as Graphics2D
+            g.font = JBFont.label().biggerOn(-1f).deriveFont(java.awt.Font.BOLD)
+            val metrics = g.fontMetrics
+            val y = (height + metrics.ascent) / 2 - 2
+            g.color = infoForeground()
+            g.drawString("Name", nameX, y)
+            g.drawString("Description", descX, y)
+            g.drawString("Version", versionX, y)
+            g.drawString("Status", statusX, y)
+        }
+    }
+    val headerBar = filterBar { term, key -> rebuild(term, key) }
+    rebuild("", SortKey.NAME)
+    val body = JPanel(BorderLayout()).apply {
+        isOpaque = true
+        background = mainBackground()
+        add(header, BorderLayout.NORTH)
+        add(rows, BorderLayout.CENTER)
+    }
+    return panel(body.ofScrollBar(), headerBar, caption("手绘模拟表格 · 列对齐+斑马+悬浮+圆角无 · 无 JTable · 行为需自行接线"))
+}
+
+private fun listSelectionForeground(): Color = UIUtil.getListSelectionForeground(true)
+
+/** Cuts [text] to [maxWidth] with an ellipsis. */
+private fun elide(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
+    if (metrics.stringWidth(text) <= maxWidth) return text
+    var end = text.length
+    while (end > 0 && metrics.stringWidth(text.substring(0, end) + "…") > maxWidth) end--
+    return text.substring(0, end) + "…"
+}
 
 private fun JComponent.ofScrollBar(): JComponent = JBScrollPane(
     this,
