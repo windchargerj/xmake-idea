@@ -65,33 +65,31 @@ class XMakeServiceEndpointsService : PersistentStateComponent<XMakeServiceEndpoi
     }
 
     private val lock = Any()
-    private var configured: Map<XMakeServiceKind, String> = emptyMap()
+    private var configured: Map<String, String> = emptyMap()
 
-    /** What the IDE last set for [kind], or null when the user has not configured one. */
-    fun configuredEndpoint(kind: XMakeServiceKind): String? = synchronized(lock) {
-        configured[kind]
+    /** What the IDE last set under [key] - a kind's name for the legacy single-instance
+     *  entries, an instance's name since the Docker-style tree - or null when the user
+     *  has not configured one. */
+    fun configuredEndpoint(key: String): String? = synchronized(lock) {
+        configured[key]
     }
 
-    /** Records [endpoint] as the IDE-side configuration of [kind]; null clears the record. */
-    fun setConfiguredEndpoint(kind: XMakeServiceKind, endpoint: String?) {
+    /** Records [endpoint] under [key]; null clears the record. */
+    fun setConfiguredEndpoint(key: String, endpoint: String?) {
         synchronized(lock) {
             val updated = configured.toMutableMap()
-            if (endpoint == null) updated.remove(kind) else updated[kind] = endpoint
+            if (endpoint == null) updated.remove(key) else updated[key] = endpoint
             configured = updated
         }
     }
 
     override fun getState(): State = synchronized(lock) {
-        State().also { state ->
-            configured.forEach { (kind, endpoint) -> state.endpoints[kind.name] = endpoint }
-        }
+        State().also { state -> configured.forEach { (key, endpoint) -> state.endpoints[key] = endpoint } }
     }
 
     override fun loadState(state: State) {
         synchronized(lock) {
-            configured = state.endpoints.mapNotNull { (name, endpoint) ->
-                XMakeServiceKind.entries.firstOrNull { it.name == name }?.let { it to endpoint }
-            }.toMap()
+            configured = state.endpoints.toMap()
         }
     }
 }

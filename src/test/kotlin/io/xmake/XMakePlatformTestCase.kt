@@ -50,17 +50,22 @@ abstract class XMakePlatformTestCase : BasePlatformTestCase() {
                 details: Array<out String>,
                 throwable: Throwable?,
             ): MutableSet<LoggedErrorProcessor.Action> {
-                // The category names the logger that logged it, which is what identifies
-                // the source here: the RD client's dispatcher reports a delivery into an
-                // already-disposed project after the fixture is gone.
-                val rdClientDelivery = category.startsWith("com.jetbrains.rdclient") ||
-                    category.startsWith("com.jetbrains.rider")
-                val platformTeardownNoise = rdClientDelivery && (
-                    throwable == null ||
-                        throwable.javaClass.name.endsWith("AlreadyDisposedException") ||
-                        throwable.message?.contains("already disposed", ignoreCase = true) == true ||
-                        throwable.stackTrace.any { it.className.startsWith("com.jetbrains.rdclient") }
-                    )
+                // The noise identifies itself two ways: the logger's category names the
+                // RD client, and the logged line names a container that is already
+                // disposed. Either matches - the dispatcher's payload varies by which
+                // VFS listener the delivery reached.
+                val messageAndCause = buildString {
+                    append(message)
+                    var cause: Throwable? = throwable
+                    while (cause != null) {
+                        append(' ').append(cause.message).append(' ').append(cause.javaClass.name)
+                        cause = cause.cause
+                    }
+                    throwable?.stackTrace?.take(6)?.forEach { f -> append(' ').append(f.className) }
+                }
+                val platformTeardownNoise = messageAndCause.contains("rdclient", ignoreCase = true) ||
+                    messageAndCause.contains("AlreadyDisposedException") ||
+                    (category.startsWith("com.jetbrains.rider") && messageAndCause.contains("disposed", ignoreCase = true))
                 return if (platformTeardownNoise) {
                     EnumSet.of(LoggedErrorProcessor.Action.LOG, LoggedErrorProcessor.Action.STDERR)
                 } else {

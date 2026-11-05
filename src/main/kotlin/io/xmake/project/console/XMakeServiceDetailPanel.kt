@@ -86,7 +86,12 @@ internal fun serviceStatusIcon(state: XMakeServiceState, probed: Boolean): Icon 
  * command on the executor lane and re-probes - the panel itself never touches the
  * toolkit, a socket, or a file.
  */
-class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServiceKind) : JPanel(BorderLayout()) {
+class XMakeServiceDetailPanel(
+    private val project: Project,
+    val kind: XMakeServiceKind,
+    /** The instance this panel edits; its endpoint record is keyed by this name. */
+    val instanceName: String = kind.name,
+) : JPanel(BorderLayout()) {
 
     /** The rows live in their own grid, anchored to the top of the pane: a GridBag in a
      *  BorderLayout's NORTH keeps its own height instead of floating in the middle of an
@@ -134,10 +139,10 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
         addRow(3, hintLabel)
 
         applyButton.addActionListener {
-            project.xmakeServicesSnapshots.applyEndpoint(kind, endpointField.text)
+            project.xmakeServicesSnapshots.applyEndpoint(instanceName, kind, endpointField.text)
         }
         clearButton.addActionListener {
-            project.xmakeServicesSnapshots.clearEndpoint(kind)
+            project.xmakeServicesSnapshots.clearEndpoint(instanceName)
         }
         connectButton.addActionListener {
             project.xmakeServicesSnapshots.connectService(kind)
@@ -148,7 +153,7 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
         // Enter in the field applies - the field is the primary input, the Apply button
         // stays for mouse users.
         endpointField.addActionListener {
-            project.xmakeServicesSnapshots.applyEndpoint(kind, endpointField.text)
+            project.xmakeServicesSnapshots.applyEndpoint(instanceName, kind, endpointField.text)
         }
     }
 
@@ -193,8 +198,9 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
         statusLabel.icon = serviceStatusIcon(state, probed)
         statusLabel.toolTipText = serviceStatusText(state, probed)
         if (!endpointField.isFocusOwner) {
-            endpointField.text = state.endpoint
-                ?: project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(kind)
+            endpointField.text = project.getService(XMakeServiceEndpointsService::class.java)
+                .configuredEndpoint(instanceName)
+                ?: state.endpoint
                 ?: ""
         }
         hintLabel.text = when {
@@ -216,7 +222,7 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
     private fun refreshEnabled() {
         val state = lastState
         val configured = state?.endpoint != null ||
-            project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(kind) != null
+            project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(instanceName) != null
         endpointField.isEnabled = !busy
         applyButton.isEnabled = !busy
         clearButton.isEnabled = !busy && configured
