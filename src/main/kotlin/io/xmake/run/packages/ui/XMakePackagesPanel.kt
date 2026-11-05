@@ -150,8 +150,19 @@ internal class XMakePackagesPanel(
         statusColumn,
     )
 
+    /** The header-click sorter: one click sorts the column, another flips the direction -
+     *  the arrows render in the platform header. The status column sorts by its state's
+     *  weight, so the groups land installed, declared, available - the order the eye
+     *  triages. */
+    private val tableSorter = javax.swing.table.TableRowSorter(tableModel).apply {
+        setComparator(COLUMN_STATUS, java.util.Comparator<String> { left, right ->
+            statusWeight(left) - statusWeight(right)
+        })
+    }
+
     private val table = TableView(tableModel).apply {
         fillsViewportHeight = true
+        rowSorter = tableSorter
         selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
         // No grid, no cell spacing, taller rows: the stripes carry the rhythm instead of
         // lines, and the text sits in padded, vertically centered cells.
@@ -647,8 +658,13 @@ internal class XMakePackagesPanel(
         statusLabel.foreground = if (error == null) UIUtil.getLabelForeground() else JBColor.RED
     }
 
-    /** The package name the selection carries. */
-    private fun selectedPackageName(): String? = table.selectedObject?.name
+    /** The package name the selection carries - through the sorter's view-to-model
+     *  conversion, since the rows may be re-sorted. */
+    private fun selectedPackageName(): String? {
+        val viewRow = table.selectedRow
+        if (viewRow < 0) return null
+        return tableModel.getItem(table.convertRowIndexToModel(viewRow))?.name
+    }
 
     private fun infoFor(name: String): XMakePackageInfo? = service.snapshot?.infos?.get(name)
 
@@ -659,6 +675,15 @@ internal class XMakePackagesPanel(
         infoFor(row.name)?.installed == true -> INSTALLED
         row.isHit -> AVAILABLE
         else -> DECLARED
+    }
+
+    /** The triage weight behind the status sort: installed first, then the project's own
+     *  declarations, then what the repositories merely offer. */
+    private fun statusWeight(state: String?): Int = when (state) {
+        INSTALLED -> 0
+        DECLARED -> 1
+        AVAILABLE -> 2
+        else -> 3
     }
 
     /** The bare package name, the way the closure's require fields read. */
@@ -804,29 +829,10 @@ internal class XMakePackagesPanel(
         val row = tableModel.items.firstOrNull { it.name == name }
         val page = StringBuilder()
 
-        // The description leads: it is what the user came to read.
+        // The description leads: it is what the user came to read. The versions follow
+        // before the dependencies - choosing which version to install or remove is the
+        // action the page serves, and it must not sit below fourteen entries of closure.
         info.description?.let { page.append("<p>").append(esc(it)).append("</p>") }
-
-        // The closure the query answered, as its own section; where it said nothing,
-        // the project's depgraph still names what the package needs.
-        val closure = service.snapshot?.closures?.get(name).orEmpty()
-        val asked = bareName(name)
-        val dependencies = closure.filter { bareName(it.require) != asked }
-        val declaredDependencies = service.snapshot?.depgraph?.packages
-            ?.firstOrNull { it.name == name }?.deps
-        if (dependencies.isNotEmpty()) {
-            page.append("<p class='sec'>DEPENDENCIES - ${dependencies.size}</p>")
-            dependencies.forEach { dependency ->
-                page.append("<div class='dep'><b>").append(esc(dependency.require.ifEmpty { "?" })).append("</b>")
-                dependency.version?.let { page.append(" <span class='v'>").append(esc(it)).append("</span>") }
-                dependency.description?.let { page.append("<br><span class='g'>").append(esc(it)).append("</span>") }
-                page.append("</div>")
-            }
-        } else if (!declaredDependencies.isNullOrEmpty()) {
-            page.append("<p class='sec'>DEPENDENCIES</p><div class='dep'><span class='g'>")
-                .append(esc(declaredDependencies.joinToString(", ")))
-                .append("</span></div>")
-        }
 
         // The versions the view knows of: the ones the search answered, each installable
         // at its pin; the installed reference, uninstallable. The installed marker only
@@ -860,6 +866,27 @@ internal class XMakePackagesPanel(
                 reference.date?.let { page.append("   ").append(esc(it)) }
                 page.append("</span></div>")
             }
+        }
+
+        // The closure the query answered, as its own section; where it said nothing,
+        // the project's depgraph still names what the package needs.
+        val closure = service.snapshot?.closures?.get(name).orEmpty()
+        val asked = bareName(name)
+        val dependencies = closure.filter { bareName(it.require) != asked }
+        val declaredDependencies = service.snapshot?.depgraph?.packages
+            ?.firstOrNull { it.name == name }?.deps
+        if (dependencies.isNotEmpty()) {
+            page.append("<p class='sec'>DEPENDENCIES - ${dependencies.size}</p>")
+            dependencies.forEach { dependency ->
+                page.append("<div class='dep'><b>").append(esc(dependency.require.ifEmpty { "?" })).append("</b>")
+                dependency.version?.let { page.append(" <span class='v'>").append(esc(it)).append("</span>") }
+                dependency.description?.let { page.append("<br><span class='g'>").append(esc(it)).append("</span>") }
+                page.append("</div>")
+            }
+        } else if (!declaredDependencies.isNullOrEmpty()) {
+            page.append("<p class='sec'>DEPENDENCIES</p><div class='dep'><span class='g'>")
+                .append(esc(declaredDependencies.joinToString(", ")))
+                .append("</span></div>")
         }
 
         // The facts the header cannot carry.
@@ -984,7 +1011,7 @@ internal class XMakePackagesPanel(
     private inner class UpgradeAction : DumbAwareAction(
         "Upgrade",
         "Upgrade every installed package to the newest version its requirement allows (xmake require --upgrade)",
-        AllIcons.Vcs.Fetch,
+        AllIcons.Actions.Download,
     ) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
