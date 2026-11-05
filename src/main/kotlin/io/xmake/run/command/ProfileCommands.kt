@@ -23,6 +23,7 @@ import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitInstallationKey
 import io.xmake.project.toolkit.XMakeVersionRefusalException
 import io.xmake.project.toolkit.installationKey
+import io.xmake.run.command.XMakeCommandException
 import io.xmake.utils.runCancellable
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
@@ -61,7 +62,9 @@ internal class ProfileCommands internal constructor(
     }
 
     /** One listing parsed with [parse]; a failure warns and answers null, while a version
-     *  refusal still throws so the caller can show it. */
+     *  refusal still throws so the caller can show it. A listing the xmake itself does not
+     *  carry - 3.x removed the apis listing the 2.x probes read - is a version capability,
+     *  not an error: it reads as a debug line and lets the caller degrade quietly. */
     suspend fun <T> listing(name: String, parse: (String) -> T): T? =
         try {
             parse(listing(name))
@@ -70,7 +73,13 @@ internal class ProfileCommands internal constructor(
         } catch (error: XMakeVersionRefusalException) {
             throw error
         } catch (error: Exception) {
-            Log.warn("Failed to load the XMake '$name' listing on ${factory.toolkit.name}", error)
+            val unknownList = (error as? XMakeCommandException)?.output
+                ?.contains("unknown list name", ignoreCase = true) == true
+            if (unknownList) {
+                Log.debug("XMake ${factory.toolkit.version} has no '$name' listing; the probe degrades")
+            } else {
+                Log.warn("Failed to load the XMake '$name' listing on ${factory.toolkit.name}", error)
+            }
             null
         }
 
