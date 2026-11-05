@@ -617,11 +617,13 @@ private class SimulatedTable(private val packages: List<PreviewPkg>) : JPanel(nu
             val title = columns[column]
             g.drawString(title, columnLeft + JBUI.scale(2), (headerHeight + metrics.ascent) / 2 - 1)
             if (sortColumn == column) {
-                g.font = JBFont.label().biggerOn(-1f)
-                g.color = UIUtil.getListForeground()
-                g.drawString(if (sortAscending) "▴" else "▾", columnLeft + metrics.stringWidth(title) + JBUI.scale(5), (headerHeight + metrics.ascent) / 2 - 1)
-                g.font = JBFont.label().biggerOn(-1f).deriveFont(java.awt.Font.BOLD)
-                g.color = infoForeground()
+                val icon = if (sortAscending) AllIcons.General.ChevronUp else AllIcons.General.ChevronDown
+                icon.paintIcon(
+                    this,
+                    g,
+                    columnLeft + metrics.stringWidth(title) + JBUI.scale(5),
+                    (headerHeight - icon.iconHeight) / 2,
+                )
             }
             columnLeft += widths[column]
         }

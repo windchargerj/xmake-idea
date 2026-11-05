@@ -288,13 +288,19 @@ internal class XMakePackagesPanel(
     /** The toolbar's search field; kept so an Esc exit can empty it with the view. The
      *  history popup and the tuned paddings are the Marketplace search field's, and it
      *  sits over the list - the master column's own header - at a width a search field
-     *  is, not the column's. */
+     *  is, not the column's. Typing filters the rows in view as it lands; Enter hands
+     *  the term to the repositories. */
     private val searchField = SearchTextField(true).apply {
         textEditor.emptyText.text = "Search packages"
         textEditor.putClientProperty("JTextField.Search.Gap", JBUI.scale(6))
         textEditor.putClientProperty("JTextField.Search.GapEmptyText", JBUI.scale(-1))
         textEditor.background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
         preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
+        textEditor.document.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
+            override fun textChanged(event: javax.swing.event.DocumentEvent) {
+                applyRowFilter(text)
+            }
+        })
         textEditor.addActionListener {
             val term = text.trim()
             if (term.isEmpty()) {
@@ -309,6 +315,27 @@ internal class XMakePackagesPanel(
             }
         }
         exitSearchOnEscape(textEditor)
+    }
+
+    /** Filters the rows in view by [term]: the name, the description, or the status word
+     *  containing it - "available" gathers everything the repositories offer. Empty shows
+     *  everything again. The sorter applies the filter before its order. */
+    private fun applyRowFilter(term: String) {
+        val query = term.trim().lowercase()
+        tableSorter.rowFilter = if (query.isEmpty()) {
+            null
+        } else {
+            object : javax.swing.RowFilter<ListTableModel<PackageRow>, Int>() {
+                override fun include(
+                    entry: Entry<out ListTableModel<PackageRow>, out Int>,
+                ): Boolean {
+                    val pkg = tableModel.getItem(entry.identifier)
+                    return pkg.name.lowercase().contains(query) ||
+                        pkg.description?.lowercase()?.contains(query) == true ||
+                        statusOf(pkg)?.lowercase()?.contains(query) == true
+                }
+            }
+        }
     }
 
     /** The details pane's title: the package name in the Marketplace header face. */
