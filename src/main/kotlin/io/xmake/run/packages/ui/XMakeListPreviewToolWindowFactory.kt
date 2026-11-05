@@ -355,11 +355,7 @@ private fun optionD(): JComponent {
                                     add(JBLabel(pkg.name).apply { font = JBFont.label().deriveFont(java.awt.Font.BOLD) })
                                     add(Box.createHorizontalStrut(JBUI.scale(8)))
                                     add(
-                                        Chip(
-                                            pkg.status,
-                                            badgeForeground(pkg.status),
-                                            badgeBackground(pkg.status),
-                                        ),
+                                        Chip(pkg.status, badgeForeground(pkg.status)),
                                     )
                                 },
                             )
@@ -416,110 +412,244 @@ private fun listHoverColor(): Color = JBColor.namedColor("Plugins.hoverBackgroun
 /** Option E: the column grid the user settled on, hand-painted - a header row, aligned
  *  columns, zebra rows, hover and a rounded selection, and no JTable underneath. */
 private fun optionE(): JComponent {
-    val all = previewPackages()
-    val rows = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
-    var hovered: PreviewPkg? = null
-    var selected: PreviewPkg? = null
-
-    // The columns' x offsets, from the left: name, description, version, status.
-    val nameX = 10
-    val descX = 160
-    val versionX = 520
-    val statusX = 600
-
-    fun rebuild(term: String, key: SortKey) {
-        rows.removeAll()
-        all.filtered(term).sortedBy(key).forEach { pkg ->
-            val row = object : JPanel(null) {
-                init {
-                    isOpaque = false
-                    preferredSize = Dimension(0, JBUI.scale(30))
-                    addMouseListener(object : MouseAdapter() {
-                        override fun mouseClicked(event: MouseEvent) {
-                            selected = if (selected === pkg) null else pkg
-                            rows.repaint()
-                        }
-
-                        override fun mouseExited(event: MouseEvent) {
-                            hovered = null
-                            rows.repaint()
-                        }
-                    })
-                    addMouseMotionListener(object : MouseMotionAdapter() {
-                        override fun mouseMoved(event: MouseEvent) {
-                            hovered = pkg
-                            rows.repaint()
-                        }
-                    })
-                }
-
-                override fun paintComponent(graphics: Graphics) {
-                    val g = graphics as Graphics2D
-                    g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                    val width = width
-                    when {
-                        selected === pkg -> {
-                            g.color = listSelectionColor()
-                            g.fillRect(0, 0, width, height)
-                        }
-                        hovered === pkg -> {
-                            g.color = listHoverColor()
-                            g.fillRect(0, 0, width, height)
-                        }
-                        rows.getComponentZOrder(this) % 2 == 1 -> {
-                            g.color = JBColor.namedColor("Table.stripeColor", JBColor(0xF7F8FA, 0x40454B))
-                            g.fillRect(0, 0, width, height)
-                        }
-                    }
-                    val labelFont = JBFont.label()
-                    val metrics = g.fontMetrics
-                    val y = (height + metrics.ascent) / 2 - 2
-                    g.font = labelFont
-                    g.color = if (selected === pkg) listSelectionForeground() else UIUtil.getListForeground()
-                    g.drawString(elide(pkg.name, g.fontMetrics, descX - nameX - 8), nameX, y)
-                    g.font = labelFont
-                    g.color = infoForeground()
-                    g.drawString(elide(pkg.description, g.fontMetrics, versionX - descX - 8), descX, y)
-                    g.drawString(elide(pkg.version, g.fontMetrics, statusX - versionX - 8), versionX, y)
-                    g.color = badgeForeground(pkg.status)
-                    g.drawString(pkg.status, statusX, y)
-                }
-            }
-            rows.add(row)
-        }
-        rows.revalidate()
-        rows.repaint()
-    }
-    val header = object : JPanel(null) {
-        init {
-            isOpaque = false
-            preferredSize = Dimension(0, JBUI.scale(26))
-            border = javax.swing.BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
-        }
-
-        override fun paintComponent(graphics: Graphics) {
-            val g = graphics as Graphics2D
-            g.font = JBFont.label().biggerOn(-1f).deriveFont(java.awt.Font.BOLD)
-            val metrics = g.fontMetrics
-            val y = (height + metrics.ascent) / 2 - 2
-            g.color = infoForeground()
-            g.drawString("Name", nameX, y)
-            g.drawString("Description", descX, y)
-            g.drawString("Version", versionX, y)
-            g.drawString("Status", statusX, y)
-        }
-    }
-    val headerBar = filterBar { term, key -> rebuild(term, key) }
-    rebuild("", SortKey.NAME)
-    val body = JPanel(BorderLayout()).apply {
-        isOpaque = true
-        background = mainBackground()
-        add(header, BorderLayout.NORTH)
-        add(rows, BorderLayout.CENTER)
-    }
-    return panel(body.ofScrollBar(), headerBar, caption("手绘模拟表格 · 列对齐+斑马+悬浮+圆角无 · 无 JTable · 行为需自行接线"))
+    val table = SimulatedTable(previewPackages())
+    val bar = filterBar { term, key -> table.show(term, key) }
+    return panel(table.ofScrollBar(), bar, caption("手绘模拟表格 · 表头点击排序（▲▼）/拖拽边缘调宽/悬浮/选中 · 无 JTable · 行为全部手搓"))
 }
 
+/**
+ * Option E as one self-contained component: a hand-painted table with a working header -
+ * click a title to sort ascending, descending, then none, with the arrow drawn in the
+ * header; drag a title's edge to resize its column; hover lights the row and the header
+ * cell; click a row to select it. No JTable underneath - every behavior is the panel's.
+ */
+private class SimulatedTable(private val packages: List<PreviewPkg>) : JPanel(null) {
+
+    private val columns = arrayOf("Name", "Description", "Version", "Status")
+
+    /** The column widths the header edges resize; the description takes what remains. */
+    private val widths = intArrayOf(JBUI.scale(140), 0, JBUI.scale(90), JBUI.scale(90))
+
+    private var rows: List<PreviewPkg> = packages
+    private var sortColumn = -1
+    private var sortAscending = true
+    private var hoverRow = -1
+    private var hoverColumn = -1
+    private var selectedRow = -1
+    private var resizeColumn = -1
+    private var resizeStartX = 0
+    private var resizeStartWidth = 0
+
+    private val headerHeight = JBUI.scale(30)
+    private val rowHeight = JBUI.scale(30)
+    private val edgeSlack = JBUI.scale(4)
+
+    init {
+        isOpaque = true
+        background = mainBackground()
+        relayout()
+        addComponentListener(object : java.awt.event.ComponentAdapter() {
+            override fun componentResized(event: java.awt.event.ComponentEvent) {
+                relayout()
+            }
+        })
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseExited(event: MouseEvent) {
+                hoverRow = -1
+                hoverColumn = -1
+                repaint()
+            }
+
+            override fun mousePressed(event: MouseEvent) {
+                if (event.y < headerHeight) {
+                    val edge = edgeAt(event.x)
+                    if (edge >= 0) {
+                        resizeColumn = edge
+                        resizeStartX = event.x
+                        resizeStartWidth = if (edge == 1) descWidth() else widths[edge]
+                    }
+                }
+            }
+
+            override fun mouseClicked(event: MouseEvent) {
+                if (event.y < headerHeight) {
+                    val column = columnAt(event.x)
+                    if (column >= 0) {
+                        if (sortColumn == column && sortAscending) sortAscending = false
+                        else {
+                            sortColumn = column
+                            sortAscending = true
+                        }
+                        applySort()
+                    }
+                    return
+                }
+                val row = rowAt(event.y)
+                if (row >= 0) selectedRow = row
+                repaint()
+            }
+
+            override fun mouseReleased(event: MouseEvent) {
+                resizeColumn = -1
+            }
+        })
+        addMouseMotionListener(object : MouseMotionAdapter() {
+            override fun mouseDragged(event: MouseEvent) {
+                if (resizeColumn >= 0) {
+                    val delta = event.x - resizeStartX
+                    when (resizeColumn) {
+                        0 -> widths[0] = (resizeStartWidth + delta).coerceAtLeast(JBUI.scale(60))
+                        1 -> widths[1] = (resizeStartWidth + delta).coerceAtLeast(JBUI.scale(80))
+                        2 -> widths[2] = (resizeStartWidth + delta).coerceAtLeast(JBUI.scale(50))
+                    }
+                    relayout()
+                    repaint()
+                }
+            }
+
+            override fun mouseMoved(event: MouseEvent) {
+                if (event.y < headerHeight) {
+                    hoverColumn = columnAt(event.x)
+                    hoverRow = -1
+                    cursor = if (edgeAt(event.x) >= 0) {
+                        java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.E_RESIZE_CURSOR)
+                    } else {
+                        java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                    }
+                } else {
+                    hoverColumn = -1
+                    hoverRow = rowAt(event.y)
+                    cursor = java.awt.Cursor.getDefaultCursor()
+                }
+                repaint()
+            }
+        })
+    }
+
+    /** The description column takes what the current width leaves the others. */
+    private fun descWidth(): Int =
+        (width - widths[0] - widths[2] - widths[3] - JBUI.scale(24)).coerceAtLeast(JBUI.scale(80))
+
+    /** Filters to [term] and applies the header's sort state; the entry point the filter
+     *  bar reruns. */
+    fun show(term: String, key: SortKey) {
+        val query = term.trim().lowercase()
+        val hit = if (query.isEmpty()) packages else packages.filter {
+            it.name.lowercase().contains(query) || it.description.lowercase().contains(query)
+        }
+        rows = when (sortColumn) {
+            0 -> hit.sortedBy { it.name.lowercase() }
+            1 -> hit.sortedBy { it.description.lowercase() }
+            2 -> hit.sortedBy { it.version }
+            3 -> hit.sortedWith(compareByDescending<PreviewPkg> { it.installed }.thenBy { it.name.lowercase() })
+            else -> hit.sortedBy(key)
+        }
+        if (!sortAscending) rows = rows.reversed()
+        selectedRow = -1
+        relayout()
+        repaint()
+    }
+
+    private fun applySort() = show("", SortKey.NAME)
+
+    private fun relayout() {
+        widths[1] = descWidth()
+        preferredSize = Dimension(width, headerHeight + rows.size * rowHeight + JBUI.scale(4))
+        revalidate()
+    }
+
+    private fun columnAt(x: Int): Int {
+        var left = JBUI.scale(8)
+        columns.indices.forEach { column ->
+            val right = left + widths[column]
+            if (x >= left && x < right) return column
+            left = right
+        }
+        return -1
+    }
+
+    /** The column whose header edge [x] sits close enough to drag. */
+    private fun edgeAt(x: Int): Int {
+        var left = JBUI.scale(8)
+        columns.indices.forEach { column ->
+            val right = left + widths[column]
+            if (kotlin.math.abs(x - right) <= edgeSlack && column < 2) return column
+            left = right
+        }
+        return -1
+    }
+
+    private fun rowAt(y: Int): Int {
+        val row = (y - headerHeight) / rowHeight
+        return if (row in rows.indices) row else -1
+    }
+
+    override fun getPreferredSize(): Dimension = Dimension(width, headerHeight + rows.size * rowHeight + JBUI.scale(4))
+
+    override fun paintComponent(graphics: Graphics) {
+        super.paintComponent(graphics)
+        val g = graphics as Graphics2D
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+        val font = JBFont.label()
+        g.font = font
+        val metrics = g.fontMetrics
+        val left = JBUI.scale(8)
+        val descWidth = descWidth()
+
+        // The header: the titles with their sort arrows, the hovered column lit, the
+        // bottom hairline separating it from the rows.
+        g.color = JBColor.namedColor("Table.stripeColor", JBColor(0xF7F8FA, 0x40454B))
+        g.fillRect(0, 0, width, headerHeight)
+        if (hoverColumn >= 0) {
+            g.color = listHoverColor()
+            var hoverLeft = left
+            columns.indices.take(hoverColumn).forEach { hoverLeft += widths[it] }
+            g.fillRect(hoverLeft, 0, widths[hoverColumn], headerHeight)
+        }
+        g.font = JBFont.label().biggerOn(-1f).deriveFont(java.awt.Font.BOLD)
+        g.color = infoForeground()
+        var columnLeft = left
+        columns.indices.forEach { column ->
+            val title = columns[column]
+            g.drawString(title, columnLeft + JBUI.scale(2), (headerHeight + metrics.ascent) / 2 - 1)
+            if (sortColumn == column) {
+                val icon = if (sortAscending) AllIcons.General.ChevronUp else AllIcons.General.ChevronDown
+                icon.paintIcon(
+                    this,
+                    g,
+                    columnLeft + metrics.stringWidth(title) + JBUI.scale(5),
+                    (headerHeight - icon.iconHeight) / 2,
+                )
+            }
+            columnLeft += widths[column]
+        }
+        g.color = JBColor.border()
+        g.fillRect(0, headerHeight - 1, width, 1)
+
+        // The rows: zebra, hover, selection; each cell text at its column's x, elided to
+        // the column's width; the status in its state color.
+        g.font = font
+        rows.forEachIndexed { index, pkg ->
+            val top = headerHeight + index * rowHeight
+            val isSelected = index == selectedRow
+            when {
+                isSelected -> g.color = listSelectionColor()
+                index == hoverRow -> g.color = listHoverColor()
+                index % 2 == 1 -> g.color = JBColor.namedColor("Table.stripeColor", JBColor(0xF7F8FA, 0x40454B))
+                else -> g.color = mainBackground()
+            }
+            g.fillRect(0, top, width, rowHeight)
+            val y = top + (rowHeight + metrics.ascent) / 2 - 1
+            g.color = if (isSelected) listSelectionForeground() else UIUtil.getListForeground()
+            g.drawString(elide(pkg.name, metrics, widths[0] - JBUI.scale(8)), left + JBUI.scale(2), y)
+            g.color = infoForeground()
+            g.drawString(elide(pkg.description, metrics, descWidth - JBUI.scale(8)), left + widths[0] + JBUI.scale(2), y)
+            g.drawString(elide(pkg.version, metrics, widths[2] - JBUI.scale(8)), left + widths[0] + descWidth + JBUI.scale(2), y)
+            g.color = badgeForeground(pkg.status)
+            g.drawString(pkg.status, left + widths[0] + descWidth + widths[2] + JBUI.scale(2), y)
+        }
+    }
+}
 private fun listSelectionForeground(): Color = UIUtil.getListSelectionForeground(true)
 
 /** Cuts [text] to [maxWidth] with an ellipsis. */

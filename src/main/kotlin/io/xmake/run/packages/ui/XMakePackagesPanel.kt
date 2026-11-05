@@ -150,8 +150,19 @@ internal class XMakePackagesPanel(
         statusColumn,
     )
 
+    /** The header-click sorter: one click sorts the column, another flips the direction -
+     *  the arrows render in the platform header. The status column sorts by its state's
+     *  weight, so the groups land installed, declared, available - the order the eye
+     *  triages. */
+    private val tableSorter = javax.swing.table.TableRowSorter(tableModel).apply {
+        setComparator(COLUMN_STATUS, java.util.Comparator<String> { left, right ->
+            statusWeight(left) - statusWeight(right)
+        })
+    }
+
     private val table = TableView(tableModel).apply {
         fillsViewportHeight = true
+        rowSorter = tableSorter
         selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
         // No grid, no cell spacing, taller rows: the stripes carry the rhythm instead of
         // lines, and the text sits in padded, vertically centered cells.
@@ -160,6 +171,9 @@ internal class XMakePackagesPanel(
         intercellSpacing = Dimension(0, 0)
         tableHeader.font = JBFont.label().biggerOn(-1f).deriveFont(Font.BOLD)
         tableHeader.reorderingAllowed = false
+        // The header sorts on click; the hand says so. A column's edge still drags its
+        // width - the drag works even while the hand shows.
+        tableHeader.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
         columnModel.getColumn(COLUMN_NAME).minWidth = JBUI.scale(100)
         columnModel.getColumn(COLUMN_NAME).preferredWidth = JBUI.scale(120)
         columnModel.getColumn(COLUMN_DESCRIPTION).minWidth = JBUI.scale(180)
@@ -274,18 +288,45 @@ internal class XMakePackagesPanel(
     /** The toolbar's search field; kept so an Esc exit can empty it with the view. The
      *  history popup and the tuned paddings are the Marketplace search field's, and it
      *  sits over the list - the master column's own header - at a width a search field
-     *  is, not the column's. */
+     *  is, not the column's. Typing filters the rows in view as it lands; Enter hands
+     *  the term to the repositories. */
     private val searchField = SearchTextField(true).apply {
         textEditor.emptyText.text = "Search packages"
         textEditor.putClientProperty("JTextField.Search.Gap", JBUI.scale(6))
         textEditor.putClientProperty("JTextField.Search.GapEmptyText", JBUI.scale(-1))
         textEditor.background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
         preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
+        textEditor.document.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
+            override fun textChanged(event: javax.swing.event.DocumentEvent) {
+                applyRowFilter(text)
+                // The rows already narrow as the letters land; the repositories are asked
+                // once the typing pauses - the Marketplace page's own bargain between
+                // feeling instant and not firing a remote query per keystroke.
+                searchDebounce.restart()
+            }
+        })
         textEditor.addActionListener {
-            val term = text.trim()
-            if (term.isEmpty()) {
-                service.exitSearch()
-            } else {
+            // Enter asks now rather than on the pause: the user has said the term is done.
+            searchDebounce.stop()
+            searchNow(text)
+        }
+        exitSearchOnEscape(textEditor)
+    }
+
+    /** Fires the repository query once typing pauses; one timer for the field's life, so
+     *  every keystroke replaces the pending ask instead of stacking one. */
+    private val searchDebounce: javax.swing.Timer by lazy {
+        javax.swing.Timer(SEARCH_DEBOUNCE_MS) { searchNow(searchField.text) }
+    }
+
+    /** Hands [term] to the repositories - the debounce and Enter both land here. An
+     *  empty term leaves search mode; a one-letter term waits for a fuller ask. */
+    private fun searchNow(rawTerm: String) {
+        val term = rawTerm.trim()
+        when {
+            term.isEmpty() -> service.exitSearch()
+            term.length < MIN_SEARCH_LENGTH -> Unit
+            else -> {
                 service.search(term)
                 // Behind a mutation the search queues; the line says so instead of the
                 // field going silent. A claim the search started names itself in the
@@ -294,27 +335,138 @@ internal class XMakePackagesPanel(
                     ?: updateSummary(service.snapshot)
             }
         }
-        exitSearchOnEscape(textEditor)
+    }
+
+    /** Filters the rows in view by [term]: the name, the description, or the status word
+     *  containing it - "available" gathers everything the repositories offer. Empty shows
+     *  everything again. The sorter applies the filter before its order. */
+    private fun applyRowFilter(term: String) {
+        val query = term.trim().lowercase()
+        tableSorter.rowFilter = if (query.isEmpty()) {
+            null
+        } else {
+            object : javax.swing.RowFilter<ListTableModel<PackageRow>, Int>() {
+                override fun include(
+                    entry: Entry<out ListTableModel<PackageRow>, out Int>,
+                ): Boolean {
+                    val pkg = tableModel.getItem(entry.identifier)
+                    return pkg.name.lowercase().contains(query) ||
+                        pkg.description?.lowercase()?.contains(query) == true ||
+                        statusOf(pkg)?.lowercase()?.contains(query) == true
+                }
+            }
+        }
+        // The empty state speaks for what is on screen: a filter that hides every row
+        // says so with the term, instead of repeating the list-level narration.
+        val empty = table.emptyText
+        if (query.isNotEmpty() && table.rowCount == 0) {
+            empty.clear()
+            empty.text = "No package matches '$query'"
+        } else {
+            applyEmptyText(service.snapshot)
+        }
     }
 
     /** The details pane's title: the package name in the Marketplace header face. */
     private val detailsName = JBLabel().apply {
         font = JBFont.create(UIUtil.getLabelFont().deriveFont(Font.BOLD, 18f))
+        alignmentY = 0.5f
     }
 
-    /** The badges the title row carries: the row's state and the platforms the package
-     *  answers - the Marketplace header's tag row, attached to the name. */
+    /** The badges the title row carries: the state the row reads, then the platforms the
+     *  package answers - the Marketplace header's tag row, attached to the name. */
     private val detailsBadges = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
         isOpaque = false
+        alignmentY = 0.5f
     }
 
-    /** The details pane's meta line: repository, resolved version, the project's ask. */
+    /** The details pane's meta line: the state, then the project's ask, repository, and
+     *  resolved version in one gray run. */
     private val detailsMeta = JBLabel().apply { foreground = infoForeground() }
 
-    /** The header stack: the title row - name and its badges - over the meta line, and
-     *  a hairline under all of it. The actions live in the master column's toolbar; the
-     *  header only describes. */
-    private val detailsHeader = JPanel(GridBagLayout()).apply {
+    /** The repository page, as a link at the header's right edge - the one place a
+     *  reader leaves the IDE to. The link data is the url, so a render replaces the
+     *  whole label rather than mutating it. */
+    private var detailsRepoLink: JComponent = JPanel()
+
+    /** The header's link row: the official xrepo page for the package - the canonical
+     *  entry in the xmake project's own index, whatever mirror the toolchain uses - and
+     *  the repository the package was resolved from, named by its host. */
+    private fun repoLinkFor(name: String, repoUrl: String?): JComponent? {
+        val links = javax.swing.Box.createHorizontalBox()
+        var any = false
+        fun addLink(label: String, url: String) {
+            if (any) links.add(javax.swing.Box.createHorizontalStrut(JBUI.scale(12)))
+            links.add(
+                com.intellij.ui.components.labels.LinkLabel<String>(
+                    label,
+                    com.intellij.icons.AllIcons.Ide.External_link_arrow,
+                ).apply {
+                    verticalAlignment = javax.swing.SwingConstants.CENTER
+                    setListener(
+                        { _, target: String? ->
+                            target?.takeIf(String::isNotEmpty)?.let(com.intellij.ide.BrowserUtil::browse)
+                        },
+                        url,
+                    )
+                },
+            )
+            any = true
+        }
+        // The definition file is the authoritative page for a repository package:
+        // xrepo.xmake.io carries platform indexes only, so a per-package URL there
+        // lands on a missing page. External-manager names have no file in the repo.
+        if ("::" !in name) {
+            addLink("Definition", packageDefinitionUrl(name))
+        }
+        if (!repoUrl.isNullOrEmpty()) {
+            addLink(
+                when {
+                    "github.com" in repoUrl -> "GitHub"
+                    "gitee.com" in repoUrl -> "Gitee"
+                    else -> "Repository"
+                },
+                repoUrl,
+            )
+        }
+        return links.takeIf { any }
+    }
+
+    /** The header's right slot: the repository link when the query carried one, empty
+     *  otherwise - a render replaces its content. */
+    private val detailsRepoSlot = BorderLayoutPanel().apply { isOpaque = false }
+
+    /** The second header row: the meta facts at the left, the repository link at the
+     *  right edge - the row that keeps the header from reading as an empty band. */
+    private val detailsHeaderFacts = BorderLayoutPanel().apply {
+        isOpaque = false
+        addToCenter(detailsMeta)
+        addToRight(detailsRepoSlot)
+    }
+
+    /** The band the master column's two header strips occupy - the search row plus the
+     *  table header - measured from the components themselves. The details header takes
+     *  this height, so the two hairlines under the strips land on the same y. */
+    internal fun headerBandHeight(): Int =
+        if (::searchRow.isInitialized) {
+            searchRow.preferredSize.height + table.tableHeader.preferredSize.height
+        } else {
+            0
+        }
+
+    /** The master column's header strip; assigned in init, before any layout runs. */
+    private lateinit var searchRow: JPanel
+
+    /** The header stack: the title row - name and its badges - over the facts row, and
+     *  a hairline under all of it, at the master column's band height. The actions live
+     *  in the master column's toolbar; the header only describes. */
+    private val detailsHeader = object : JPanel(GridBagLayout()) {
+        override fun getPreferredSize(): Dimension {
+            val own = super.preferredSize
+            val band = headerBandHeight()
+            return Dimension(own.width, if (band > 0) band else own.height)
+        }
+    }.apply {
         isOpaque = true
         background = mainBackground()
         border = JBUI.Borders.compound(
@@ -337,7 +489,7 @@ internal class XMakePackagesPanel(
             add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
             add(detailsBadges)
         })
-        row(1, detailsMeta, stretch = false)
+        row(1, detailsHeaderFacts)
     }
 
     /** The details page's body: one HTML document, so the typography is real - a
@@ -434,7 +586,7 @@ internal class XMakePackagesPanel(
         // operation holds the lane is queued by the service and searched when the lane
         // frees. The hairline under the row is the Marketplace page's line between the
         // search field and the rows.
-        val searchRow = BorderLayoutPanel().apply {
+        searchRow = BorderLayoutPanel().apply {
             isOpaque = true
             background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
             border = JBUI.Borders.compound(
@@ -475,6 +627,7 @@ internal class XMakePackagesPanel(
     /** The subscriptions ride on the content's disposal; nothing else outlives the panel. */
     override fun dispose() {
         consoleScope.cancel()
+        searchDebounce.stop()
         infoLoading.dispose()
     }
 
@@ -636,9 +789,12 @@ internal class XMakePackagesPanel(
             snapshot != null -> "${snapshot.packages.size} declared package(s)"
             else -> "Press Refresh to list the declared packages"
         }
+        val filtered = table.rowCount
+        val allRows = tableModel.rowCount
         val error = service.lastError
         statusLabel.text = buildString {
             append(base)
+            if (filtered != allRows) append(" - ").append(filtered).append(" of ").append(allRows).append(" shown")
             // While an operation holds the pipeline the grayed buttons need their reason on
             // show - the same narration the Services panel's message line gives.
             service.currentOperation?.let { operation -> append(" - ").append(operation) }
@@ -647,8 +803,13 @@ internal class XMakePackagesPanel(
         statusLabel.foreground = if (error == null) UIUtil.getLabelForeground() else JBColor.RED
     }
 
-    /** The package name the selection carries. */
-    private fun selectedPackageName(): String? = table.selectedObject?.name
+    /** The package name the selection carries - through the sorter's view-to-model
+     *  conversion, since the rows may be re-sorted. */
+    private fun selectedPackageName(): String? {
+        val viewRow = table.selectedRow
+        if (viewRow < 0) return null
+        return tableModel.getItem(table.convertRowIndexToModel(viewRow))?.name
+    }
 
     private fun infoFor(name: String): XMakePackageInfo? = service.snapshot?.infos?.get(name)
 
@@ -659,6 +820,15 @@ internal class XMakePackagesPanel(
         infoFor(row.name)?.installed == true -> INSTALLED
         row.isHit -> AVAILABLE
         else -> DECLARED
+    }
+
+    /** The triage weight behind the status sort: installed first, then the project's own
+     *  declarations, then what the repositories merely offer. */
+    private fun statusWeight(state: String?): Int = when (state) {
+        INSTALLED -> 0
+        DECLARED -> 1
+        AVAILABLE -> 2
+        else -> 3
     }
 
     /** The bare package name, the way the closure's require fields read. */
@@ -707,6 +877,7 @@ internal class XMakePackagesPanel(
                 detailsName.text = name
                 renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
                 detailsMeta.text = " "
+                renderRepoLink(null, null)
                 detailsBody.text = wrapHtml(
                     buildString {
                         append("<p class='g'>No info available for '${esc(name)}' - the info query answered nothing usable")
@@ -734,33 +905,45 @@ internal class XMakePackagesPanel(
                         info?.version ?: row?.version?.let { "v$it" },
                     ).joinToString(" · ").ifEmpty { " " }
                 }
+                renderRepoLink(name, info?.repoUrl)
                 detailsBody.text = wrapHtml(detailsHtml(name))
                 detailsBody.caretPosition = 0
             }
         }
     }
 
-    /** The badges the title row carries: the row's state, then the platforms the package
-     *  answers - read fresh on every render, the way the meta line is. */
+    /** The badges the title row carries: the row's state first - its tone carries the
+     *  meaning, so the pill is a quiet tint rather than a shouting slab - then the
+     *  platforms the package answers. Read fresh on every render, like the meta line. */
     private fun renderBadges(name: String, row: PackageRow?, info: XMakePackageInfo?) {
         detailsBadges.removeAll()
         val state = when {
-            info?.installed == true -> Badge(INSTALLED, badgeForeground(INSTALLED), badgeBackground(INSTALLED))
-            row?.isHit == true -> Badge(AVAILABLE, badgeForeground(AVAILABLE), badgeBackground(AVAILABLE))
-            else -> Badge(DECLARED, badgeForeground(DECLARED), badgeBackground(DECLARED))
+            info?.installed == true -> INSTALLED
+            row?.isHit == true -> AVAILABLE
+            else -> DECLARED
         }
-        detailsBadges.add(Chip(state.text, state.foreground, state.background))
+        detailsBadges.add(Chip(state, badgeForeground(state)))
         info?.platforms?.forEach { platform ->
-            detailsBadges.add(
-                Chip(
-                    platform,
-                    infoForeground(),
-                    JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D)),
-                ),
-            )
+            detailsBadges.add(Chip(platform, infoForeground()))
         }
         detailsBadges.revalidate()
         detailsBadges.repaint()
+    }
+
+    /** The package's definition file in the official xmake-repo - `packages/<letter of
+     *  the name>/<name>/xmake.lua`, the layout the repository uses. */
+    private fun packageDefinitionUrl(name: String): String {
+        val bare = name.substringAfterLast("::")
+        val letter = bare.first().lowercaseChar()
+        return "$XMAKE_REPO_WEB/blob/master/packages/$letter/$bare/xmake.lua"
+    }
+
+    /** Puts the repository link - or nothing - in the header's right slot. */
+    private fun renderRepoLink(name: String?, url: String?) {
+        detailsRepoSlot.removeAll()
+        if (name != null) repoLinkFor(name, url)?.let { detailsRepoSlot.addToRight(it) }
+        detailsRepoSlot.revalidate()
+        detailsRepoSlot.repaint()
     }
 
     /** Swaps the right pane among the three cards: the nothing-selected state, the
@@ -804,29 +987,10 @@ internal class XMakePackagesPanel(
         val row = tableModel.items.firstOrNull { it.name == name }
         val page = StringBuilder()
 
-        // The description leads: it is what the user came to read.
+        // The description leads: it is what the user came to read. The versions follow
+        // before the dependencies - choosing which version to install or remove is the
+        // action the page serves, and it must not sit below fourteen entries of closure.
         info.description?.let { page.append("<p>").append(esc(it)).append("</p>") }
-
-        // The closure the query answered, as its own section; where it said nothing,
-        // the project's depgraph still names what the package needs.
-        val closure = service.snapshot?.closures?.get(name).orEmpty()
-        val asked = bareName(name)
-        val dependencies = closure.filter { bareName(it.require) != asked }
-        val declaredDependencies = service.snapshot?.depgraph?.packages
-            ?.firstOrNull { it.name == name }?.deps
-        if (dependencies.isNotEmpty()) {
-            page.append("<p class='sec'>DEPENDENCIES - ${dependencies.size}</p>")
-            dependencies.forEach { dependency ->
-                page.append("<div class='dep'><b>").append(esc(dependency.require.ifEmpty { "?" })).append("</b>")
-                dependency.version?.let { page.append(" <span class='v'>").append(esc(it)).append("</span>") }
-                dependency.description?.let { page.append("<br><span class='g'>").append(esc(it)).append("</span>") }
-                page.append("</div>")
-            }
-        } else if (!declaredDependencies.isNullOrEmpty()) {
-            page.append("<p class='sec'>DEPENDENCIES</p><div class='dep'><span class='g'>")
-                .append(esc(declaredDependencies.joinToString(", ")))
-                .append("</span></div>")
-        }
 
         // The versions the view knows of: the ones the search answered, each installable
         // at its pin; the installed reference, uninstallable. The installed marker only
@@ -862,7 +1026,8 @@ internal class XMakePackagesPanel(
             }
         }
 
-        // The facts the header cannot carry.
+        // The facts sit before the closure: the paths and the reference count answer
+        // "where is it and is it mine", which a reader checks before asking what it needs.
         page.append("<p class='sec'>INFO</p>")
         page.append("<div class='dep'>")
         info.installdir?.let { page.append("<span class='g'>Install directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
@@ -871,6 +1036,26 @@ internal class XMakePackagesPanel(
             page.append("<span class='g'>References:</span> ${info.references?.size ?: 0} - installed")
         }
         page.append("</div>")
+
+        // The closure closes the page - the deepest detail, read last.
+        val closure = service.snapshot?.closures?.get(name).orEmpty()
+        val asked = bareName(name)
+        val dependencies = closure.filter { bareName(it.require) != asked }
+        val declaredDependencies = service.snapshot?.depgraph?.packages
+            ?.firstOrNull { it.name == name }?.deps
+        if (dependencies.isNotEmpty()) {
+            page.append("<p class='sec'>DEPENDENCIES - ${dependencies.size}</p>")
+            dependencies.forEach { dependency ->
+                page.append("<div class='dep'><b>").append(esc(dependency.require.ifEmpty { "?" })).append("</b>")
+                dependency.version?.let { page.append(" <span class='v'>").append(esc(it)).append("</span>") }
+                dependency.description?.let { page.append("<br><span class='g'>").append(esc(it)).append("</span>") }
+                page.append("</div>")
+            }
+        } else if (!declaredDependencies.isNullOrEmpty()) {
+            page.append("<p class='sec'>DEPENDENCIES</p><div class='dep'><span class='g'>")
+                .append(esc(declaredDependencies.joinToString(", ")))
+                .append("</span></div>")
+        }
         return page.toString()
     }
 
@@ -973,7 +1158,9 @@ internal class XMakePackagesPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
+            val name = selectedPackageName()
+            event.presentation.isEnabled = !service.busy && name != null &&
+                infoFor(name)?.installed != true
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -984,7 +1171,7 @@ internal class XMakePackagesPanel(
     private inner class UpgradeAction : DumbAwareAction(
         "Upgrade",
         "Upgrade every installed package to the newest version its requirement allows (xmake require --upgrade)",
-        AllIcons.Vcs.Fetch,
+        AllIcons.Actions.Download,
     ) {
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -1013,7 +1200,9 @@ internal class XMakePackagesPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
+            val name = selectedPackageName()
+            event.presentation.isEnabled = !service.busy && name != null &&
+                infoFor(name)?.installed == true
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -1076,6 +1265,16 @@ internal class XMakePackagesPanel(
 
         private const val LOADING = "Loading the declared packages... - or press Refresh"
 
+        /** The official repository that defines every community package. */
+        private const val XMAKE_REPO_WEB = "https://github.com/xmake-io/xmake-repo"
+
+        /** How long typing must pause before the repositories are asked. */
+        private const val SEARCH_DEBOUNCE_MS = 600
+
+        /** Shorter than this, a term asks nothing of the repositories - one letter
+         *  matches too much to be worth a remote round trip. */
+        private const val MIN_SEARCH_LENGTH = 2
+
         private const val COLUMN_NAME = 0
         private const val COLUMN_DESCRIPTION = 1
         private const val COLUMN_VERSION = 2
@@ -1099,29 +1298,27 @@ internal const val DECLARED = "declared"
 internal const val AVAILABLE = "available"
 
 /** The badge palette of one state word: green reads installed, blue available, gray declared. */
-internal data class Badge(val text: String, val foreground: Color, val background: Color)
-
 internal fun badgeForeground(state: String): Color = when (state) {
     INSTALLED -> JBColor(0x3F7E33, 0x57965C)
     AVAILABLE -> JBColor(0x1D73BF, 0x4A88C7)
     else -> infoForeground()
 }
 
-internal fun badgeBackground(state: String): Color = when (state) {
-    INSTALLED -> JBColor(0xE1F6DA, 0x314131)
-    AVAILABLE -> JBColor(0xD8EDF8, 0x27363F)
-    else -> JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D))
-}
-
-/** One badge: a rounded chip carrying a word - the state, or a platform the package
- *  answers - attached to the name, the way the Marketplace header carries its tags. */
-internal class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
+/** One badge: a pill carrying a word - the state, or a platform the package answers -
+ *  attached to the name, the way the Marketplace header carries its tags.
+ *
+ *  The fill is the tone at a low alpha over the pane, not a solid slab: it stays soft in
+ *  both themes, the text keeps full contrast, and a hairline of the same tone closes the
+ *  edge. Horizontal padding is generous, vertical snug - the proportion that reads as a
+ *  label rather than a button. */
+internal class Chip(text: String, private val tone: Color) : JPanel(null) {
 
     private val label = JBLabel(text)
 
     init {
         isOpaque = false
-        label.foreground = foreground
+        alignmentY = 0.5f
+        label.foreground = tone
         label.font = JBFont.label()
         add(label)
     }
@@ -1129,21 +1326,29 @@ internal class Chip(text: String, foreground: Color, background: Color) : JPanel
     override fun paintComponent(graphics: Graphics) {
         val g = graphics as Graphics2D
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g.color = background
-        g.fillRoundRect(0, 0, width, height, height, height)
+        val radius = height
+        g.color = ColorUtil.toAlpha(tone, 26)
+        g.fillRoundRect(0, 0, width, height, radius, radius)
+        g.color = ColorUtil.toAlpha(tone, 60)
+        g.drawRoundRect(0, 0, width - 1, height - 1, radius, radius)
     }
 
-    override fun getPreferredSize(): java.awt.Dimension {
+    override fun getPreferredSize(): Dimension {
         val text = label.preferredSize
-        return java.awt.Dimension(text.width + PAD_X * 2, text.height + PAD_Y * 2)
+        return Dimension(text.width + PAD_X * 2, text.height + PAD_Y * 2)
     }
 
     override fun doLayout() {
-        label.setBounds(PAD_X, (height - label.preferredSize.height) / 2, label.preferredSize.width, label.preferredSize.height)
+        label.setBounds(
+            PAD_X,
+            (height - label.preferredSize.height) / 2,
+            label.preferredSize.width,
+            label.preferredSize.height,
+        )
     }
 
     private companion object {
-        private const val PAD_X = 12
-        private const val PAD_Y = 4
+        private const val PAD_X = 10
+        private const val PAD_Y = 3
     }
 }

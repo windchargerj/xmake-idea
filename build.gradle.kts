@@ -79,12 +79,5 @@ tasks {
     test {
         useJUnit()
         include("io/xmake/**/**")
-        // One fresh JVM per class. The fixture-heavy suites' teardown races the
-        // platform's RD/VFS message-bus deliveries: in a shared container the queued
-        // messages land inside a later test's project-disposal window, and the test
-        // logger turns that platform error into a failure of whatever runs next. A
-        // fork per class removes the shared container; the plain parser classes pay
-        // only a bare JVM start.
-        forkEvery = 1
     }
 }
