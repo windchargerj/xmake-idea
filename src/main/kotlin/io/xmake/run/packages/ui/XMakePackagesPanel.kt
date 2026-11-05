@@ -389,10 +389,13 @@ internal class XMakePackagesPanel(
      *  whole label rather than mutating it. */
     private var detailsRepoLink: JComponent = JPanel()
 
-    /** The header's link row: the official xrepo page for the package - the canonical
-     *  entry in the xmake project's own index, whatever mirror the toolchain uses - and
-     *  the repository the package was resolved from, named by its host. */
-    private fun repoLinkFor(name: String, repoUrl: String?): JComponent? {
+    /** The header's link row: the package's own project page and its documentation,
+     *  told from the source archive the query reports. A forge repository answers both -
+     *  the project page is its root, the docs its readme; any other host answers its
+     *  site root as the homepage and nothing as docs. Neither link goes to the package
+     *  definition or the repository index: those are plumbing, not the project. */
+    private fun packageLinks(info: XMakePackageInfo?): JComponent? {
+        val (homepage, docs) = upstreamLinks(info?.sourceUrl)
         val links = javax.swing.Box.createHorizontalBox()
         var any = false
         fun addLink(label: String, url: String) {
@@ -413,22 +416,8 @@ internal class XMakePackagesPanel(
             )
             any = true
         }
-        // The definition file is the authoritative page for a repository package:
-        // xrepo.xmake.io carries platform indexes only, so a per-package URL there
-        // lands on a missing page. External-manager names have no file in the repo.
-        if ("::" !in name) {
-            addLink("Definition", packageDefinitionUrl(name))
-        }
-        if (!repoUrl.isNullOrEmpty()) {
-            addLink(
-                when {
-                    "github.com" in repoUrl -> "GitHub"
-                    "gitee.com" in repoUrl -> "Gitee"
-                    else -> "Repository"
-                },
-                repoUrl,
-            )
-        }
+        homepage?.let { addLink("Homepage", it) }
+        docs?.let { addLink("Docs", it) }
         return links.takeIf { any }
     }
 
@@ -877,7 +866,7 @@ internal class XMakePackagesPanel(
                 detailsName.text = name
                 renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
                 detailsMeta.text = " "
-                renderRepoLink(null, null)
+                renderRepoLink(null)
                 detailsBody.text = wrapHtml(
                     buildString {
                         append("<p class='g'>No info available for '${esc(name)}' - the info query answered nothing usable")
@@ -905,7 +894,7 @@ internal class XMakePackagesPanel(
                         info?.version ?: row?.version?.let { "v$it" },
                     ).joinToString(" · ").ifEmpty { " " }
                 }
-                renderRepoLink(name, info?.repoUrl)
+                renderRepoLink(info)
                 detailsBody.text = wrapHtml(detailsHtml(name))
                 detailsBody.caretPosition = 0
             }
@@ -930,18 +919,10 @@ internal class XMakePackagesPanel(
         detailsBadges.repaint()
     }
 
-    /** The package's definition file in the official xmake-repo - `packages/<letter of
-     *  the name>/<name>/xmake.lua`, the layout the repository uses. */
-    private fun packageDefinitionUrl(name: String): String {
-        val bare = name.substringAfterLast("::")
-        val letter = bare.first().lowercaseChar()
-        return "$XMAKE_REPO_WEB/blob/master/packages/$letter/$bare/xmake.lua"
-    }
-
     /** Puts the repository link - or nothing - in the header's right slot. */
-    private fun renderRepoLink(name: String?, url: String?) {
+    private fun renderRepoLink(info: XMakePackageInfo?) {
         detailsRepoSlot.removeAll()
-        if (name != null) repoLinkFor(name, url)?.let { detailsRepoSlot.addToRight(it) }
+        packageLinks(info)?.let { detailsRepoSlot.addToRight(it) }
         detailsRepoSlot.revalidate()
         detailsRepoSlot.repaint()
     }
@@ -1265,9 +1246,6 @@ internal class XMakePackagesPanel(
 
         private const val LOADING = "Loading the declared packages... - or press Refresh"
 
-        /** The official repository that defines every community package. */
-        private const val XMAKE_REPO_WEB = "https://github.com/xmake-io/xmake-repo"
-
         /** How long typing must pause before the repositories are asked. */
         private const val SEARCH_DEBOUNCE_MS = 600
 
@@ -1282,6 +1260,37 @@ internal class XMakePackagesPanel(
         private const val COLUMN_STATUS = 4
     }
 }
+
+/**
+ * The project page and the documentation page a source archive implies: a forge
+ * repository answers both - its root, and its readme - while any other host answers its
+ * domain as the homepage, mirror prefixes dropped, and nothing as docs. Null answers
+ * "nothing to link": an archive url that is not a url yields neither.
+ */
+internal fun upstreamLinks(sourceUrl: String?): Pair<String?, String?> {
+    if (sourceUrl.isNullOrEmpty()) return null to null
+    val forge = Regex("""^(https?)://(github\.com|gitlab\.com|bitbucket\.org)/([^/]+)/([^/?]+)""")
+        .find(sourceUrl)
+    if (forge != null) {
+        val (scheme, host, owner, repo) = forge.destructured
+        val homepage = "$scheme://$host/$owner/${repo.removeSuffix(".git")}"
+        return homepage to "$homepage#readme"
+    }
+    val homepage = runCatching {
+        java.net.URI(sourceUrl).let { uri ->
+            val host = uri.host?.removePrefix("www.")?.let { name ->
+                MIRROR_HOST_PREFIXES.firstOrNull { name.startsWith("$it.") }
+                    ?.let { name.removePrefix("$it.") }
+                    ?: name
+            }
+            if (host != null && uri.scheme != null) "${uri.scheme}://$host" else null
+        }
+    }.getOrNull()
+    return homepage to null
+}
+
+/** Host prefixes that serve files rather than a project's own page. */
+private val MIRROR_HOST_PREFIXES = listOf("download", "downloads", "ftp", "files", "mirror", "mirrors")
 
 /** The marketplace page's panel background, shared by the details pane and the list. */
 internal fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())

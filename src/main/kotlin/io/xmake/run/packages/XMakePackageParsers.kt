@@ -225,6 +225,12 @@ internal object XMakePackageParsers {
         platforms = (obj["platforms"] as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.content }
             .orEmpty(),
+        sourceUrl = (obj["urls"] as? JsonArray)?.firstOrNull()
+            ?.let { it as? JsonObject }
+            ?.get("urls")?.let { it as? JsonArray }
+            ?.firstOrNull()
+            ?.let { it as? JsonObject }
+            ?.string("url"),
         references = obj["references"]?.let { refs ->
             (refs as? JsonArray)?.mapNotNull { ref ->
                 (ref as? JsonObject)?.let {

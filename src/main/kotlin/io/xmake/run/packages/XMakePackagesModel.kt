@@ -46,6 +46,9 @@ data class XMakePackageInfo(
     val cachedir: String?,
     val platforms: List<String>,
     val references: List<XMakePackageReference>?,
+    /** The first source archive the package fetches from - the upstream project's own
+     *  download, from which its homepage and repository can be told. */
+    val sourceUrl: String? = null,
 ) {
     val installed: Boolean
         get() = references != null

@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import io.xmake.run.packages.ui.upstreamLinks
 import org.junit.Test
 
 /** The fixtures are the outputs docs/roadmap-designs/xrepo-packages.md and
@@ -218,6 +219,30 @@ class XMakePackageParsersTest {
     @Test
     fun `junk plain-text info answers null instead of throwing`() {
         assertNull(XMakePackageParsers.parsePackageInfoText("checking for platform ...\nnothing here\n", "rsync"))
+    }
+
+    @Test
+    fun `a forge source answers the project and its readme`() {
+        val (home, docs) = upstreamLinks("https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz")
+
+        assertEquals("https://github.com/madler/zlib", home)
+        assertEquals("https://github.com/madler/zlib#readme", docs)
+    }
+
+    @Test
+    fun `a mirror host drops its prefix to the project domain`() {
+        val (home, docs) = upstreamLinks("https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz")
+
+        assertEquals("https://samba.org", home)
+        assertNull(docs)
+    }
+
+    @Test
+    fun `no source answers no links`() {
+        val (home, docs) = upstreamLinks(null)
+
+        assertNull(home)
+        assertNull(docs)
     }
 
     @Test
