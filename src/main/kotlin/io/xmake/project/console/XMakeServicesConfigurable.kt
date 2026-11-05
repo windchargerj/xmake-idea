@@ -19,110 +19,110 @@ package io.xmake.project.console
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
-import com.intellij.ui.components.JBLabel
-import com.intellij.util.ui.JBFont
-import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
-import io.xmake.utils.cli.XMakeServiceKind
-import javax.swing.BoxLayout
+import com.intellij.openapi.ui.DialogPanel
 import javax.swing.JComponent
-import javax.swing.JPanel
+import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.rows
+import io.xmake.utils.cli.XMakeServiceKind
 
 /**
  * The build services' configuration: one section per kind, each with the endpoint it
- * connects to and the verbs that act on it.
+ * connects to and the connect and disconnect verbs, on the platform's own settings
+ * builder - rows, captions, and spacing are its, not ours to align.
  *
  * These are settings, not a monitor: a remote build host, a distcc cluster, a remote
  * cache are where the build goes, and the values persist per project. The live state
- * rides the status bar widget; this page owns what is written down.
+ * rides the status-bar widget.
  */
-class XMakeServicesConfigurable(private val project: Project) : Configurable, Disposable {
+class XMakeServicesConfigurable(private val valProject: Project) : Configurable, Disposable {
 
-    private val snapshotService = project.xmakeServicesSnapshots
-    private val panels = XMakeServiceKind.entries.associateWith { XMakeServiceDetailPanel(project, it) }
-    private val connection = project.messageBus.connect(this)
+    private val snapshotService = valProject.xmakeServicesSnapshots
 
-    private val root: JComponent by lazy {
-        JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(12, 16, 12, 0)
-            XMakeServiceKind.entries.forEachIndexed { index, kind ->
-                if (index > 0) add(sectionSeparator())
-                add(section(kind))
-            }
-        }
-    }
-
-    init {
-        connection.subscribe(XMakeServicesSnapshotService.TOPIC,
-            XMakeServicesSnapshotService.Listener { render() })
-        render()
-    }
+    /** The panel is built once per page open; the DSL owns its layout. */
+    private var page: DialogPanel? = null
 
     override fun getDisplayName(): String = "Services"
 
-    override fun createComponent(): JComponent = root
-
-    override fun isModified(): Boolean = false
-
-    override fun apply() {
-        // Every edit lands through the snapshot service the moment its control is used;
-        // the Settings contract still wants the entry points.
+    override fun createComponent(): JComponent {
+        val built = buildPage()
+        page = built
+        return built
     }
 
-    override fun reset() = snapshotService.refresh()
+    override fun isModified(): Boolean = page?.isModified() ?: false
 
-    override fun disposeUIResources() = render()
+    override fun apply() {
+        page?.apply()
+    }
+
+    override fun reset() {
+        page?.reset()
+        snapshotService.refresh()
+    }
+
+    override fun disposeUIResources() {
+        page = null
+    }
 
     override fun dispose() {}
 
-    /** One kind's section: its name, what it is for, and the panel that edits it. */
-    private fun section(kind: XMakeServiceKind): JComponent = JPanel().apply {
-        isOpaque = false
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        alignmentX = LEFT_ALIGNMENT
-        add(JBLabel(kindName(kind)).apply {
-            font = JBFont.label().biggerOn(1f).deriveFont(java.awt.Font.BOLD)
-            alignmentX = LEFT_ALIGNMENT
-        })
-        add(JBLabel(
-            when (kind) {
-                XMakeServiceKind.REMOTE_BUILD -> "Build on a remote host over SSH; xmake service --connect --remote"
-                XMakeServiceKind.DISTCC_BUILD -> "Distribute compilation across distcc hosts"
-                XMakeServiceKind.REMOTE_CACHE -> "Reuse build artifacts from a remote cache"
-            },
-        ).apply {
-            foreground = UIUtil.getLabelInfoForeground()
-            alignmentX = LEFT_ALIGNMENT
-            border = JBUI.Borders.emptyTop(2)
-        })
-        add(panels.getValue(kind).apply { alignmentX = LEFT_ALIGNMENT; border = JBUI.Borders.emptyTop(8) })
-    }
+    private fun buildPage(): DialogPanel {
+        val snapshots = snapshotService.snapshot
+        return panel {
+            XMakeServiceKind.entries.forEach { kind ->
+                val state = snapshots?.services?.get(kind)
+                    ?: XMakeServiceState(kind, null, false, XMakeReachability.UNTESTED, false)
+                group(kindName(kind)) {
+                    row {
+                        comment(
+                            when (kind) {
+                                XMakeServiceKind.REMOTE_BUILD -> "Build on a remote host over SSH"
+                                XMakeServiceKind.DISTCC_BUILD -> "Distribute compilation across distcc hosts"
+                                XMakeServiceKind.REMOTE_CACHE -> "Reuse build artifacts from a remote cache"
+                            },
+                        )
+                    }
+                    lateinit var field: com.intellij.ui.components.JBTextField
+                    row("Endpoint:") {
+                        val initial = state.endpoint
+                            ?: valProject.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(kind)
+                            ?: ""
+                        field = com.intellij.ui.components.JBTextField(initial)
+                        cell(field).align(com.intellij.ui.dsl.builder.AlignX.FILL)
+                            .comment("host:port")
+                    }
+                    // The endpoint lands the moment it changes - the same live-apply the
+                    // tree panel uses; Apply on the page has nothing left to hold.
+                    field.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+                        override fun insertUpdate(event: javax.swing.event.DocumentEvent) = changed()
+                        override fun removeUpdate(event: javax.swing.event.DocumentEvent) = changed()
+                        override fun changedUpdate(event: javax.swing.event.DocumentEvent) = changed()
 
-    private fun sectionSeparator(): JComponent = JPanel().apply {
-        isOpaque = false
-        alignmentX = LEFT_ALIGNMENT
-        preferredSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(20))
-        maximumSize = preferredSize
-    }
-
-    /** Pushes the snapshot into the panels - the same render the contributor used, now
-     *  on a page whose shape fits what the controls do. */
-    private fun render() {
-        val snapshot = snapshotService.snapshot
-        val probing = snapshotService.probing
-        XMakeServiceKind.entries.forEach { kind ->
-            val state = snapshot?.services?.get(kind)
-                ?: XMakeServiceState(kind, null, false, XMakeReachability.UNTESTED, false)
-            panels.getValue(kind).apply {
-                show(state, snapshot != null)
-                setBusy(probing)
+                        private fun changed() {
+                            val entered = field.text.trim()
+                            val stored = valProject.getService(XMakeServiceEndpointsService::class.java)
+                                .configuredEndpoint(kind)
+                            if (entered == stored) return
+                            if (entered.isEmpty()) {
+                                snapshotService.clearEndpoint(kind)
+                            } else {
+                                snapshotService.applyEndpoint(kind, entered)
+                            }
+                        }
+                    })
+                    row {
+                        button("Connect") { snapshotService.connectService(kind) }
+                        button("Disconnect") { snapshotService.disconnectService(kind) }
+                        button("Clear endpoint") { snapshotService.clearEndpoint(kind) }
+                    }
+                }
+            }
+            row {
+                comment(
+                    snapshotService.statusMessage
+                        ?: "The status also rides the status bar; showing the XMake tool window re-probes.",
+                )
             }
         }
-    }
-
-    private companion object {
-        private const val LEFT_ALIGNMENT = 0.0f
     }
 }
