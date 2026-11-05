@@ -571,6 +571,7 @@ internal class XMakePackagesPanel(
         when {
             snapshot == null && service.lastError != null -> {
                 empty.text = "Could not list packages: ${service.lastError}"
+                unpackHint()?.let { hint -> empty.appendSecondaryText(hint, SimpleTextAttributes.GRAYED_ATTRIBUTES, null as java.awt.event.ActionListener?) }
                 empty.appendSecondaryText(
                     "Refresh",
                     SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES,
@@ -589,6 +590,9 @@ internal class XMakePackagesPanel(
                         SimpleTextAttributes.GRAYED_ATTRIBUTES,
                         null as java.awt.event.ActionListener?,
                     )
+                    unpackHint()?.let { hint ->
+                        empty.appendSecondaryText(hint, SimpleTextAttributes.GRAYED_ATTRIBUTES, null as java.awt.event.ActionListener?)
+                    }
                 }
                 empty.appendSecondaryText(
                     "Back to the declared packages",
@@ -597,6 +601,17 @@ internal class XMakePackagesPanel(
             }
             else -> empty.text = "No packages declared"
         }
+    }
+
+    /** The fix a broken toolchain asks for, as one hint line: the missing unzip/7zip is
+     *  the 2.8.7 repo query's cause of death (exit 255), and the exact command to run is
+     *  worth more than the diagnosis repeated. */
+    private fun unpackHint(): String? {
+        val evidence = sequenceOf(service.lastError, service.snapshot?.searchResults?.diagnostics?.firstOrNull())
+            .filterNotNull()
+            .firstOrNull { it.contains("unzip", ignoreCase = true) || it.contains("7zip", ignoreCase = true) }
+            ?: return null
+        return "fix: install unzip or p7zip on the toolkit host (e.g. sudo apt install unzip), or update xmake"
     }
 
     /** Puts the selection back on the row carrying [name] - quietly: no scroll-to-visible,
@@ -696,7 +711,9 @@ internal class XMakePackagesPanel(
                     buildString {
                         append("<p class='g'>No info available for '${esc(name)}' - the info query answered nothing usable")
                         service.lastError?.let { append(": ").append(esc(it)) }
-                        append(". The plain-text fallback ran; updating xmake may fix it</p>")
+                        append(".</p><p class='g'>")
+                        append(unpackHint()?.let { esc(it) } ?: "The xmake on this host may not answer require --info; updating xmake may fix it")
+                        append("</p>")
                     },
                 )
                 detailsBody.caretPosition = 0
@@ -812,24 +829,27 @@ internal class XMakePackagesPanel(
         }
 
         // The versions the view knows of: the ones the search answered, each installable
-        // at its pin; the installed reference, uninstallable. The toolbar's actions stay
+        // at its pin; the installed reference, uninstallable. The installed marker only
+        // lands when the info's references say so - the resolved version alone is what
+        // the query answered, not a proof of installation. The toolbar's actions stay
         // whole-package - this section is where a version chooses.
         val versions = row?.versions.orEmpty()
-        val installedNow = info.version
+        val installedNow = if (info.installed) info.version else null
         if (versions.isNotEmpty() || info.installed) {
             page.append("<p class='sec'>VERSIONS</p>")
             versions.forEach { version ->
                 val pinned = "$name@$version"
                 page.append("<div class='dep'><b>").append(esc(version)).append("</b>")
                 if (version == installedNow) {
-                    page.append(" <span class='g'>installed</span>")
+                    page.append(" <span class='g'>installed</span> <a href='action://uninstall/").append(esc(name))
+                        .append("'>Uninstall</a>")
                 } else {
                     page.append(" <span class='g'>available</span> <a href='action://install/").append(esc(pinned))
                         .append("'>Install</a>")
                 }
                 page.append("</div>")
             }
-            if (versions.isEmpty() && installedNow != null) {
+            if (installedNow != null && versions.none { it == installedNow }) {
                 page.append("<div class='dep'><b>").append(esc(installedNow))
                     .append("</b> <span class='g'>installed</span> <a href='action://uninstall/").append(esc(name))
                     .append("'>Uninstall</a></div>")
