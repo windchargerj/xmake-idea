@@ -16,8 +16,6 @@
  */
 package io.xmake.project.console
 
-import com.intellij.execution.services.ServiceEventListener
-import com.intellij.execution.services.ServiceViewManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
@@ -96,12 +94,12 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
     private val endpoints get() = project.getService(XMakeServiceEndpointsService::class.java)
 
     init {
-        // The Services tool window has no per-surface activation callback, so the
-        // snapshot mirrors the tab's activation behavior by watching the window
-        // itself: showing it re-probes, hidden windows never probe.
+        // The configuration page and the status bar have no activation callback of their
+        // own, so the snapshot follows the XMake window the console lives in: showing it
+        // re-probes, and nothing probes while the window stays hidden.
         messageBusConnection.subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
             override fun toolWindowShown(toolWindow: ToolWindow) {
-                if (toolWindow.id == servicesToolWindowId()) {
+                if (toolWindow.id == XMAKE_TOOL_WINDOW_ID) {
                     refresh()
                 }
             }
@@ -261,9 +259,7 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
      *  [TOPIC]. */
     private fun publishSnapshotChanged() {
         if (!project.isDisposed) {
-            project.messageBus.syncPublisher(ServiceEventListener.TOPIC)
-                .handle(ServiceEventListener.ServiceEvent.createResetEvent(XMakeServicesContributor::class.java))
-        }
+            }
         project.publish(TOPIC) { snapshotUpdated() }
     }
 
@@ -272,14 +268,6 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
         statusIsFailure = false
         project.publish(TOPIC) { snapshotUpdated() }
     }
-
-    /** The Services tool window's id, as the platform registered it for this project's
-     *  contributors (the shared window answers "Services"). A missing Services plugin
-     *  only means the window never shows - the tab keeps working either way. */
-    private fun servicesToolWindowId(): String =
-        project.serviceOrNull<ServiceViewManager>()
-            ?.getToolWindowId(XMakeServicesContributor::class.java)
-            ?: "Services"
 
     override fun dispose() {
     }

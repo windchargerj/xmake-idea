@@ -61,12 +61,14 @@
         <toolWindow id="XMake" anchor="bottom" factoryClass="io.xmake.project.console.XMakeToolWindowFactory"
                     icon="/icons/xmake-dark.svg"/>
 
-        <!-- The XMake services also surface as a node in the platform Services tool
-             window (public EP, actively used by the Run Dashboard / Clouds / SSH
-             contributors in CLion 2026.2 - docs/roadmap-designs/audit-services.md).
-             The bundled Services View plugin registers the window itself once the
-             extension exists. -->
-        <serviceViewContributor implementation="io.xmake.project.console.XMakeServicesContributor"/>
+        <!-- The build services: their values are settings, their state is a status-bar
+             entry. A connection is a property of the build, not a process the Services
+             window would monitor. -->
+        <projectConfigurable instance="io.xmake.project.console.XMakeServicesConfigurable"
+                             id="XMakeServicesSettings"
+                             parentId="XMakeSettings"
+                             displayName="Services"/>
+        <statusBarWidgetFactory implementation="io.xmake.project.console.XMakeServicesStatusBarWidgetFactory"/>
 
         <!-- sanitizer analysis -->
         <toolWindow id="XMake Analysis" anchor="bottom" secondary="true"
