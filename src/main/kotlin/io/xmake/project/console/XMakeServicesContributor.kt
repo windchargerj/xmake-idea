@@ -98,8 +98,18 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
                 isOpaque = false
                 border = JBUI.Borders.empty(12)
                 val snapshots = project.serviceOrNull<XMakeServicesSnapshotService>()
-                add(JBLabel(snapshots?.statusMessage ?: "Show this window or the XMake tab to probe the build cache and service status"), BorderLayout.NORTH)
-                add(JBLabel("Select a service to edit its endpoint, connect, or disconnect"), BorderLayout.SOUTH)
+                // The two sentences are one paragraph: stacked at the top with a breath
+                // between them, not pinned to opposite edges of the pane.
+                add(
+                    JPanel().apply {
+                        isOpaque = false
+                        layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+                        add(JBLabel(snapshots?.statusMessage ?: "Show this window or the XMake tab to probe the build cache and service status"))
+                        add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
+                        add(JBLabel("Select a service to edit its endpoint, connect, or disconnect"))
+                    },
+                    BorderLayout.NORTH,
+                )
             }
         }
 

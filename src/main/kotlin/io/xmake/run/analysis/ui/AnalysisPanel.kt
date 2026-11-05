@@ -421,8 +421,8 @@ internal class AnalysisPanel(
     }
 
     private fun detailsPanel(): JComponent = JBUI.Panels.simplePanel().apply {
-        addToTop(JLabel("Details").apply { border = JBUI.Borders.empty(4, 8) })
-        addToCenter(ScrollPaneFactory.createScrollPane(details, true))
+        addToTop(JBLabel("Details").apply { border = JBUI.Borders.empty(8, 12, 4, 8) })
+        addToCenter(ScrollPaneFactory.createScrollPane(details, true).apply { border = JBUI.Borders.empty() })
     }
 
     /**
