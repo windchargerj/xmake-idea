@@ -664,6 +664,10 @@ internal class XMakePackagesPanel(
         tableSource = snapshot
         if (structureChanged || (snapshot == null && service.lastError != null)) {
             rebuild(snapshot)
+            // The rows arrived: read their facts in one batched run, so the platforms,
+            // versions, and installed states fill for every row at once rather than row
+            // by row as each is clicked.
+            service.fetchInfos(tableModel.items.map { it.name })
         } else {
             // The info cache moved: the rows' meta and status re-read it on paint.
             table.repaint()

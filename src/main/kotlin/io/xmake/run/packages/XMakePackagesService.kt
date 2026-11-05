@@ -151,7 +151,10 @@ internal class XMakePackagesService(private val project: Project) {
     fun fetchInfo(packageName: String) {
         val current = snapshot ?: return
         if (busy) return
-        if (current.infos.containsKey(packageName)) return
+        // The closure is what a selection still needs: the batched prefetch already
+        // answered the row's facts, but only a single-package ask can attribute the
+        // closure to the package that needs it.
+        if (current.closures.containsKey(packageName)) return
         claim(null) { factory ->
             val base = snapshot
             val output = runCancellable {
@@ -183,6 +186,49 @@ internal class XMakePackagesService(private val project: Project) {
             base?.copy(infos = base.infos + (packageName to info), closures = base.closures + (packageName to closure))
         }
     }
+
+    /**
+     * Reads the facts of every row at once: one `--info` run carries many packages, so a
+     * freshly listed or searched table shows its platforms, versions, descriptions, and
+     * installed states without a query per row and without waiting for a click. The
+     * closures cannot be attributed from a merged answer and stay for [fetchInfo].
+     */
+    fun fetchInfos(packageNames: List<String>) {
+        val current = snapshot ?: return
+        if (busy) return
+        val missing = packageNames.distinct().filter { it !in current.infos }
+        if (missing.isEmpty()) return
+        claim("reading package info") { factory ->
+            val base = snapshot ?: return@claim null
+            val filled = mutableMapOf<String, XMakePackageInfo?>()
+            missing.chunked(INFO_BATCH_SIZE).forEach { chunk ->
+                val filledChunk = runCancellable {
+                    project.xmakeExecutor.captureStandardOutput(factory.createRequireInfoMany(chunk))
+                }.getOrNull()?.let { output ->
+                    val closure = runCancellable { XMakePackageParsers.parsePackageClosure(output) }
+
+                        .getOrNull().orEmpty()
+                    chunk.associateWith { name ->
+                        closure.firstOrNull { barePackageName(it.require) == barePackageName(name) }
+                    }
+                } ?: runCancellable {
+                    // The JSON flag needs a newer toolkit; the plain form answers the
+                    // same blocks on every version.
+                    project.xmakeExecutor.captureStandardOutput(factory.createRequireInfoManyText(chunk))
+                }.getOrNull()?.let { output ->
+                    val blocks = runCancellable { XMakePackageParsers.parsePackageClosureText(output) }
+                        .getOrNull().orEmpty()
+                    chunk.associateWith { name ->
+                        blocks.firstOrNull { barePackageName(it.require) == barePackageName(name) }
+                    }
+                }
+                filled.putAll(filledChunk.orEmpty())
+            }
+            base.copy(infos = base.infos + filled)
+        }
+    }
+
+
 
     /**
      * Builds one package command on the executor lane and hands it to [onReady] on the EDT.
@@ -357,6 +403,15 @@ internal class XMakePackagesService(private val project: Project) {
     }
 
     companion object {
+        /** Names per batched info run: enough to cover a page of rows in one command,
+         *  small enough that the command line stays a command line. */
+        private const val INFO_BATCH_SIZE = 16
+
+        /** The bare package name an info answer carries: the require field may hold a
+         *  version ask and an external-manager prefix. */
+        private fun barePackageName(pkgRequire: String?): String? =
+            pkgRequire?.trim()?.substringBefore(" ")?.substringAfterLast("::")?.lowercase()
+
         val TOPIC: Topic<Listener> = Topic("XMake packages state", Listener::class.java)
 
         fun getInstance(project: Project): XMakePackagesService = project.service()
