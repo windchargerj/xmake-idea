@@ -348,6 +348,24 @@ internal class XMakePackagesPanel(
         }
     }
 
+    /** Reads the facts of the rows on screen - platforms, versions, installed states -
+     *  in one batched run. The rows scrolled to are what a reader can see, so they are
+     *  what is worth a query; scrolling further asks for more, and the service skips
+     *  every name it already has. */
+    private fun prefetchVisibleFacts() {
+        val rect = table.visibleRect ?: return
+        val first = table.rowAtPoint(java.awt.Point(rect.x, rect.y))
+        if (first < 0) return
+        val last = table.rowAtPoint(java.awt.Point(rect.x, rect.y + rect.height - 1))
+        val rows = (first..if (last < 0) first else last)
+        val names = rows.mapNotNull { viewRow ->
+            val modelRow = table.convertRowIndexToModel(viewRow)
+            if (modelRow in 0 until tableModel.rowCount) tableModel.getItem(modelRow).name else null
+        }
+        if (names.isEmpty()) return
+        service.fetchInfos(names)
+    }
+
     /** Filters the rows in view by [term]: the name, the description, or the status word
      *  containing it - "available" gathers everything the repositories offer. Empty shows
      *  everything again. The sorter applies the filter before its order. */
@@ -593,6 +611,11 @@ internal class XMakePackagesPanel(
         // operation holds the lane is queued by the service and searched when the lane
         // frees. The hairline under the row is the Marketplace page's line between the
         // search field and the rows.
+        tableScroll.viewport.addChangeListener {
+            if (!tableScroll.viewport.isShowing) return@addChangeListener
+            prefetchVisibleFacts()
+        }
+
         searchRow = BorderLayoutPanel().apply {
             isOpaque = true
             background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
@@ -664,10 +687,10 @@ internal class XMakePackagesPanel(
         tableSource = snapshot
         if (structureChanged || (snapshot == null && service.lastError != null)) {
             rebuild(snapshot)
-            // The rows arrived: read their facts in one batched run, so the platforms,
-            // versions, and installed states fill for every row at once rather than row
-            // by row as each is clicked.
-            service.fetchInfos(tableModel.items.map { it.name })
+            // The rows arrived: read the facts of what is actually on screen. A whole
+            // table would cost a minute of lane time - one package's answer takes
+            // seconds - so the prefetch is the viewport, never the table.
+            prefetchVisibleFacts()
         } else {
             // The info cache moved: the rows' meta and status re-read it on paint.
             table.repaint()

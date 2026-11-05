@@ -403,9 +403,10 @@ internal class XMakePackagesService(private val project: Project) {
     }
 
     companion object {
-        /** Names per batched info run: enough to cover a page of rows in one command,
-         *  small enough that the command line stays a command line. */
-        private const val INFO_BATCH_SIZE = 16
+        /** Names per batched info run. One package's answer costs seconds - the closure
+         *  is resolved from the repository, measured at six seconds for a small package
+         *  and forty for rsync - so a run covers a page and a half, not the table. */
+        private const val INFO_BATCH_SIZE = 8
 
         /** The bare package name an info answer carries: the require field may hold a
          *  version ask and an external-manager prefix. */
