@@ -113,6 +113,10 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
         // Row 1: the endpoint field stretches; Connect and Disconnect are mutually
         // exclusive on show (serial-monitor's button rows), Apply stays for mouse users.
         addRow(1, endpointField, applyButton, clearButton, connectButton, disconnectButton)
+        // Row 2: what the connection is missing - the hint the panel used to set and
+        // never show: it is added here, and its text decides that it is worth a row.
+        hintLabel.foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+        addRow(2, hintLabel)
 
         applyButton.addActionListener {
             project.xmakeServicesSnapshots.applyEndpoint(kind, endpointField.text)
@@ -175,6 +179,7 @@ class XMakeServiceDetailPanel(private val project: Project, val kind: XMakeServi
             state.endpoint == null || state.tokenKnown -> ""
             else -> "No token is stored for this endpoint - connecting needs one (see Console)"
         }
+        hintLabel.parent?.isVisible = hintLabel.text.isNotEmpty()
         refreshEnabled()
     }
 
