@@ -67,12 +67,12 @@
              same edit panel serves the Settings page. -->
         <serviceViewContributor implementation="io.xmake.project.console.XMakeServicesContributor"/>
         <projectService serviceImplementation="io.xmake.project.console.XMakeServicesTreeState"
-                        serviceBeanClass="com.intellij.openapi.components.ServiceDescriptor"/>
+                        serviceConfigurationSchemaKey="io.xmake.services.treeState"/>
         <projectConfigurable instance="io.xmake.project.console.XMakeServicesConfigurable"
                              id="XMakeServicesSettings"
                              parentId="XMakeSettings"
                              displayName="Services"/>
-        <statusBarWidgetFactory implementation="io.xmake.project.console.XMakeServicesStatusBarWidgetFactory"/>
+        <statusBarWidgetFactory id="XMakeServices" implementation="io.xmake.project.console.XMakeServicesStatusBarWidgetFactory"/>
 
         <!-- sanitizer analysis -->
         <toolWindow id="XMake Analysis" anchor="bottom" secondary="true"

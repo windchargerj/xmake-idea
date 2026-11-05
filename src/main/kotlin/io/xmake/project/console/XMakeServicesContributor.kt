@@ -48,6 +48,7 @@ import javax.swing.JPanel
  *  pattern - the tree starts empty, an Add action puts a service in, the node stays
  *  until removed. */
 @Service(Service.Level.PROJECT)
+@State(name = "XMakeServicesTreeState", storages = [Storage("xmake.services.xml")])
 internal class XMakeServicesTreeState : PersistentStateComponent<XMakeServicesTreeState.State> {
 
     private var state = State()
