@@ -154,21 +154,26 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
      *  project-local client.conf by the bundled setservice.lua script on the executor
      *  lane - the IDE never writes the config itself, because on WSL/SSH toolkits it
      *  lives on the other host. A blank value clears the entry instead. */
-    fun applyEndpoint(kind: XMakeServiceKind, raw: String) {
+    fun applyEndpoint(kind: XMakeServiceKind, raw: String) = applyEndpoint(kind.name, kind, raw)
+
+    /** The instance form: [key] is the instance's name, [kind] the service kind whose
+     *  client.conf entry the endpoint materializes into. */
+    fun applyEndpoint(key: String, kind: XMakeServiceKind, raw: String) {
         val endpoint = raw.trim()
         if (endpoint.isEmpty()) {
-            clearEndpoint(kind)
+            clearEndpoint(key)
             return
         }
         if (XMakeServiceEndpointFormat.parse(endpoint) == null) {
             setMessage(ENDPOINT_INVALID_MESSAGE)
             return
         }
-        if (currentSnapshot?.services?.get(kind)?.endpoint == endpoint) {
-            // What xmake already talks to: an apply would only queue a lane round trip.
+        if (endpoints.configuredEndpoint(key) == endpoint) {
+            // What this instance already points at: an apply would only queue a lane
+            // round trip.
             return
         }
-        endpoints.setConfiguredEndpoint(kind, endpoint)
+        endpoints.setConfiguredEndpoint(key, endpoint)
         runThenReprobe { console, factory ->
             project.xmakeExecutor.execute(console, factory.createSetServiceEndpoint(kind, endpoint))
         }
@@ -176,13 +181,13 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
 
     /** Removes the kind's project-local endpoint entry (and the stale persisted
      *  connection state with it) through the same script as [applyEndpoint]. */
-    fun clearEndpoint(kind: XMakeServiceKind) {
-        val hasAny = currentSnapshot?.services?.get(kind)?.endpoint != null ||
-            endpoints.configuredEndpoint(kind) != null
+    fun clearEndpoint(key: String) {
+        val hasAny = endpoints.configuredEndpoint(key) != null
         if (!hasAny) {
             return
         }
-        endpoints.setConfiguredEndpoint(kind, null)
+        endpoints.setConfiguredEndpoint(key, null)
+        val kind = XMakeServiceKind.entries.firstOrNull { it.name == key } ?: XMakeServiceKind.REMOTE_BUILD
         runThenReprobe { console, factory ->
             project.xmakeExecutor.execute(console, factory.createSetServiceEndpoint(kind, ""))
         }

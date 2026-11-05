@@ -85,7 +85,7 @@ class XMakeServicesConfigurable(private val valProject: Project) : Configurable,
                     lateinit var field: com.intellij.ui.components.JBTextField
                     row("Endpoint:") {
                         val initial = state.endpoint
-                            ?: valProject.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(kind)
+                            ?: valProject.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(kind.name)
                             ?: ""
                         field = com.intellij.ui.components.JBTextField(initial)
                         cell(field).align(com.intellij.ui.dsl.builder.AlignX.FILL)
@@ -101,19 +101,19 @@ class XMakeServicesConfigurable(private val valProject: Project) : Configurable,
                         private fun changed() {
                             val entered = field.text.trim()
                             val stored = valProject.getService(XMakeServiceEndpointsService::class.java)
-                                .configuredEndpoint(kind)
+                                .configuredEndpoint(kind.name)
                             if (entered == stored) return
                             if (entered.isEmpty()) {
-                                snapshotService.clearEndpoint(kind)
+                                snapshotService.clearEndpoint(kind.name)
                             } else {
-                                snapshotService.applyEndpoint(kind, entered)
+                                snapshotService.applyEndpoint(kind.name, kind, entered)
                             }
                         }
                     })
                     row {
                         button("Connect") { snapshotService.connectService(kind) }
                         button("Disconnect") { snapshotService.disconnectService(kind) }
-                        button("Clear endpoint") { snapshotService.clearEndpoint(kind) }
+                        button("Clear endpoint") { snapshotService.clearEndpoint(kind.name) }
                     }
                 }
             }
