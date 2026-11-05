@@ -28,6 +28,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.actionSystem.DataSink
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
@@ -36,7 +37,11 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBTextField
+import com.intellij.util.messages.MessageBusConnection
 import com.intellij.util.ui.JBUI
 import io.xmake.icons.XMakeIcons
 import io.xmake.utils.cli.XMakeServiceKind
@@ -136,9 +141,10 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
         if (added.isEmpty()) return emptyList()
         val snapshot = project.serviceOrNull<XMakeServicesSnapshotService>()?.snapshot
         return added.map { instance ->
-            // The snapshot's kind-level state is the kind's *effective* answer - the
-            // endpoint its client would talk to. An instance the user pointed at the
-            // same kind reads that; a differently named one reads as its own.
+            // The snapshot's kind-level state is the kind's *effective* answer - what
+            // the client would talk to. It feeds the node's icon and status text; the
+            // node's location reads the instance's own record only, so an address
+            // applied by a sibling instance never reads as this one's.
             val kindState = snapshot?.services?.get(instance.kind)
                 ?: XMakeServiceState(instance.kind, null, false, XMakeReachability.UNTESTED, false)
             XMakeServiceNode(
@@ -159,25 +165,7 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
      *  itself too (audit-services.md section 5). */
     private class XMakeRootDescriptor(private val project: Project) : ServiceViewDescriptor {
 
-        private val overview: JComponent by lazy {
-            JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.empty(12)
-                val snapshots = project.serviceOrNull<XMakeServicesSnapshotService>()
-                // The two sentences are one paragraph: stacked at the top with a breath
-                // between them, not pinned to opposite edges of the pane.
-                add(
-                    JPanel().apply {
-                        isOpaque = false
-                        layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-                        add(JBLabel(snapshots?.statusMessage ?: "Show this window or the XMake tab to probe the build cache and service status"))
-                        add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
-                        add(JBLabel("Select a service to edit its endpoint, connect, or disconnect"))
-                    },
-                    BorderLayout.NORTH,
-                )
-            }
-        }
+        private val overview: JComponent by lazy { XMakeRootOverviewPanel(project) }
 
         override fun getPresentation(): ItemPresentation =
             PresentationData("XMake", null, XMakeIcons.XMAKE, null)
@@ -209,7 +197,12 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
 
         override fun getPresentation(): ItemPresentation = PresentationData(
             node.instance.displayName(),
-            endpointOf(project, node) ?: "not configured",
+            // The location reads this instance's own record only. The kind-level answer
+            // in the snapshot belongs to whichever instance applied last; repeating it
+            // here would dress one host's address up as another node's, so an instance
+            // without its own record reads as what it is: not configured.
+            project.getService(XMakeServiceEndpointsService::class.java)
+                .configuredEndpoint(node.instance.name) ?: "not configured",
             serviceStatusIcon(node.state, node.probed),
             null,
         )
@@ -218,13 +211,81 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
 
         override fun getContentComponent(): JComponent = detail
 
-        override fun getToolbarActions(): ActionGroup =
-            DefaultActionGroup(ConnectServiceAction(), DisconnectServiceAction(), RemoveServiceAction())
+        override fun getToolbarActions(): ActionGroup = DefaultActionGroup(
+            ConnectServiceAction(),
+            DisconnectServiceAction(),
+            RemoveServiceAction(),
+            // The + rides the node's toolbar too: adding a second instance of one kind
+            // must not start with a trip back to the root - the Docker pattern the tree
+            // follows is add-while-looking-at-the-thing.
+            AddServiceActionGroup(),
+        )
 
         override fun uiDataSnapshot(sink: DataSink) {
             sink[XMAKE_SERVICE_KIND_KEY] = node.instance.kind
             sink[XMAKE_SERVICE_INSTANCE_KEY] = node.instance
         }
+    }
+}
+
+/** The root's overview pane: the snapshot service's last status line over the road-in
+ *  hint. The pane outlives single probes, so the status line re-reads on every snapshot
+ *  event - a message read once at build time would freeze on whatever was current then,
+ *  the probing narration and the failure lines never reaching the reader. */
+private class XMakeRootOverviewPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
+
+    private val statusLabel = JBLabel()
+
+    /** The bus subscription, alive only while the pane sits on a component tree - the
+     *  same shape the detail panel's wiring takes. */
+    private var busConnection: MessageBusConnection? = null
+
+    init {
+        isOpaque = false
+        border = JBUI.Borders.empty(12)
+        // The two sentences are one paragraph: stacked at the top with a breath
+        // between them, not pinned to opposite edges of the pane.
+        add(
+            JPanel().apply {
+                isOpaque = false
+                layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+                add(statusLabel)
+                add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
+                add(JBLabel("Select a service to edit its endpoint, connect, or disconnect"))
+            },
+            BorderLayout.NORTH,
+        )
+        render()
+    }
+
+    override fun addNotify() {
+        super.addNotify()
+        if (busConnection != null || project.isDisposed) return
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(
+            XMakeServicesSnapshotService.TOPIC,
+            XMakeServicesSnapshotService.Listener { render() },
+        )
+        busConnection = connection
+        // Events may have passed by while the pane was off the tree: arrive current.
+        render()
+    }
+
+    override fun removeNotify() {
+        busConnection?.dispose()
+        busConnection = null
+        super.removeNotify()
+    }
+
+    override fun dispose() {}
+
+    /** The status line the snapshot service owns; the fallback names the actual probe
+     *  trigger - showing the XMake tool window - not this window, which the reader is
+     *  standing in while reading it. */
+    private fun render() {
+        if (project.isDisposed) return
+        statusLabel.text = project.serviceOrNull<XMakeServicesSnapshotService>()?.statusMessage
+            ?: "Open the XMake tool window to probe the build cache and service status"
     }
 }
 
@@ -239,30 +300,47 @@ internal fun endpointOf(project: Project, node: XMakeServicesContributor.XMakeSe
 internal fun stateFor(project: Project, node: XMakeServicesContributor.XMakeServiceNode): XMakeServiceState =
     endpointOf(project, node)?.let { node.state.copy(endpoint = it) } ?: node.state
 
-/** Connects the selected service kind; the snapshot service explains a missing token
- *  instead of letting `xmake service --connect` hang on a stdin prompt. */
+/** Connects the selected instance: its own endpoint record, when it has one, rides
+ *  the connect so the kind's connection is re-pointed at it first - two instances of
+ *  one kind otherwise both connect to whichever address was applied last. The
+ *  snapshot service explains a missing token instead of letting
+ *  `xmake service --connect` hang on a stdin prompt. */
 private class ConnectServiceAction :
-    DumbAwareAction("Connect", "Connect this service kind through xmake service", AllIcons.Actions.Execute) {
+    DumbAwareAction("Connect", "Connect this service instance through xmake service", AllIcons.Actions.Execute) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun update(event: AnActionEvent) {
-        val snapshots = event.project?.serviceOrNull<XMakeServicesSnapshotService>()
-        val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
-        event.presentation.isEnabled = kind != null &&
+        val project = event.project
+        val snapshots = project?.serviceOrNull<XMakeServicesSnapshotService>()
+        val instance = event.getData(XMAKE_SERVICE_INSTANCE_KEY)
+        // Connect needs an address on record: the instance's own, or the kind's
+        // effective answer the connect would fall back to.
+        val endpoint = if (project != null && instance != null) {
+            project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(instance.name)
+                ?: snapshots?.snapshot?.services?.get(instance.kind)?.endpoint
+        } else {
+            null
+        }
+        event.presentation.isEnabled = instance != null &&
             snapshots?.probing == false &&
-            snapshots?.snapshot?.services?.get(kind)?.endpoint != null
+            endpoint != null
     }
 
     override fun actionPerformed(event: AnActionEvent) {
-        val kind = event.getData(XMAKE_SERVICE_KIND_KEY) ?: return
-        event.project?.xmakeServicesSnapshots?.connectService(kind)
+        val project = event.project ?: return
+        val instance = event.getData(XMAKE_SERVICE_INSTANCE_KEY) ?: return
+        val endpoint = project.getService(XMakeServiceEndpointsService::class.java)
+            .configuredEndpoint(instance.name)
+        project.xmakeServicesSnapshots.connectService(instance.kind, endpoint)
     }
 }
 
-/** Disconnects the selected service kind. */
+/** Disconnects the selected instance's kind - the connection the verbs act on is one
+ *  per kind, which the node's detail pane spells out when the instance's own record
+ *  is not what it points at. */
 private class DisconnectServiceAction :
-    DumbAwareAction("Disconnect", "Disconnect this service kind through xmake service", AllIcons.Actions.Suspend) {
+    DumbAwareAction("Disconnect", "Disconnect this service instance through xmake service", AllIcons.Actions.Suspend) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
@@ -280,13 +358,18 @@ private class DisconnectServiceAction :
     }
 }
 
-/** The + toolbar entry: one item per kind not yet in the tree - the Docker Add
- *  group's shape. Adding puts the kind in the tree and fires the reset the tree
- *  re-queries on. */
-private class AddServiceActionGroup : DefaultActionGroup(
-    "Add XMake Service",
-    true,
-) {
+/** The + toolbar entry: one item per kind, every time - the Docker Add group's shape,
+ *  and one kind may carry several instances (two remote build hosts, say). Adding
+ *  names the instance, puts it in the tree and fires the reset the tree re-queries on.
+ *
+ *  Registered in plugin.xml both on the root's own toolbar and inside the platform's
+ *  tool-window "+" group (`ServiceView.AddService`): the model drops an empty
+ *  contributor's root outright - `ServiceModel.reset` discards the node when
+ *  `getServices` comes back empty - so a brand-new project has no root toolbar to
+ *  reach the add entry from, and the tool-window-level one is the only path left. */
+internal class AddServiceActionGroup : DefaultActionGroup {
+
+    constructor() : super("Add XMake Service", true)
 
     init {
         templatePresentation.icon = AllIcons.General.Add
@@ -305,12 +388,9 @@ private class AddServiceActionGroup : DefaultActionGroup(
 
                     override fun actionPerformed(event: AnActionEvent) {
                         val project = event.project ?: return
-                        val name = com.intellij.openapi.ui.Messages.showInputDialog(
-                            project,
-                            "Name this ${kindName(kind)} instance (e.g. the host it runs on):",
-                            "Add ${kindName(kind)}",
-                            null,
-                        )?.trim().takeUnless { it.isNullOrEmpty() } ?: return
+                        val dialog = AddServiceInstanceDialog(project, kind)
+                        if (!dialog.showAndGet()) return
+                        val name = dialog.instanceName() ?: return
                         XMakeServicesTreeState.getInstance(project)
                             .add(XMakeServiceInstance(kind, name))
                         resetTree(project)
@@ -319,10 +399,51 @@ private class AddServiceActionGroup : DefaultActionGroup(
             }.toTypedArray()
 }
 
-/** Removes the selected kind from the tree; its stored endpoint stays in Settings. */
+/** The Add dialog: the instance's name inline, with a duplicate or a blank rejected in
+ *  the dialog itself - an OK that silently added nothing left the user learning
+ *  nothing (instance names key the endpoint records, so a collision is a real one). */
+private class AddServiceInstanceDialog(
+    project: Project,
+    private val kind: XMakeServiceKind,
+) : DialogWrapper(project) {
+
+    private val treeState = XMakeServicesTreeState.getInstance(project)
+
+    private val nameField = JBTextField(24).apply { emptyText.text = "the host it runs on, say" }
+
+    init {
+        title = "Add ${kindName(kind)}"
+        setOKButtonText("Add")
+        init()
+    }
+
+    override fun createCenterPanel(): JComponent = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(JBLabel("Name this ${kindName(kind)} instance (e.g. the host it runs on):"), BorderLayout.NORTH)
+        add(nameField, BorderLayout.CENTER)
+    }
+
+    override fun getPreferredFocusedComponent(): JComponent = nameField
+
+    override fun doValidate(): ValidationInfo? {
+        val name = nameField.text.trim()
+        return when {
+            name.isEmpty() -> ValidationInfo("Name the instance", nameField)
+            treeState.instances().any { it.name == name } ->
+                ValidationInfo("\"$name\" is already in the tree - instance names are the endpoint records' keys", nameField)
+            else -> null
+        }
+    }
+
+    fun instanceName(): String? = nameField.text.trim().takeUnless { it.isEmpty() }
+}
+
+/** Removes the selected instance from the tree and drops its endpoint record with it:
+ *  the record is keyed by the instance's name and nothing else reads that key - the
+ *  Settings page reads kind-named records only - so keeping it would orphan it. */
 private class RemoveServiceAction : DumbAwareAction(
     "Remove from Tree",
-    "Take this service out of the tree; its endpoint stays in Settings",
+    "Take this instance out of the tree and drop its endpoint record with it",
     AllIcons.General.Remove,
 ) {
 
@@ -336,12 +457,18 @@ private class RemoveServiceAction : DumbAwareAction(
         val project = event.project ?: return
         val instance = event.getData(XMAKE_SERVICE_INSTANCE_KEY) ?: return
         XMakeServicesTreeState.getInstance(project).remove(instance.name)
+        // A plain store write, not clearEndpoint: clearing would queue a lane round
+        // trip materializing an empty endpoint into the kind's client.conf, which the
+        // instance's siblings still point at.
+        project.getService(XMakeServiceEndpointsService::class.java)
+            .setConfiguredEndpoint(instance.name, null)
         resetTree(project)
     }
 }
 
-/** Asks the Services tree to re-read [XMakeServicesContributor.getServices]. */
-private fun resetTree(project: Project) {
+/** Asks the Services tree to re-read [XMakeServicesContributor.getServices]; the
+ * snapshot service fires it with every announced snapshot change. */
+internal fun resetTree(project: Project) {
     project.messageBus.syncPublisher(com.intellij.execution.services.ServiceEventListener.TOPIC)
         .handle(com.intellij.execution.services.ServiceEventListener.ServiceEvent.createResetEvent(XMakeServicesContributor::class.java))
 }
