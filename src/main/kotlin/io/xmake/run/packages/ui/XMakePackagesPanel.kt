@@ -442,7 +442,12 @@ internal class XMakePackagesPanel(
             )
             any = true
         }
-        addLink("Package page", XREPO_PACKAGE_URL + name)
+        // The definition file is the authoritative page for a repository package:
+        // xrepo.xmake.io carries platform indexes only, so a per-package URL there
+        // lands on a missing page. External-manager names have no file in the repo.
+        if ("::" !in name) {
+            addLink("Definition", packageDefinitionUrl(name))
+        }
         if (!repoUrl.isNullOrEmpty()) {
             addLink(
                 when {
@@ -964,6 +969,14 @@ internal class XMakePackagesPanel(
         detailsBadges.repaint()
     }
 
+    /** The package's definition file in the official xmake-repo - `packages/<letter of
+     *  the name>/<name>/xmake.lua`, the layout the repository uses. */
+    private fun packageDefinitionUrl(name: String): String {
+        val bare = name.substringAfterLast("::")
+        val letter = bare.first().lowercaseChar()
+        return "$XMAKE_REPO_WEB/blob/master/packages/$letter/$bare/xmake.lua"
+    }
+
     /** Puts the repository link - or nothing - in the header's right slot. */
     private fun renderRepoLink(name: String?, url: String?) {
         detailsRepoSlot.removeAll()
@@ -1291,8 +1304,8 @@ internal class XMakePackagesPanel(
 
         private const val LOADING = "Loading the declared packages... - or press Refresh"
 
-        /** The official package page in the xmake project's own index. */
-        private const val XREPO_PACKAGE_URL = "https://xrepo.xmake.io/#/packages/"
+        /** The official repository that defines every community package. */
+        private const val XMAKE_REPO_WEB = "https://github.com/xmake-io/xmake-repo"
 
         /** How long typing must pause before the repositories are asked. */
         private const val SEARCH_DEBOUNCE_MS = 600
