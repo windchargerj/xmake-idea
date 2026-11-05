@@ -137,6 +137,15 @@ internal class XMakePackagesPanel(
         override fun valueOf(item: PackageRow): String? = statusOf(item)
     }
 
+    /** The platforms a package answers, once the info query has landed - the column fills
+     *  in as rows are selected, so it costs no query of its own. A row whose info has not
+     *  answered yet reads blank rather than guessing. */
+    private val platformsColumn = object : ColumnInfo<PackageRow, String?>("Platforms") {
+
+        override fun valueOf(item: PackageRow): String? =
+            infoFor(item.name)?.platforms?.takeIf { it.isNotEmpty() }?.joinToString(", ")
+    }
+
     private val descriptionColumn = object : ColumnInfo<PackageRow, String?>("Description") {
 
         override fun valueOf(item: PackageRow): String? = item.description
@@ -147,6 +156,7 @@ internal class XMakePackagesPanel(
         descriptionColumn,
         versionColumn,
         repoColumn,
+        platformsColumn,
         statusColumn,
     )
 
@@ -180,6 +190,7 @@ internal class XMakePackagesPanel(
         columnModel.getColumn(COLUMN_DESCRIPTION).preferredWidth = JBUI.scale(400)
         columnModel.getColumn(COLUMN_VERSION).preferredWidth = JBUI.scale(90)
         columnModel.getColumn(COLUMN_REPO).preferredWidth = JBUI.scale(110)
+        columnModel.getColumn(COLUMN_PLATFORMS).preferredWidth = JBUI.scale(130)
         columnModel.getColumn(COLUMN_STATUS).preferredWidth = JBUI.scale(90)
         emptyText.text = LOADING
     }
@@ -344,17 +355,52 @@ internal class XMakePackagesPanel(
         alignmentY = 0.5f
     }
 
-    /** The badges the title row carries: the row's state and the platforms the package
-     *  answers - the Marketplace header's tag row, attached to the name. */
-    private val detailsBadges = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+    /** The badges the title row carries: the state the row reads, then the platforms the
+     *  package answers - the Marketplace header's tag row, attached to the name. */
+    private val detailsBadges = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
         isOpaque = false
         alignmentY = 0.5f
     }
 
-    /** The details pane's meta line: repository, resolved version, the project's ask. */
+    /** The details pane's meta line: the state, then the project's ask, repository, and
+     *  resolved version in one gray run. */
     private val detailsMeta = JBLabel().apply { foreground = infoForeground() }
 
-    /** The header stack: the title row - name and its badges - over the meta line, and
+    /** The repository page, as a link at the header's right edge - the one place a
+     *  reader leaves the IDE to. The link data is the url, so a render replaces the
+     *  whole label rather than mutating it. */
+    private var detailsRepoLink: JComponent = JPanel()
+
+    /** Builds the repository link for [url], or null when there is no page to open. */
+    private fun repoLinkFor(url: String?): JComponent? {
+        if (url.isNullOrEmpty()) return null
+        return com.intellij.ui.components.labels.LinkLabel<String>(
+            "Open repository",
+            com.intellij.icons.AllIcons.Ide.External_link_arrow,
+        ).apply {
+            verticalAlignment = javax.swing.SwingConstants.CENTER
+            setListener(
+                { _, target: String? ->
+                    target?.takeIf(String::isNotEmpty)?.let(com.intellij.ide.BrowserUtil::browse)
+                },
+                url,
+            )
+        }
+    }
+
+    /** The header's right slot: the repository link when the query carried one, empty
+     *  otherwise - a render replaces its content. */
+    private val detailsRepoSlot = BorderLayoutPanel().apply { isOpaque = false }
+
+    /** The second header row: the meta facts at the left, the repository link at the
+     *  right edge - the row that keeps the header from reading as an empty band. */
+    private val detailsHeaderFacts = BorderLayoutPanel().apply {
+        isOpaque = false
+        addToCenter(detailsMeta)
+        addToRight(detailsRepoSlot)
+    }
+
+    /** The header stack: the title row - name and its badges - over the facts row, and
      *  a hairline under all of it. The actions live in the master column's toolbar; the
      *  header only describes. */
     private val detailsHeader = JPanel(GridBagLayout()).apply {
@@ -380,7 +426,7 @@ internal class XMakePackagesPanel(
             add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
             add(detailsBadges)
         })
-        row(1, detailsMeta, stretch = false)
+        row(1, detailsHeaderFacts)
     }
 
     /** The details page's body: one HTML document, so the typography is real - a
@@ -449,6 +495,7 @@ internal class XMakePackagesPanel(
         table.columnModel.getColumn(COLUMN_DESCRIPTION).cellRenderer = descriptionCellRenderer
         table.columnModel.getColumn(COLUMN_VERSION).cellRenderer = versionCellRenderer
         table.columnModel.getColumn(COLUMN_REPO).cellRenderer = repoCellRenderer
+        table.columnModel.getColumn(COLUMN_PLATFORMS).cellRenderer = repoCellRenderer
         table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
         TableSpeedSearch.installOn(table)
         // Selecting a row is what fetches its info; the cache makes re-selection free.
@@ -764,6 +811,7 @@ internal class XMakePackagesPanel(
                 detailsName.text = name
                 renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
                 detailsMeta.text = " "
+                renderRepoLink(null)
                 detailsBody.text = wrapHtml(
                     buildString {
                         append("<p class='g'>No info available for '${esc(name)}' - the info query answered nothing usable")
@@ -791,27 +839,37 @@ internal class XMakePackagesPanel(
                         info?.version ?: row?.version?.let { "v$it" },
                     ).joinToString(" · ").ifEmpty { " " }
                 }
+                renderRepoLink(info?.repoUrl)
                 detailsBody.text = wrapHtml(detailsHtml(name))
                 detailsBody.caretPosition = 0
             }
         }
     }
 
-    /** The badges the title row carries: the row's state, then the platforms the package
-     *  answers - read fresh on every render, the way the meta line is. */
+    /** The badges the title row carries: the row's state first - its tone carries the
+     *  meaning, so the pill is a quiet tint rather than a shouting slab - then the
+     *  platforms the package answers. Read fresh on every render, like the meta line. */
     private fun renderBadges(name: String, row: PackageRow?, info: XMakePackageInfo?) {
         detailsBadges.removeAll()
+        val state = when {
+            info?.installed == true -> INSTALLED
+            row?.isHit == true -> AVAILABLE
+            else -> DECLARED
+        }
+        detailsBadges.add(Chip(state, badgeForeground(state)))
         info?.platforms?.forEach { platform ->
-            detailsBadges.add(
-                Chip(
-                    platform,
-                    infoForeground(),
-                    JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D)),
-                ),
-            )
+            detailsBadges.add(Chip(platform, infoForeground()))
         }
         detailsBadges.revalidate()
         detailsBadges.repaint()
+    }
+
+    /** Puts the repository link - or nothing - in the header's right slot. */
+    private fun renderRepoLink(url: String?) {
+        detailsRepoSlot.removeAll()
+        repoLinkFor(url)?.let { detailsRepoSlot.addToRight(it) }
+        detailsRepoSlot.revalidate()
+        detailsRepoSlot.repaint()
     }
 
     /** Swaps the right pane among the three cards: the nothing-selected state, the
@@ -894,8 +952,18 @@ internal class XMakePackagesPanel(
             }
         }
 
-        // The closure the query answered, as its own section; where it said nothing,
-        // the project's depgraph still names what the package needs.
+        // The facts sit before the closure: the paths and the reference count answer
+        // "where is it and is it mine", which a reader checks before asking what it needs.
+        page.append("<p class='sec'>INFO</p>")
+        page.append("<div class='dep'>")
+        info.installdir?.let { page.append("<span class='g'>Install directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
+        info.cachedir?.let { page.append("<span class='g'>Cache directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
+        if (info.installed) {
+            page.append("<span class='g'>References:</span> ${info.references?.size ?: 0} - installed")
+        }
+        page.append("</div>")
+
+        // The closure closes the page - the deepest detail, read last.
         val closure = service.snapshot?.closures?.get(name).orEmpty()
         val asked = bareName(name)
         val dependencies = closure.filter { bareName(it.require) != asked }
@@ -914,16 +982,6 @@ internal class XMakePackagesPanel(
                 .append(esc(declaredDependencies.joinToString(", ")))
                 .append("</span></div>")
         }
-
-        // The facts the header cannot carry.
-        page.append("<p class='sec'>INFO</p>")
-        page.append("<div class='dep'>")
-        info.installdir?.let { page.append("<span class='g'>Install directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
-        info.cachedir?.let { page.append("<span class='g'>Cache directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
-        if (info.installed) {
-            page.append("<span class='g'>References:</span> ${info.references?.size ?: 0} - installed")
-        }
-        page.append("</div>")
         return page.toString()
     }
 
@@ -1133,7 +1191,8 @@ internal class XMakePackagesPanel(
         private const val COLUMN_DESCRIPTION = 1
         private const val COLUMN_VERSION = 2
         private const val COLUMN_REPO = 3
-        private const val COLUMN_STATUS = 4
+        private const val COLUMN_PLATFORMS = 4
+        private const val COLUMN_STATUS = 5
     }
 }
 
@@ -1158,35 +1217,33 @@ internal fun badgeForeground(state: String): Color = when (state) {
     else -> infoForeground()
 }
 
-internal fun badgeBackground(state: String): Color = when (state) {
-    INSTALLED -> JBColor(0xE1F6DA, 0x314131)
-    AVAILABLE -> JBColor(0xD8EDF8, 0x27363F)
-    else -> JBColor.namedColor("Plugins.tagBackground", JBColor(0xEAEAEC, 0x4D4D4D))
-}
-
-/** One badge: a rounded chip carrying a word - the state, or a platform the package
- *  answers - attached to the name, the way the Marketplace header carries its tags. The
- *  chip is sized for the title row: the label face at full size, a soft fill, a same-
- *  tone border, and enough air that the words do not touch the curve. */
-internal class Chip(text: String, foreground: Color, background: Color) : JPanel(null) {
+/** One badge: a pill carrying a word - the state, or a platform the package answers -
+ *  attached to the name, the way the Marketplace header carries its tags.
+ *
+ *  The fill is the tone at a low alpha over the pane, not a solid slab: it stays soft in
+ *  both themes, the text keeps full contrast, and a hairline of the same tone closes the
+ *  edge. Horizontal padding is generous, vertical snug - the proportion that reads as a
+ *  label rather than a button. */
+internal class Chip(text: String, private val tone: Color) : JPanel(null) {
 
     private val label = JBLabel(text)
 
     init {
         isOpaque = false
         alignmentY = 0.5f
-        label.foreground = foreground
-        label.font = JBFont.label().biggerOn(0.5f)
+        label.foreground = tone
+        label.font = JBFont.label()
         add(label)
     }
 
     override fun paintComponent(graphics: Graphics) {
         val g = graphics as Graphics2D
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g.color = background
-        g.fillRoundRect(0, 0, width, height, height, height)
-        g.color = ColorUtil.toAlpha(foreground, 70)
-        g.drawRoundRect(0, 0, width - 1, height - 1, height, height)
+        val radius = height
+        g.color = ColorUtil.toAlpha(tone, 26)
+        g.fillRoundRect(0, 0, width, height, radius, radius)
+        g.color = ColorUtil.toAlpha(tone, 60)
+        g.drawRoundRect(0, 0, width - 1, height - 1, radius, radius)
     }
 
     override fun getPreferredSize(): Dimension {
@@ -1195,11 +1252,16 @@ internal class Chip(text: String, foreground: Color, background: Color) : JPanel
     }
 
     override fun doLayout() {
-        label.setBounds(PAD_X, (height - label.preferredSize.height) / 2, label.preferredSize.width, label.preferredSize.height)
+        label.setBounds(
+            PAD_X,
+            (height - label.preferredSize.height) / 2,
+            label.preferredSize.width,
+            label.preferredSize.height,
+        )
     }
 
     private companion object {
-        private const val PAD_X = 12
-        private const val PAD_Y = 6
+        private const val PAD_X = 10
+        private const val PAD_Y = 3
     }
 }

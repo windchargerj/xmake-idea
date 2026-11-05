@@ -355,11 +355,7 @@ private fun optionD(): JComponent {
                                     add(JBLabel(pkg.name).apply { font = JBFont.label().deriveFont(java.awt.Font.BOLD) })
                                     add(Box.createHorizontalStrut(JBUI.scale(8)))
                                     add(
-                                        Chip(
-                                            pkg.status,
-                                            badgeForeground(pkg.status),
-                                            badgeBackground(pkg.status),
-                                        ),
+                                        Chip(pkg.status, badgeForeground(pkg.status)),
                                     )
                                 },
                             )
