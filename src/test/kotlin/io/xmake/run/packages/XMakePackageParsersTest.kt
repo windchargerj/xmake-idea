@@ -18,8 +18,10 @@ package io.xmake.run.packages
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import io.xmake.run.packages.ui.xmakePackageLinks
 import org.junit.Test
 
 /** The fixtures are the outputs docs/roadmap-designs/xrepo-packages.md and
@@ -218,6 +220,30 @@ class XMakePackageParsersTest {
     @Test
     fun `junk plain-text info answers null instead of throwing`() {
         assertNull(XMakePackageParsers.parsePackageInfoText("checking for platform ...\nnothing here\n", "rsync"))
+    }
+
+    @Test
+    fun `a repository package answers its docs page and the guide`() {
+        val links = xmakePackageLinks("zlib")
+
+        assertEquals("https://packages.xmake.io/packages/zlib/", links.docs)
+        assertEquals("https://xmake.io/guide/package-management/package-management-in-project.html", links.guide)
+    }
+
+    @Test
+    fun `an external manager package answers the guide alone`() {
+        val links = xmakePackageLinks("vcpkg::zlib")
+
+        assertNull(links.docs)
+        assertNotNull(links.guide)
+    }
+
+    @Test
+    fun `no name answers no links`() {
+        val links = xmakePackageLinks(null)
+
+        assertNull(links.docs)
+        assertNull(links.guide)
     }
 
     @Test
