@@ -137,15 +137,6 @@ internal class XMakePackagesPanel(
         override fun valueOf(item: PackageRow): String? = statusOf(item)
     }
 
-    /** The platforms a package answers, once the info query has landed - the column fills
-     *  in as rows are selected, so it costs no query of its own. A row whose info has not
-     *  answered yet reads blank rather than guessing. */
-    private val platformsColumn = object : ColumnInfo<PackageRow, String?>("Platforms") {
-
-        override fun valueOf(item: PackageRow): String? =
-            infoFor(item.name)?.platforms?.takeIf { it.isNotEmpty() }?.joinToString(", ")
-    }
-
     private val descriptionColumn = object : ColumnInfo<PackageRow, String?>("Description") {
 
         override fun valueOf(item: PackageRow): String? = item.description
@@ -156,7 +147,6 @@ internal class XMakePackagesPanel(
         descriptionColumn,
         versionColumn,
         repoColumn,
-        platformsColumn,
         statusColumn,
     )
 
@@ -190,7 +180,6 @@ internal class XMakePackagesPanel(
         columnModel.getColumn(COLUMN_DESCRIPTION).preferredWidth = JBUI.scale(400)
         columnModel.getColumn(COLUMN_VERSION).preferredWidth = JBUI.scale(90)
         columnModel.getColumn(COLUMN_REPO).preferredWidth = JBUI.scale(110)
-        columnModel.getColumn(COLUMN_PLATFORMS).preferredWidth = JBUI.scale(130)
         columnModel.getColumn(COLUMN_STATUS).preferredWidth = JBUI.scale(90)
         emptyText.text = LOADING
     }
@@ -346,24 +335,6 @@ internal class XMakePackagesPanel(
                     ?: updateSummary(service.snapshot)
             }
         }
-    }
-
-    /** Reads the facts of the rows on screen - platforms, versions, installed states -
-     *  in one batched run. The rows scrolled to are what a reader can see, so they are
-     *  what is worth a query; scrolling further asks for more, and the service skips
-     *  every name it already has. */
-    private fun prefetchVisibleFacts() {
-        val rect = table.visibleRect ?: return
-        val first = table.rowAtPoint(java.awt.Point(rect.x, rect.y))
-        if (first < 0) return
-        val last = table.rowAtPoint(java.awt.Point(rect.x, rect.y + rect.height - 1))
-        val rows = (first..if (last < 0) first else last)
-        val names = rows.mapNotNull { viewRow ->
-            val modelRow = table.convertRowIndexToModel(viewRow)
-            if (modelRow in 0 until tableModel.rowCount) tableModel.getItem(modelRow).name else null
-        }
-        if (names.isEmpty()) return
-        service.fetchInfos(names)
     }
 
     /** Filters the rows in view by [term]: the name, the description, or the status word
@@ -587,7 +558,6 @@ internal class XMakePackagesPanel(
         table.columnModel.getColumn(COLUMN_DESCRIPTION).cellRenderer = descriptionCellRenderer
         table.columnModel.getColumn(COLUMN_VERSION).cellRenderer = versionCellRenderer
         table.columnModel.getColumn(COLUMN_REPO).cellRenderer = repoCellRenderer
-        table.columnModel.getColumn(COLUMN_PLATFORMS).cellRenderer = repoCellRenderer
         table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
         TableSpeedSearch.installOn(table)
         // Selecting a row is what fetches its info; the cache makes re-selection free.
@@ -616,11 +586,6 @@ internal class XMakePackagesPanel(
         // operation holds the lane is queued by the service and searched when the lane
         // frees. The hairline under the row is the Marketplace page's line between the
         // search field and the rows.
-        tableScroll.viewport.addChangeListener {
-            if (!tableScroll.viewport.isShowing) return@addChangeListener
-            prefetchVisibleFacts()
-        }
-
         searchRow = BorderLayoutPanel().apply {
             isOpaque = true
             background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
@@ -692,10 +657,6 @@ internal class XMakePackagesPanel(
         tableSource = snapshot
         if (structureChanged || (snapshot == null && service.lastError != null)) {
             rebuild(snapshot)
-            // The rows arrived: read the facts of what is actually on screen. A whole
-            // table would cost a minute of lane time - one package's answer takes
-            // seconds - so the prefetch is the viewport, never the table.
-            prefetchVisibleFacts()
         } else {
             // The info cache moved: the rows' meta and status re-read it on paint.
             table.repaint()
@@ -1318,8 +1279,7 @@ internal class XMakePackagesPanel(
         private const val COLUMN_DESCRIPTION = 1
         private const val COLUMN_VERSION = 2
         private const val COLUMN_REPO = 3
-        private const val COLUMN_PLATFORMS = 4
-        private const val COLUMN_STATUS = 5
+        private const val COLUMN_STATUS = 4
     }
 }
 

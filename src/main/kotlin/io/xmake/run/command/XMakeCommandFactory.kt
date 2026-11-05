@@ -326,22 +326,6 @@ class XMakeCommandFactory(
             require { info = true; packages = listOf(packageName) }
         }
 
-    /**
-     * One `xmake require --info --format=json <a> <b> ...`: several packages in a single
-     * run, so a list can fill every row's facts at once instead of one round trip per
-     * row. The answer is the union of the packages' closures.
-     */
-    fun createRequireInfoMany(packageNames: List<String>): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { info = true; json = true; packages = packageNames }
-        }
-
-    /** The plain-text form of [createRequireInfoMany], for toolkits without the flag. */
-    fun createRequireInfoManyText(packageNames: List<String>): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { info = true; packages = packageNames }
-        }
-
     /** One `xmake require --search <term>`: the repository hits, plain text only. */
     fun createRequireSearch(term: String): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
