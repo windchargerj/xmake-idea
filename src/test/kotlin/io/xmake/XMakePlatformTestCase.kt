@@ -50,8 +50,15 @@ abstract class XMakePlatformTestCase : BasePlatformTestCase() {
                 details: Array<out String>,
                 throwable: Throwable?,
             ): MutableSet<LoggedErrorProcessor.Action> {
-                val platformTeardownNoise = message == "Unexpected exception" && throwable != null && (
-                    throwable.javaClass.name.endsWith("AlreadyDisposedException") ||
+                // The category names the logger that logged it, which is what identifies
+                // the source here: the RD client's dispatcher reports a delivery into an
+                // already-disposed project after the fixture is gone.
+                val rdClientDelivery = category.startsWith("com.jetbrains.rdclient") ||
+                    category.startsWith("com.jetbrains.rider")
+                val platformTeardownNoise = rdClientDelivery && (
+                    throwable == null ||
+                        throwable.javaClass.name.endsWith("AlreadyDisposedException") ||
+                        throwable.message?.contains("already disposed", ignoreCase = true) == true ||
                         throwable.stackTrace.any { it.className.startsWith("com.jetbrains.rdclient") }
                     )
                 return if (platformTeardownNoise) {

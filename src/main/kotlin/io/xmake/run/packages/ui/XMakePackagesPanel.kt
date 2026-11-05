@@ -469,7 +469,8 @@ internal class XMakePackagesPanel(
     private val detailsHeader = object : JPanel(GridBagLayout()) {
         override fun getPreferredSize(): Dimension {
             val own = super.preferredSize
-            return Dimension(own.width, maxOf(own.height, headerBandHeight()))
+            val band = headerBandHeight()
+            return Dimension(own.width, if (band > 0) band else own.height)
         }
     }.apply {
         isOpaque = true
@@ -599,7 +600,7 @@ internal class XMakePackagesPanel(
                 CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
                 JBUI.Borders.empty(6, 8),
             )
-            addToLeft(searchField)
+            addToCenter(searchField)
             addToRight(toolbar().component)
         }
 
