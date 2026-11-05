@@ -77,7 +77,7 @@
         <!-- sanitizer analysis -->
         <toolWindow id="XMake Analysis" anchor="bottom" secondary="true"
                     factoryClass="io.xmake.run.analysis.ui.AnalysisToolWindowFactory"
-                    icon="/icons/xmake-dark.svg"/>
+                    icon="/icons/xmake-analysis-dark.svg"/>
         <projectService serviceImplementation="io.xmake.run.analysis.ui.AnalysisEditorMarks"/>
         <projectService serviceImplementation="io.xmake.run.analysis.AnalysisProblemReporter"/>
 
@@ -87,7 +87,7 @@
         <!-- xrepo packages -->
         <toolWindow id="XMake Packages" anchor="bottom" secondary="true"
                     factoryClass="io.xmake.run.packages.ui.XMakePackagesToolWindowFactory"
-                    icon="/icons/xmake-dark.svg"/>
+                    icon="/icons/xmake-packages-dark.svg"/>
         <!-- The packages-list prototype preview: four tabs, one per candidate list
              implementation. A design-review scaffold; removed once an option is picked. -->
         <toolWindow id="XMake List Preview" anchor="bottom" secondary="true"

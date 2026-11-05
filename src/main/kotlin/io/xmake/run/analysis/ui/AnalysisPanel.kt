@@ -30,8 +30,6 @@ import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.actionSystem.ex.ComboBoxAction
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.editor.colors.EditorColorsManager
-import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
@@ -58,6 +56,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.util.containers.Convertor
 import com.intellij.util.text.DateFormatUtil
 import com.intellij.util.ui.ColumnInfo
+import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.components.BorderLayoutPanel
@@ -131,8 +130,9 @@ internal class AnalysisPanel(
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
-        // The report's own words, aligned the way the console shows them.
-        font = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+        // A report reads in the UI face, not the editor's monospace: it is prose with
+        // file names in it, not code.
+        font = JBFont.label()
         // The body shares its "Details" heading's left edge, so the lower half of the
         // view reads as one aligned column instead of three stray indents.
         margin = JBUI.insets(0, 12, 0, 0)

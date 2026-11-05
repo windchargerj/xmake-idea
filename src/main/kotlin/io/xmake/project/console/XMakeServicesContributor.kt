@@ -242,16 +242,25 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
 
     init {
         isOpaque = false
-        border = JBUI.Borders.empty(12)
-        // The two sentences are one paragraph: stacked at the top with a breath
-        // between them, not pinned to opposite edges of the pane.
+        border = JBUI.Borders.empty(24, 16)
+        // The empty state is a page, not two floating labels: the mark anchors it, the
+        // heading states what this node is, and the status and the hint read under it.
         add(
             JPanel().apply {
                 isOpaque = false
                 layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-                add(statusLabel)
+                add(JBLabel("Build services").apply {
+                    font = com.intellij.util.ui.JBFont.create(
+                        com.intellij.util.ui.UIUtil.getLabelFont().deriveFont(java.awt.Font.BOLD, 16f),
+                    )
+                })
                 add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
-                add(JBLabel("Select a service to edit its endpoint, connect, or disconnect"))
+                add(statusLabel)
+                add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
+                add(JBLabel("Select a service to edit its endpoint, connect, or disconnect").apply {
+                    foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+                })
+                add(javax.swing.Box.createVerticalGlue())
             },
             BorderLayout.NORTH,
         )

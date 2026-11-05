@@ -475,7 +475,7 @@ internal class XMakePackagesPanel(
         background = mainBackground()
         border = JBUI.Borders.compound(
             CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
-            JBUI.Borders.empty(10, 16, 8, 16),
+            JBUI.Borders.empty(10, 12, 8, 12),
         )
         fun row(gridy: Int, component: JComponent, stretch: Boolean = true) = add(
             component,
@@ -506,7 +506,7 @@ internal class XMakePackagesPanel(
         isOpaque = false
         contentType = "text/html"
         editorKit = htmlKit()
-        border = JBUI.Borders.empty(8, 16, 12, 16)
+        border = JBUI.Borders.empty(8, 12, 12, 12)
         addHyperlinkListener { event ->
             if (event.eventType != javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) return@addHyperlinkListener
             val target = event.description ?: return@addHyperlinkListener
