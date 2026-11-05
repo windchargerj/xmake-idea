@@ -164,7 +164,8 @@ internal class XMakePackagesService(private val project: Project) {
             var closure = output?.let { runCancellable { XMakePackageParsers.parsePackageClosure(it) }.getOrNull() }.orEmpty()
             // The JSON flag is newer than some toolkits: a 2.8.7 answers its usage text
             // for --format=json. The plain --info form predates it and every toolkit
-            // reads it - the fallback fetch, same lane pass.
+            // reads it - the fallback fetch, same lane pass, closure included: the text
+            // answer lists the whole dependency closure as its blocks.
             if (info == null) {
                 val plain = runCancellable {
                     project.xmakeExecutor.captureStandardOutput(factory.createRequireInfoText(packageName))
@@ -173,7 +174,9 @@ internal class XMakePackagesService(private val project: Project) {
                     runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
                         ?.let { textInfo ->
                             info = textInfo
-                            closure = emptyList()
+                            closure = runCancellable {
+                                XMakePackageParsers.parsePackageClosureText(text)
+                            }.getOrNull().orEmpty()
                         }
                 }
             }

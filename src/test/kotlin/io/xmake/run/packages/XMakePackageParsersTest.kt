@@ -258,6 +258,32 @@ class XMakePackageParsersTest {
     }
 
     @Test
+    fun `the plain-text answer parses the whole closure in reported order`() {
+        val output = """
+            The package info of project:
+                require(openssl):
+                  -> description: A toolkit for TLS.
+                  -> version: 1.1.1-w
+                  -> repo: xmake-repo https://github.com/xmake-io/xmake-repo.git master
+                require(ninja):
+                  -> version: v1.13.2
+                require(rsync):
+                  -> description: Fast incremental file transfer.
+                  -> version: 3.4.1
+        """.trimIndent()
+
+        val closure = XMakePackageParsers.parsePackageClosureText(output)
+
+        assertEquals(listOf("openssl", "ninja", "rsync"), closure.map { it.require })
+        assertEquals("1.1.1-w", closure[0].version)
+        assertEquals("xmake-repo", closure[0].repoName)
+        assertEquals("https://github.com/xmake-io/xmake-repo.git", closure[0].repoUrl)
+        assertEquals(listOf("linux", "windows"), XMakePackageParsers.parsePackageClosureText(
+            "require(zlib):\n  -> platforms: linux, windows\n"
+        ).single().platforms)
+    }
+
+    @Test
     fun `parses search hits with description and repo`() {
         val output = """
             The package names:

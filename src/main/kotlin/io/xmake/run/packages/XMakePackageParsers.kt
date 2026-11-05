@@ -151,17 +151,18 @@ internal object XMakePackageParsers {
         }
     }
 
-    /**
-     * Parses the plain-text `--info` answer - the form that predates `--format=json`
-     * and the one older toolkits (2.8.7 among them) still answer. The text opens one
-     * `require(name):` block per package of the closure, each fact on a `-> key: value`
-     * line; the asked name picks its block. The text form carries no `references`
-     * section, so the answer reads as not-installed - the honest reading it can give.
-     */
     fun parsePackageInfoText(output: String, packageName: String): XMakePackageInfo? {
         val asked = askedName(packageName)
         return textInfoBlocks(stripAnsi(output)).firstOrNull { it.name == asked }?.toInfo()
     }
+
+    /**
+     * Parses every package the plain-text `--info` answer carried - the text form of
+     * [parsePackageClosure], so a toolkit that cannot answer the JSON flag still hands
+     * over the whole closure, one `require(name):` block per package.
+     */
+    fun parsePackageClosureText(output: String): List<XMakePackageInfo> =
+        textInfoBlocks(stripAnsi(output)).map { it.toInfo() }
 
     /** One parsed `require(name):` block: the block's name and its `-> key: value` facts. */
     private class TextInfoBlock(val name: String, val facts: Map<String, String>) {
