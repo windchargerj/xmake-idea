@@ -18,9 +18,10 @@ package io.xmake.run.packages
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import io.xmake.run.packages.ui.upstreamLinks
+import io.xmake.run.packages.ui.xmakePackageLinks
 import org.junit.Test
 
 /** The fixtures are the outputs docs/roadmap-designs/xrepo-packages.md and
@@ -222,24 +223,24 @@ class XMakePackageParsersTest {
     }
 
     @Test
-    fun `a forge source answers the project and its readme`() {
-        val (home, docs) = upstreamLinks("https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz")
+    fun `a repository package answers its index entry and the guide`() {
+        val (home, docs) = xmakePackageLinks("zlib")
 
-        assertEquals("https://github.com/madler/zlib", home)
-        assertEquals("https://github.com/madler/zlib#readme", docs)
+        assertEquals("https://packages.xmake.io/packages/zlib/", home)
+        assertEquals("https://xmake.io/guide/package-management/package-management-in-project.html", docs)
     }
 
     @Test
-    fun `a mirror host drops its prefix to the project domain`() {
-        val (home, docs) = upstreamLinks("https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz")
+    fun `an external manager package answers the guide alone`() {
+        val (home, docs) = xmakePackageLinks("vcpkg::zlib")
 
-        assertEquals("https://samba.org", home)
-        assertNull(docs)
+        assertNull(home)
+        assertNotNull(docs)
     }
 
     @Test
-    fun `no source answers no links`() {
-        val (home, docs) = upstreamLinks(null)
+    fun `no name answers no links`() {
+        val (home, docs) = xmakePackageLinks(null)
 
         assertNull(home)
         assertNull(docs)

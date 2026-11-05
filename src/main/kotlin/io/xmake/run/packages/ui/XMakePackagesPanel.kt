@@ -394,8 +394,8 @@ internal class XMakePackagesPanel(
      *  the project page is its root, the docs its readme; any other host answers its
      *  site root as the homepage and nothing as docs. Neither link goes to the package
      *  definition or the repository index: those are plumbing, not the project. */
-    private fun packageLinks(info: XMakePackageInfo?): JComponent? {
-        val (homepage, docs) = upstreamLinks(info?.sourceUrl)
+    private fun packageLinks(name: String?): JComponent? {
+        val (homepage, docs) = xmakePackageLinks(name)
         val links = javax.swing.Box.createHorizontalBox()
         var any = false
         fun addLink(label: String, url: String) {
@@ -894,7 +894,7 @@ internal class XMakePackagesPanel(
                         info?.version ?: row?.version?.let { "v$it" },
                     ).joinToString(" · ").ifEmpty { " " }
                 }
-                renderRepoLink(info)
+                renderRepoLink(name)
                 detailsBody.text = wrapHtml(detailsHtml(name))
                 detailsBody.caretPosition = 0
             }
@@ -920,9 +920,9 @@ internal class XMakePackagesPanel(
     }
 
     /** Puts the repository link - or nothing - in the header's right slot. */
-    private fun renderRepoLink(info: XMakePackageInfo?) {
+    private fun renderRepoLink(name: String?) {
         detailsRepoSlot.removeAll()
-        packageLinks(info)?.let { detailsRepoSlot.addToRight(it) }
+        packageLinks(name)?.let { detailsRepoSlot.addToRight(it) }
         detailsRepoSlot.revalidate()
         detailsRepoSlot.repaint()
     }
@@ -1262,35 +1262,18 @@ internal class XMakePackagesPanel(
 }
 
 /**
- * The project page and the documentation page a source archive implies: a forge
- * repository answers both - its root, and its readme - while any other host answers its
- * domain as the homepage, mirror prefixes dropped, and nothing as docs. Null answers
- * "nothing to link": an archive url that is not a url yields neither.
+ * Where xmake itself documents a package: its entry in the official package index, and
+ * the guide page that explains using packages in a project. External-manager names
+ * (vcpkg::, conan::) have no entry in that index and answer the guide alone.
  */
-internal fun upstreamLinks(sourceUrl: String?): Pair<String?, String?> {
-    if (sourceUrl.isNullOrEmpty()) return null to null
-    val forge = Regex("""^(https?)://(github\.com|gitlab\.com|bitbucket\.org)/([^/]+)/([^/?]+)""")
-        .find(sourceUrl)
-    if (forge != null) {
-        val (scheme, host, owner, repo) = forge.destructured
-        val homepage = "$scheme://$host/$owner/${repo.removeSuffix(".git")}"
-        return homepage to "$homepage#readme"
-    }
-    val homepage = runCatching {
-        java.net.URI(sourceUrl).let { uri ->
-            val host = uri.host?.removePrefix("www.")?.let { name ->
-                MIRROR_HOST_PREFIXES.firstOrNull { name.startsWith("$it.") }
-                    ?.let { name.removePrefix("$it.") }
-                    ?: name
-            }
-            if (host != null && uri.scheme != null) "${uri.scheme}://$host" else null
-        }
-    }.getOrNull()
-    return homepage to null
+internal fun xmakePackageLinks(name: String?): Pair<String?, String?> {
+    val guide = "https://xmake.io/guide/package-management/package-management-in-project.html"
+    if (name.isNullOrBlank()) return null to null
+    val bare = name.trim()
+    if ("::" in bare) return null to guide
+    val encoded = java.net.URLEncoder.encode(bare, Charsets.UTF_8).replace("+", "%20")
+    return "https://packages.xmake.io/packages/$encoded/" to guide
 }
-
-/** Host prefixes that serve files rather than a project's own page. */
-private val MIRROR_HOST_PREFIXES = listOf("download", "downloads", "ftp", "files", "mirror", "mirrors")
 
 /** The marketplace page's panel background, shared by the details pane and the list. */
 internal fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())
