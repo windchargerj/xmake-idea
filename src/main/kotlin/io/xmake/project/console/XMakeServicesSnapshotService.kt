@@ -16,8 +16,6 @@
  */
 package io.xmake.project.console
 
-import com.intellij.execution.services.ServiceEventListener
-import com.intellij.execution.services.ServiceViewManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
@@ -96,12 +94,12 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
     private val endpoints get() = project.getService(XMakeServiceEndpointsService::class.java)
 
     init {
-        // The Services tool window has no per-surface activation callback, so the
-        // snapshot mirrors the tab's activation behavior by watching the window
-        // itself: showing it re-probes, hidden windows never probe.
+        // The configuration page and the status bar have no activation callback of their
+        // own, so the snapshot follows the XMake window the console lives in: showing it
+        // re-probes, and nothing probes while the window stays hidden.
         messageBusConnection.subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
             override fun toolWindowShown(toolWindow: ToolWindow) {
-                if (toolWindow.id == servicesToolWindowId()) {
+                if (toolWindow.id == XMAKE_TOOL_WINDOW_ID) {
                     refresh()
                 }
             }
@@ -156,21 +154,26 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
      *  project-local client.conf by the bundled setservice.lua script on the executor
      *  lane - the IDE never writes the config itself, because on WSL/SSH toolkits it
      *  lives on the other host. A blank value clears the entry instead. */
-    fun applyEndpoint(kind: XMakeServiceKind, raw: String) {
+    fun applyEndpoint(kind: XMakeServiceKind, raw: String) = applyEndpoint(kind.name, kind, raw)
+
+    /** The instance form: [key] is the instance's name, [kind] the service kind whose
+     *  client.conf entry the endpoint materializes into. */
+    fun applyEndpoint(key: String, kind: XMakeServiceKind, raw: String) {
         val endpoint = raw.trim()
         if (endpoint.isEmpty()) {
-            clearEndpoint(kind)
+            clearEndpoint(key)
             return
         }
         if (XMakeServiceEndpointFormat.parse(endpoint) == null) {
             setMessage(ENDPOINT_INVALID_MESSAGE)
             return
         }
-        if (currentSnapshot?.services?.get(kind)?.endpoint == endpoint) {
-            // What xmake already talks to: an apply would only queue a lane round trip.
+        if (endpoints.configuredEndpoint(key) == endpoint) {
+            // What this instance already points at: an apply would only queue a lane
+            // round trip.
             return
         }
-        endpoints.setConfiguredEndpoint(kind, endpoint)
+        endpoints.setConfiguredEndpoint(key, endpoint)
         runThenReprobe { console, factory ->
             project.xmakeExecutor.execute(console, factory.createSetServiceEndpoint(kind, endpoint))
         }
@@ -178,13 +181,13 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
 
     /** Removes the kind's project-local endpoint entry (and the stale persisted
      *  connection state with it) through the same script as [applyEndpoint]. */
-    fun clearEndpoint(kind: XMakeServiceKind) {
-        val hasAny = currentSnapshot?.services?.get(kind)?.endpoint != null ||
-            endpoints.configuredEndpoint(kind) != null
+    fun clearEndpoint(key: String) {
+        val hasAny = endpoints.configuredEndpoint(key) != null
         if (!hasAny) {
             return
         }
-        endpoints.setConfiguredEndpoint(kind, null)
+        endpoints.setConfiguredEndpoint(key, null)
+        val kind = XMakeServiceKind.entries.firstOrNull { it.name == key } ?: XMakeServiceKind.REMOTE_BUILD
         runThenReprobe { console, factory ->
             project.xmakeExecutor.execute(console, factory.createSetServiceEndpoint(kind, ""))
         }
@@ -261,9 +264,7 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
      *  [TOPIC]. */
     private fun publishSnapshotChanged() {
         if (!project.isDisposed) {
-            project.messageBus.syncPublisher(ServiceEventListener.TOPIC)
-                .handle(ServiceEventListener.ServiceEvent.createResetEvent(XMakeServicesContributor::class.java))
-        }
+            }
         project.publish(TOPIC) { snapshotUpdated() }
     }
 
@@ -272,14 +273,6 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
         statusIsFailure = false
         project.publish(TOPIC) { snapshotUpdated() }
     }
-
-    /** The Services tool window's id, as the platform registered it for this project's
-     *  contributors (the shared window answers "Services"). A missing Services plugin
-     *  only means the window never shows - the tab keeps working either way. */
-    private fun servicesToolWindowId(): String =
-        project.serviceOrNull<ServiceViewManager>()
-            ?.getToolWindowId(XMakeServicesContributor::class.java)
-            ?: "Services"
 
     override fun dispose() {
     }
