@@ -61,9 +61,13 @@
         <toolWindow id="XMake" anchor="bottom" factoryClass="io.xmake.project.console.XMakeToolWindowFactory"
                     icon="/icons/xmake-dark.svg"/>
 
-        <!-- The build services: their values are settings, their state is a status-bar
-             entry. A connection is a property of the build, not a process the Services
-             window would monitor. -->
+        <!-- The build services, in the Docker contributor's shape: the Services tree
+             starts empty, the + toolbar action adds a kind, and the node carries its
+             endpoint editing and connect verbs. The values persist per project; the
+             same edit panel serves the Settings page. -->
+        <serviceViewContributor implementation="io.xmake.project.console.XMakeServicesContributor"/>
+        <projectService serviceImplementation="io.xmake.project.console.XMakeServicesTreeState"
+                        serviceBeanClass="com.intellij.openapi.components.ServiceDescriptor"/>
         <projectConfigurable instance="io.xmake.project.console.XMakeServicesConfigurable"
                              id="XMakeServicesSettings"
                              parentId="XMakeSettings"
