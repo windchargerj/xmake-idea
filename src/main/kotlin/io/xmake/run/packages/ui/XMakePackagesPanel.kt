@@ -395,7 +395,7 @@ internal class XMakePackagesPanel(
      *  site root as the homepage and nothing as docs. Neither link goes to the package
      *  definition or the repository index: those are plumbing, not the project. */
     private fun packageLinks(name: String?): JComponent? {
-        val (homepage, docs) = xmakePackageLinks(name)
+        val (docs, guide) = xmakePackageLinks(name)
         val links = javax.swing.Box.createHorizontalBox()
         var any = false
         fun addLink(label: String, url: String) {
@@ -416,8 +416,8 @@ internal class XMakePackagesPanel(
             )
             any = true
         }
-        homepage?.let { addLink("Homepage", it) }
         docs?.let { addLink("Docs", it) }
+        guide?.let { addLink("Guide", it) }
         return links.takeIf { any }
     }
 
@@ -1261,19 +1261,21 @@ internal class XMakePackagesPanel(
     }
 }
 
-/**
- * Where xmake itself documents a package: its entry in the official package index, and
- * the guide page that explains using packages in a project. External-manager names
- * (vcpkg::, conan::) have no entry in that index and answer the guide alone.
- */
-internal fun xmakePackageLinks(name: String?): Pair<String?, String?> {
+/** Where xmake documents a package: its index entry and the guide, told from its name. */
+internal fun xmakePackageLinks(name: String?): XMakePackageLinks {
     val guide = "https://xmake.io/guide/package-management/package-management-in-project.html"
-    if (name.isNullOrBlank()) return null to null
+    if (name.isNullOrBlank()) return XMakePackageLinks(docs = null, guide = null)
     val bare = name.trim()
-    if ("::" in bare) return null to guide
+    // An external-manager package has no entry in the index; the guide still applies.
+    if ("::" in bare) return XMakePackageLinks(docs = null, guide = guide)
     val encoded = java.net.URLEncoder.encode(bare, Charsets.UTF_8).replace("+", "%20")
-    return "https://packages.xmake.io/packages/$encoded/" to guide
+    return XMakePackageLinks(docs = "https://packages.xmake.io/packages/$encoded/", guide = guide)
 }
+
+/** The two xmake pages a package answers: its own entry in the package index - the
+ *  documentation of versions, license, and install commands - and the guide that
+ *  explains using packages in a project at all. */
+internal data class XMakePackageLinks(val docs: String?, val guide: String?)
 
 /** The marketplace page's panel background, shared by the details pane and the list. */
 internal fun mainBackground(): Color = JBColor.namedColor("Plugins.background", UIUtil.getListBackground())

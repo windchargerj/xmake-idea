@@ -223,27 +223,27 @@ class XMakePackageParsersTest {
     }
 
     @Test
-    fun `a repository package answers its index entry and the guide`() {
-        val (home, docs) = xmakePackageLinks("zlib")
+    fun `a repository package answers its docs page and the guide`() {
+        val links = xmakePackageLinks("zlib")
 
-        assertEquals("https://packages.xmake.io/packages/zlib/", home)
-        assertEquals("https://xmake.io/guide/package-management/package-management-in-project.html", docs)
+        assertEquals("https://packages.xmake.io/packages/zlib/", links.docs)
+        assertEquals("https://xmake.io/guide/package-management/package-management-in-project.html", links.guide)
     }
 
     @Test
     fun `an external manager package answers the guide alone`() {
-        val (home, docs) = xmakePackageLinks("vcpkg::zlib")
+        val links = xmakePackageLinks("vcpkg::zlib")
 
-        assertNull(home)
-        assertNotNull(docs)
+        assertNull(links.docs)
+        assertNotNull(links.guide)
     }
 
     @Test
     fun `no name answers no links`() {
-        val (home, docs) = xmakePackageLinks(null)
+        val links = xmakePackageLinks(null)
 
-        assertNull(home)
-        assertNull(docs)
+        assertNull(links.docs)
+        assertNull(links.guide)
     }
 
     @Test
