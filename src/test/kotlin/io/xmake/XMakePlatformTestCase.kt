@@ -54,6 +54,10 @@ abstract class XMakePlatformTestCase : BasePlatformTestCase() {
                 // RD client, and the logged line names a container that is already
                 // disposed. Either matches - the dispatcher's payload varies by which
                 // VFS listener the delivery reached.
+                // The raw logged line (what lands in system-err) opens with
+                // "ERROR: Catch <the exception> <its message>" - the guard matches that
+                // shape as well as the exception chain, since the dispatcher's payload
+                // varies by which VFS listener the delivery reached.
                 val messageAndCause = buildString {
                     append(message)
                     var cause: Throwable? = throwable
@@ -63,8 +67,11 @@ abstract class XMakePlatformTestCase : BasePlatformTestCase() {
                     }
                     throwable?.stackTrace?.take(6)?.forEach { f -> append(' ').append(f.className) }
                 }
+                // The "Catch ... AlreadyDisposedException" opening of the raw line is
+                // the form the dispatcher's error log takes in system-err.
                 val platformTeardownNoise = messageAndCause.contains("rdclient", ignoreCase = true) ||
                     messageAndCause.contains("AlreadyDisposedException") ||
+                    messageAndCause.contains("already disposed", ignoreCase = true) ||
                     (category.startsWith("com.jetbrains.rider") && messageAndCause.contains("disposed", ignoreCase = true))
                 return if (platformTeardownNoise) {
                     EnumSet.of(LoggedErrorProcessor.Action.LOG, LoggedErrorProcessor.Action.STDERR)
