@@ -379,13 +379,13 @@ private class DisconnectServiceAction :
  *  reach the add entry from, and the tool-window-level one is the only path left. */
 internal class AddServiceActionGroup : DefaultActionGroup {
 
-    constructor() : super("Add XMake Service", true)
+    constructor() : super("XMake Service", true)
 
     init {
-        // The mark, not a generic plus: the button names whose service it adds, and the
-        // tree's root already wears the same icon - one brand on both ends of the tree.
+        // The mark and the plain name, not a generic plus carrying an "Add" command: the
+        // entry announces what lives under it, and the dropdown's kinds carry the act.
         templatePresentation.icon = XMakeIcons.XMAKE
-        templatePresentation.description = "Add a build service to the tree"
+        templatePresentation.description = "The build service kinds to put in the tree"
     }
 
     override fun getChildren(event: AnActionEvent?): Array<AnAction> =
