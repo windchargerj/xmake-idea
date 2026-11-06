@@ -246,6 +246,47 @@ internal object XMakePackageParsers {
      * (docs/roadmap-designs/audit-packages.md, sections 1.6 and 3.1), so the line arrives
      * as stdout and rides out to the view instead of vanishing into "no hits".
      */
+    /**
+     * Parses `require --scan` output - the inventory of what is actually installed. The
+     * listing prints one `name-version:` heading per version directory on disk and a
+     * `-> <hash>: <plat>, <arch>` child per hash directory under it, tagging a drained
+     * directory `empty` and a manifest-less one `invalid` - and a version's heading
+     * survives on disk after an uninstall, so a heading alone is not a proof of an
+     * install: the version answers only when a child without `empty`/`invalid` rode
+     * under it (`unused` - no living project references it any more - still sits on
+     * disk, so it stays). Every version answers: two installed versions of one package
+     * are two entries, not a last-one-wins collapse.
+     *
+     * The heading is `name` and version joined with one dash, both of which may contain
+     * more dashes (`cpp-httplib-0.11.3:`, `openssl-1.1.1-w:`), and versions may carry a
+     * leading `v` (`zstd-v1.5.7:`) - so the split takes the LAST dash that a version
+     * starts after: a digit, or a `v` followed by one.
+     */
+    fun parseInstalledScan(output: String): List<XMakePackageInfo> {
+        class Entry(val name: String, val version: String) {
+            var installed = false
+        }
+        val entries = mutableListOf<Entry>()
+        var current: Entry? = null
+        stripAnsi(output).lineSequence().forEach { raw ->
+            val line = raw.trim()
+            if (line.endsWith(":")) {
+                val text = line.removeSuffix(":")
+                val cut = text.scanVersionCut()
+                current = cut?.let {
+                    Entry(text.substring(0, it).lowercase(), text.substring(it + 1)).also { entries.add(it) }
+                }
+                return@forEach
+            }
+            if (line.endsWith(", empty") || line.endsWith(", invalid")) return@forEach
+            if (line.startsWith("-> ")) current?.installed = true
+        }
+        return entries.filter { it.installed }.map { entry ->
+            XMakePackageInfo(require = entry.name, version = entry.version, description = null, repoName = null,
+                repoUrl = null, installdir = null, cachedir = null, platforms = emptyList(), references = emptyList())
+        }
+    }
+
     fun parseSearchResults(output: String): XMakeSearchResults {
         val text = stripAnsi(output)
         val hits = text.lineSequence()
@@ -357,4 +398,18 @@ internal object XMakePackageParsers {
     /** The bare name one query asks for, normalized the same way [requiredName] reads. */
     private fun askedName(packageName: String): String =
         packageName.trim().substringBefore(" ").substringAfterLast("::").lowercase()
+
+    /** The index of the dash a `name-version` heading splits at: the last one the rest
+     *  of the text starts a version after - a digit, or a `v` followed by one - or null
+     *  when nothing after any dash reads as a version. */
+    private fun String.scanVersionCut(): Int? {
+        for (cut in length - 2 downTo 1) {
+            if (this[cut] != '-') continue
+            val version = substring(cut + 1)
+            val startsVersion = version[0].isDigit() ||
+                    (version.length > 1 && version[0] == 'v' && version[1].isDigit())
+            if (startsVersion) return cut
+        }
+        return null
+    }
 }

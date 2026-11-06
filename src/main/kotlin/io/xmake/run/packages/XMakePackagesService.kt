@@ -187,6 +187,32 @@ internal class XMakePackagesService(private val project: Project) {
         }
     }
 
+    /**
+     * Scans what is actually installed through `xmake require --scan` and answers the
+     * inventory as the view's rows. Local cost: the scan reads the installed package
+     * store on the toolkit host, no repository round trip.
+     */
+    fun scanInstalled() {
+        claim("scanning installed packages") { factory ->
+            val base = snapshot
+            val scan = runCancellable {
+                XMakePackageParsers.parseInstalledScan(
+                    project.xmakeExecutor.captureStandardOutput(factory.createRequireScan()),
+                )
+            }.getOrNull().orEmpty()
+            base?.copy(installed = scan)
+        }
+    }
+
+    /** Leaves the installed view; the inventory stays in the snapshot, so re-entering
+     *  the view costs nothing until a refresh drops it. */
+    fun exitInstalled() {
+        val current = snapshot ?: return
+        if (current.installed == null) return
+        snapshot = current.copy(installed = null)
+        project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)
+    }
+
 
 
     /**
@@ -344,6 +370,7 @@ internal class XMakePackagesService(private val project: Project) {
             packages,
             depgraph,
             searchResults = snapshot?.searchResults,
+            installed = snapshot?.installed,
         )
     }
 

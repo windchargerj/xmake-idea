@@ -300,7 +300,6 @@ internal class XMakePackagesPanel(
         textEditor.putClientProperty("JTextField.Search.Gap", JBUI.scale(6))
         textEditor.putClientProperty("JTextField.Search.GapEmptyText", JBUI.scale(-1))
         textEditor.background = JBColor.namedColor("Plugins.SearchField.background", UIUtil.getListBackground())
-        preferredSize = Dimension(JBUI.scale(220), preferredSize.height)
         textEditor.document.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
             override fun textChanged(event: javax.swing.event.DocumentEvent) {
                 applyRowFilter(text)
@@ -594,7 +593,7 @@ internal class XMakePackagesPanel(
             )
             // The field rides the left slot at the 220 width its preference declares; a
             // center slot would stretch it across the column.
-            addToLeft(searchField)
+            addToCenter(searchField)
             addToRight(toolbar().component)
         }
 
@@ -651,6 +650,13 @@ internal class XMakePackagesPanel(
             UpgradeAction(),
             UninstallAction(),
             Separator.create(),
+            FetchAction(),
+            DownloadAction(),
+            CheckAction(),
+            ExportAction(),
+            ImportAction(),
+            CleanAction(),
+            Separator.create(),
             ShowInConsoleAction(),
         )
         return ActionManager.getInstance()
@@ -692,23 +698,37 @@ internal class XMakePackagesPanel(
         val selectedName = selectedPackageName()
         val position = tableScroll.viewport.viewPosition
         val results = snapshot?.searchResults
-        tableModel.items = if (results != null) {
-            results.hits
-                .groupBy { it.name }
-                .map { (name, hits) ->
-                    val lead = hits.first()
-                    PackageRow(
-                        name = name,
-                        requirement = null,
-                        version = lead.version,
-                        description = lead.description,
-                        repo = lead.repo,
-                        isHit = true,
-                        versions = hits.mapNotNull { it.version },
-                    )
-                }
-        } else {
-            snapshot?.packages.orEmpty().map { entry ->
+        val installed = snapshot?.installed
+        tableModel.items = when {
+            // The installed inventory: what `--scan` reports as actually on disk.
+            installed != null -> installed.map { pkg ->
+                PackageRow(
+                    name = pkg.require,
+                    requirement = null,
+                    version = pkg.version,
+                    description = pkg.description,
+                    repo = null,
+                    isHit = false,
+                    isInstalled = true,
+                )
+            }
+            results != null -> {
+                results.hits
+                    .groupBy { it.name }
+                    .map { (name, hits) ->
+                        val lead = hits.first()
+                        PackageRow(
+                            name = name,
+                            requirement = null,
+                            version = lead.version,
+                            description = lead.description,
+                            repo = lead.repo,
+                            isHit = true,
+                            versions = hits.mapNotNull { it.version },
+                        )
+                    }
+            }
+            else -> snapshot?.packages.orEmpty().map { entry ->
                 PackageRow(
                     name = entry.name,
                     requirement = entry.requirement.ifEmpty { null },
@@ -831,6 +851,7 @@ internal class XMakePackagesPanel(
     private fun statusOf(row: PackageRow): String? = when {
         infoFor(row.name)?.installed == true -> INSTALLED
         row.isHit -> AVAILABLE
+        row.isInstalled -> INSTALLED
         else -> DECLARED
     }
 
@@ -1030,30 +1051,32 @@ internal class XMakePackagesPanel(
         info.description?.let { page.append("<p>").append(esc(it)).append("</p>") }
 
         // The versions the view knows of: the ones the search answered, each installable
-        // at its pin; the installed reference, uninstallable. The installed marker only
-        // lands when the info's references say so - the resolved version alone is what
-        // the query answered, not a proof of installation. The toolbar's actions stay
-        // whole-package - this section is where a version chooses.
+        // at its pin; the installed one, uninstallable at its pin too. xmake's grammar
+        // pins a version with a space ("zstd 1.5.6") - the @ separates a repository from
+        // the name, so "name@version" would misparse the version as a package name. The
+        // installed marker only lands when the info's references say so - the resolved
+        // version alone is what the query answered, not a proof of installation. The
+        // toolbar's actions stay whole-package - this section is where a version chooses.
         val versions = row?.versions.orEmpty()
         val installedNow = if (info.installed) info.version else null
         if (versions.isNotEmpty() || info.installed) {
             page.append("<p class='sec'>VERSIONS</p>")
             versions.forEach { version ->
-                val pinned = "$name@$version"
+                val pinned = "$name $version"
                 page.append("<div class='dep'><b>").append(esc(version)).append("</b>")
                 if (version == installedNow) {
-                    page.append(" <span class='g'>installed</span> <a href='action://uninstall/").append(esc(name))
-                        .append("'>Uninstall</a>")
+                    page.append(" <span class='g'>installed</span> <a href='action://uninstall/")
+                        .append(esc(pinned)).append("'>Uninstall</a>")
                 } else {
-                    page.append(" <span class='g'>available</span> <a href='action://install/").append(esc(pinned))
-                        .append("'>Install</a>")
+                    page.append(" <span class='g'>available</span> <a href='action://install/")
+                        .append(esc(pinned)).append("'>Install</a>")
                 }
                 page.append("</div>")
             }
             if (installedNow != null && versions.none { it == installedNow }) {
                 page.append("<div class='dep'><b>").append(esc(installedNow))
-                    .append("</b> <span class='g'>installed</span> <a href='action://uninstall/").append(esc(name))
-                    .append("'>Uninstall</a></div>")
+                    .append("</b> <span class='g'>installed</span> <a href='action://uninstall/")
+                    .append(esc("$name $installedNow")).append("'>Uninstall</a></div>")
             }
             info.references.orEmpty().forEach { reference ->
                 page.append("<div class='dep'><span class='g'>")
@@ -1126,17 +1149,20 @@ internal class XMakePackagesPanel(
 
     /** The Install flow the toolbar button, a double-click on a row, and the details
      *  page's version links share. [spec] is the xmake package ask: a bare name, or a
-     *  name pinned to one version (`rsync@3.4.1`). */
+     *  name pinned to one version (`rsync 3.4.1` - the pin is a space, xmake's grammar
+     *  reads @ as a repository separator). */
     private fun installPackage(spec: String) {
         service.prepareCommand(prepare = { createRequireInstall(spec) }) { command ->
             confirmAndRun("Install package", "Installing '$spec' - xmake fetches, builds, and installs it.", command)
         }
     }
 
-    /** The Uninstall flow the toolbar button and the details page's version link share. */
-    private fun uninstallPackage(name: String) {
-        service.prepareCommand(prepare = { createRequireUninstall(name) }) { command ->
-            confirmAndRun("Uninstall package", "Uninstalling '$name'.", command)
+    /** The Uninstall flow the toolbar button and the details page's version link share.
+     *  [spec] is the xmake package ask: a bare name, or a name pinned to one version
+     *  (`zstd 1.5.6`) - the pin decides which installed version's directory xmake removes. */
+    private fun uninstallPackage(spec: String) {
+        service.prepareCommand(prepare = { createRequireUninstall(spec) }) { command ->
+            confirmAndRun("Uninstall package", "Uninstalling '$spec'.", command)
         }
     }
 
@@ -1169,6 +1195,169 @@ internal class XMakePackagesPanel(
             append("Searching for '$term' once the current operation finishes")
             service.currentOperation?.let { operation -> append(" - ").append(operation) }
             service.lastError?.let { append(" - last operation failed: ").append(it) }
+        }
+    }
+
+    /** The package housekeeping verbs act on the selected package; the helpers below
+     *  route each through the confirmation flow the install action uses. */
+    private fun selectedOrNotify(): String? = selectedPackageName().also {
+        if (it == null) statusLabel.text = "Select a package first"
+    }
+
+    private inner class FetchAction : DumbAwareAction(
+        "Fetch",
+        "Fetch the package's library info from the repository (xmake require --fetch)",
+        com.intellij.icons.AllIcons.Actions.Download,
+    ) {
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            val name = selectedOrNotify() ?: return
+            service.prepareCommand(prepare = { createRequireFetch(name) }) { command ->
+                confirmAndRun("Fetch package", "Fetching the library info of '$name'.", command)
+            }
+        }
+    }
+
+    private inner class DownloadAction : DumbAwareAction(
+        "Download source",
+        "Download the package's source archive without installing (xmake require --download)",
+        com.intellij.icons.AllIcons.Actions.Download,
+    ) {
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            val name = selectedOrNotify() ?: return
+            service.prepareCommand(prepare = { createRequireDownload(name) }) { command ->
+                confirmAndRun("Download source", "Downloading the source archive of '$name'.", command)
+            }
+        }
+    }
+
+    private inner class CheckAction : DumbAwareAction(
+        "Check support",
+        "Whether this package is supported on the current platform (xmake require --check)",
+        com.intellij.icons.AllIcons.Actions.Help,
+    ) {
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            val name = selectedOrNotify() ?: return
+            service.prepareCommand(prepare = { createRequireCheck(name) }) { command ->
+                confirmAndRun("Check support", "Checking whether '$name' is supported here.", command)
+            }
+        }
+    }
+
+    private inner class ExportAction : DumbAwareAction(
+        "Export",
+        "Export the installed package and its dependencies to a portable archive (xmake require --export)",
+        com.intellij.icons.AllIcons.ToolbarDecorator.Export,
+    ) {
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            val name = selectedPackageName()
+            event.presentation.isEnabled = !service.busy && name != null &&
+                infoFor(name)?.installed == true
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            val name = selectedOrNotify() ?: return
+            service.prepareCommand(prepare = { createRequireExport(name) }) { command ->
+                confirmAndRun("Export package", "Exporting the installed '$name' and its dependencies.", command)
+            }
+        }
+    }
+
+    private inner class ImportAction : DumbAwareAction(
+        "Import",
+        "Import previously exported packages from an archive (xmake require --import)",
+        com.intellij.icons.AllIcons.ToolbarDecorator.Import,
+    ) {
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = !service.busy
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            val archive = com.intellij.openapi.ui.Messages.showInputDialog(
+                project,
+                "Path to the exported archive:",
+                "Import packages",
+                null,
+            )?.trim().takeUnless { it.isNullOrEmpty() } ?: return
+            service.prepareCommand(prepare = { createRequireImport(archive) }) { command ->
+                confirmAndRun("Import packages", "Importing packages from '$archive'.", command)
+            }
+        }
+    }
+
+    private inner class CleanAction : DumbAwareAction(
+        "Clean",
+        "Uninstall every installed package and clear the caches (xmake require --clean)",
+        com.intellij.icons.AllIcons.Actions.GC,
+    ) {
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = !service.busy
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            service.prepareCommand(prepare = { createRequireClean() }) { command ->
+                confirmAndRun(
+                    "Clean packages",
+                    "Uninstalling every installed package and clearing the package caches.",
+                    command,
+                )
+            }
+        }
+    }
+
+    /** Toggles the table between the declared packages and the `--scan` inventory of
+     *  what is actually installed. The scan runs once on first show; the snapshot keeps
+     *  the inventory, so re-entering the view costs nothing until a refresh drops it. */
+    private inner class ShowInstalledToggle : DumbAwareAction(
+        "Installed",
+        "Show the packages actually installed (xmake require --scan)",
+        com.intellij.icons.AllIcons.Nodes.PackageLocal,
+    ) {
+
+        private var showing = false
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = !service.busy
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            showing = !showing
+            if (showing) {
+                service.scanInstalled()
+            } else {
+                service.exitInstalled()
+            }
         }
     }
 
@@ -1244,8 +1433,12 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             val name = selectedPackageName() ?: return
-            service.prepareCommand(prepare = { createRequireUninstall(name) }) { command ->
-                confirmAndRun("Uninstall package", "Uninstalling '$name'.", command)
+            // Bare-name uninstall resolves "latest" and misses a non-latest install; the
+            // version the info resolved is the one the status column vouched for.
+            val version = infoFor(name)?.version?.takeIf { it.isNotBlank() }
+            val spec = version?.let { "$name $it" } ?: name
+            service.prepareCommand(prepare = { createRequireUninstall(spec) }) { command ->
+                confirmAndRun("Uninstall package", "Uninstalling '$spec'.", command)
             }
         }
     }
@@ -1287,6 +1480,9 @@ internal class XMakePackagesPanel(
         val repo: String?,
         val isHit: Boolean,
         val versions: List<String> = emptyList(),
+        /** True for the rows of the installed inventory - their status reads INSTALLED
+         *  without an info query, since the scan already proved it. */
+        val isInstalled: Boolean = false,
     ) {
 
         override fun toString(): String = name
