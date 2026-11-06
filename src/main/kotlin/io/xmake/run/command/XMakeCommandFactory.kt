@@ -340,11 +340,16 @@ class XMakeCommandFactory(
             require { info = true; packages = listOf(packageName) }
         }
 
-    /** One `xmake require --clean`: uninstalls all installed packages and clears the
-     *  package caches. The confirm dialog is the user's seat before it runs. */
-    fun createRequireClean(): XMakeCommand =
+    /**
+     * One `xmake require --clean`: clears the package caches and uninstalls the packages
+     * nothing references - xmake's own help text, and both 2.8.7 and 3.1.2 read it the
+     * same way; this is NOT "uninstall everything". With [packageNames] the sweep scopes
+     * to those (`--clean zlib tbox`), which is how a row-scoped Clean acts. The confirm
+     * dialog is the user's seat before it runs.
+     */
+    fun createRequireClean(packageNames: List<String> = emptyList()): XMakeCommand =
         createCommand {
-            require { clean = true }
+            require { clean = true; packages = packageNames }
         }
 
     /** One `xmake require --fetch <package>`: fetches the package's library info from
@@ -381,10 +386,12 @@ class XMakeCommandFactory(
             require { import = true; packages = listOf(archivePath) }
         }
 
-    /** One `xmake require --scan`: the inventory of what is installed, plain text. */
-    fun createRequireScan(): XMakeCommand =
+    /** One `xmake require --scan`: the inventory of what is installed, plain text. With
+     *  [packageNames] the scan answers just those (`--scan zlib`), one heading per
+     *  installed version - the targeted ask the details page rides. */
+    fun createRequireScan(packageNames: List<String> = emptyList()): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { scan = true }
+            require { scan = true; packages = packageNames }
         }
 
     /** One `xmake require --search <term>`: the repository hits, plain text only. */
@@ -409,10 +416,16 @@ class XMakeCommandFactory(
             require { yes = true; packages = listOf(packageName) }
         }
 
-    /** Upgrades every installed package with `xmake require --upgrade -y`. */
-    fun createRequireUpgrade(): XMakeCommand =
+    /** Upgrades with `xmake require --upgrade -y`: every declared package without
+     *  [packageName], just that one with it - the name rides the generic requires
+     *  arguments, verified to pass through on 2.8.7 and 3.1.2 alike. */
+    fun createRequireUpgrade(packageName: String? = null): XMakeCommand =
         createCommand {
-            require { yes = true; upgrade = true }
+            require {
+                yes = true
+                upgrade = true
+                packageName?.let { packages = listOf(it) }
+            }
         }
 
     /** Removes [packageName] with `xmake require --uninstall -y`. */

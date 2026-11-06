@@ -83,6 +83,30 @@ class XMakeRequireCommandLineTest {
     }
 
     @Test
+    fun `the upgrade, clean, and scan scopes ride their names`() {
+        assertEquals(
+            listOf("require", "--upgrade", "-y", "tinytest"),
+            line { require { yes = true; upgrade = true; packages = listOf("tinytest") } },
+        )
+        assertEquals(
+            listOf("require", "--clean", "tinytest"),
+            line { require { clean = true; packages = listOf("tinytest") } },
+        )
+        assertEquals(
+            listOf("require", "--clean"),
+            line { require { clean = true } },
+        )
+        assertEquals(
+            listOf("require", "--scan", "tinytest"),
+            line { require { scan = true; packages = listOf("tinytest") } },
+        )
+        assertEquals(
+            listOf("require", "--scan"),
+            line { require { scan = true } },
+        )
+    }
+
+    @Test
     fun `a second action on one command line is refused`() {
         val error = try {
             line {

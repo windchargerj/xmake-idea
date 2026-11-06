@@ -572,9 +572,9 @@ internal class XMakePackagesPanel(
         // double-click stays quiet instead of re-asking what the button refuses.
         object : DoubleClickListener() {
             override fun onDoubleClick(event: MouseEvent): Boolean {
-                val name = selectedPackageName() ?: return false
-                if (infoFor(name)?.installed == true) return true
-                installPackage(name)
+                val row = selectedRow() ?: return false
+                if (infoFor(row.name)?.installed == true || row.isInstalled) return true
+                installPackage(row.name)
                 return true
             }
         }.installOn(table)
@@ -843,6 +843,14 @@ internal class XMakePackagesPanel(
         return tableModel.getItem(table.convertRowIndexToModel(viewRow))?.name
     }
 
+    /** The selected row itself, for the state its info query has not answered yet - the
+     *  installed inventory's rows carry their proof on the row, not in an info. */
+    private fun selectedRow(): PackageRow? {
+        val viewRow = table.selectedRow
+        if (viewRow < 0) return null
+        return tableModel.getItem(table.convertRowIndexToModel(viewRow))
+    }
+
     private fun infoFor(name: String): XMakePackageInfo? = service.snapshot?.infos?.get(name)
 
     /** The status of a row, in the table's own words: the installed truth when the info
@@ -1048,6 +1056,19 @@ internal class XMakePackagesPanel(
      *  their confirmation flows through it. */
     private var detailsPackage: String? = null
 
+    /** The versions of [name] the package store holds on disk: the targeted scan the
+     *  info query rode, widened by the full inventory when the installed view has been
+     *  toggled, closed by the info's resolved version when that one says installed -
+     *  the references prove it even where a scan has not answered. */
+    private fun onDiskVersions(name: String, installedNow: String?): Set<String> = buildSet {
+        addAll(service.snapshot?.installedVersions?.get(name).orEmpty())
+        val bare = bareName(name)
+        service.snapshot?.installed.orEmpty()
+            .filter { bare != null && it.require == bare }
+            .forEach { it.version?.let(::add) }
+        installedNow?.let { add(it) }
+    }
+
     /** The document the details page renders for a package whose info landed. */
     private fun detailsHtml(name: String): String {
         val info = infoFor(name) ?: return ""
@@ -1059,37 +1080,38 @@ internal class XMakePackagesPanel(
         // action the page serves, and it must not sit below fourteen entries of closure.
         info.description?.let { page.append("<p>").append(esc(it)).append("</p>") }
 
-        // The versions the view knows of: the ones the search answered, each installable
-        // at its pin; the installed one, uninstallable at its pin too. xmake's grammar
-        // pins a version with a space ("zstd 1.5.6") - the @ separates a repository from
-        // the name, so "name@version" would misparse the version as a package name. The
-        // installed marker only lands when the info's references say so - the resolved
-        // version alone is what the query answered, not a proof of installation. The
+        // The versions the view knows of: the ones the search answered, plus every
+        // version the store holds on disk (the targeted scan rode the info query). Each
+        // version reads its true state - the one this project resolves to and references
+        // is "in use", the rest the store holds are "installed", the others "available" -
+        // and each pin installs or uninstalls. xmake's grammar pins a version with a
+        // space ("zstd 1.5.6") - the @ separates a repository from the name. The
         // toolbar's actions stay whole-package - this section is where a version chooses.
         val versions = row?.versions.orEmpty()
         val installedNow = if (info.installed) info.version else null
-        if (versions.isNotEmpty() || info.installed) {
-            page.append("<p class='sec'>VERSIONS")
-            if (versions.isNotEmpty()) {
-                page.append(" <span class='count'>(").append(versions.size).append(")</span>")
-            }
-            page.append("</p>")
-            versions.forEach { version ->
+        val onDisk = onDiskVersions(name, installedNow)
+        val allVersions = versions + onDisk.filter { onDiskVersion -> versions.none { it == onDiskVersion } }
+        if (allVersions.isNotEmpty()) {
+            page.append("<p class='sec'>VERSIONS <span class='count'>(")
+                .append(allVersions.size).append(")</span></p>")
+            allVersions.forEach { version ->
                 val pinned = "$name $version"
                 page.append("<div class='dep'><b>").append(esc(version)).append("</b>")
-                if (version == installedNow) {
-                    page.append(" <span class='ok'>installed</span> <a href='action://uninstall/")
-                        .append(esc(pinned)).append("'>Uninstall</a>")
-                } else {
-                    page.append(" <span class='g'>available</span> <a href='action://install/")
-                        .append(esc(pinned)).append("'>Install</a>")
+                when {
+                    version == installedNow -> {
+                        page.append(" <span class='ok'>in use</span> <a href='action://uninstall/")
+                            .append(esc(pinned)).append("'>Uninstall</a>")
+                    }
+                    version in onDisk -> {
+                        page.append(" <span class='ok'>installed</span> <a href='action://uninstall/")
+                            .append(esc(pinned)).append("'>Uninstall</a>")
+                    }
+                    else -> {
+                        page.append(" <span class='g'>available</span> <a href='action://install/")
+                            .append(esc(pinned)).append("'>Install</a>")
+                    }
                 }
                 page.append("</div>")
-            }
-            if (installedNow != null && versions.none { it == installedNow }) {
-                page.append("<div class='dep'><b>").append(esc(installedNow))
-                    .append("</b> <span class='ok'>installed</span> <a href='action://uninstall/")
-                    .append(esc("$name $installedNow")).append("'>Uninstall</a></div>")
             }
             info.references.orEmpty().forEach { reference ->
                 page.append("<div class='dep'><span class='mono'>")
@@ -1227,7 +1249,7 @@ internal class XMakePackagesPanel(
     private inner class FetchAction : DumbAwareAction(
         "Fetch",
         "Fetch the package's library info from the repository (xmake require --fetch)",
-        com.intellij.icons.AllIcons.Actions.Download,
+        AllIcons.General.Information,
     ) {
 
         override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
@@ -1246,7 +1268,8 @@ internal class XMakePackagesPanel(
 
     private inner class DownloadAction : DumbAwareAction(
         "Download source",
-        "Download the package's source archive without installing (xmake require --download)",
+        "Download the package's source archive without installing (xmake require --download; " +
+            "xmake 3.1.2+ - older xmake rejects the flag)",
         com.intellij.icons.AllIcons.Actions.Download,
     ) {
 
@@ -1266,7 +1289,8 @@ internal class XMakePackagesPanel(
 
     private inner class CheckAction : DumbAwareAction(
         "Check support",
-        "Whether this package is supported on the current platform (xmake require --check)",
+        "Whether this package is supported on the current platform (xmake require --check; " +
+            "xmake 3.1.2+ - older xmake rejects the flag)",
         com.intellij.icons.AllIcons.Actions.Help,
     ) {
 
@@ -1295,20 +1319,28 @@ internal class XMakePackagesPanel(
         override fun update(event: AnActionEvent) {
             val name = selectedPackageName()
             event.presentation.isEnabled = !service.busy && name != null &&
-                infoFor(name)?.installed == true
+                (infoFor(name)?.installed == true || selectedRow()?.isInstalled == true)
         }
 
         override fun actionPerformed(event: AnActionEvent) {
             val name = selectedOrNotify() ?: return
             service.prepareCommand(prepare = { createRequireExport(name) }) { command ->
-                confirmAndRun("Export package", "Exporting the installed '$name' and its dependencies.", command)
+                // The destination is xmake's own default: a "packages" directory in the
+                // project. Naming it is what makes the verb honest - an export whose
+                // destination nobody knows reads as a no-op.
+                confirmAndRun(
+                    "Export package",
+                    "Exporting the installed '$name' and its dependencies into the project's " +
+                        "'packages' directory.",
+                    command,
+                )
             }
         }
     }
 
     private inner class ImportAction : DumbAwareAction(
         "Import",
-        "Import previously exported packages from an archive (xmake require --import)",
+        "Import previously exported packages (xmake require --import)",
         com.intellij.icons.AllIcons.ToolbarDecorator.Import,
     ) {
 
@@ -1319,21 +1351,25 @@ internal class XMakePackagesPanel(
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            val archive = com.intellij.openapi.ui.Messages.showInputDialog(
+            // --import takes package NAMES, searched in --packagedir (default "packages"
+            // in the project) - xmake's own help text and its import implementation read
+            // the arguments as requires, not as an archive path.
+            val name = com.intellij.openapi.ui.Messages.showInputDialog(
                 project,
-                "Path to the exported archive:",
+                "Package to import from the project's 'packages' directory:",
                 "Import packages",
                 null,
             )?.trim().takeUnless { it.isNullOrEmpty() } ?: return
-            service.prepareCommand(prepare = { createRequireImport(archive) }) { command ->
-                confirmAndRun("Import packages", "Importing packages from '$archive'.", command)
+            service.prepareCommand(prepare = { createRequireImport(name) }) { command ->
+                confirmAndRun("Import packages", "Importing '$name' from the 'packages' directory.", command)
             }
         }
     }
 
     private inner class CleanAction : DumbAwareAction(
         "Clean",
-        "Uninstall every installed package and clear the caches (xmake require --clean)",
+        "Clear the package caches and uninstall the packages nothing references; with a " +
+            "selection, just that package (xmake require --clean)",
         com.intellij.icons.AllIcons.Actions.GC,
     ) {
 
@@ -1344,10 +1380,18 @@ internal class XMakePackagesPanel(
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            service.prepareCommand(prepare = { createRequireClean() }) { command ->
+            // xmake's own semantics, both 2.8.7 and 3.1.2: --clean clears the caches and
+            // uninstalls the NOT-REFERENCED packages - the projects still using one keep
+            // it. The names scope the sweep to a selection when there is one.
+            val name = selectedPackageName()
+            service.prepareCommand(prepare = { createRequireClean(name?.let { listOf(it) }.orEmpty()) }) { command ->
                 confirmAndRun(
                     "Clean packages",
-                    "Uninstalling every installed package and clearing the package caches.",
+                    if (name == null) {
+                        "Clearing the package caches and uninstalling the packages no project references."
+                    } else {
+                        "Clearing the caches of '$name' and uninstalling it if nothing references it."
+                    },
                     command,
                 )
             }
@@ -1404,9 +1448,9 @@ internal class XMakePackagesPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            val name = selectedPackageName()
-            event.presentation.isEnabled = !service.busy && name != null &&
-                infoFor(name)?.installed != true
+            val row = selectedRow()
+            event.presentation.isEnabled = !service.busy && row != null &&
+                infoFor(row.name)?.installed != true && !row.isInstalled
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -1416,21 +1460,27 @@ internal class XMakePackagesPanel(
 
     private inner class UpgradeAction : DumbAwareAction(
         "Upgrade",
-        "Upgrade every installed package to the newest version its requirement allows (xmake require --upgrade)",
-        AllIcons.Actions.Download,
+        "Upgrade the selected package, or every declared one without a selection, to the " +
+            "newest version its requirement allows (xmake require --upgrade)",
+        AllIcons.Actions.Upload,
     ) {
 
-        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
             event.presentation.isEnabled = !service.busy
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            service.prepareCommand(prepare = { createRequireUpgrade() }) { command ->
+            val name = selectedPackageName()
+            service.prepareCommand(prepare = { createRequireUpgrade(name) }) { command ->
                 confirmAndRun(
                     "Upgrade packages",
-                    "Upgrading every installed package to the newest version its requirement allows.",
+                    if (name == null) {
+                        "Upgrading every declared package to the newest version its requirement allows."
+                    } else {
+                        "Upgrading '$name' to the newest version its requirement allows."
+                    },
                     command,
                 )
             }
@@ -1448,14 +1498,21 @@ internal class XMakePackagesPanel(
         override fun update(event: AnActionEvent) {
             val name = selectedPackageName()
             event.presentation.isEnabled = !service.busy && name != null &&
-                infoFor(name)?.installed == true
+                (infoFor(name)?.installed == true ||
+                        selectedRow()?.isInstalled == true ||
+                        onDiskVersions(name, null).isNotEmpty())
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            val name = selectedPackageName() ?: return
+            val row = selectedRow() ?: return
+            val name = row.name
             // Bare-name uninstall resolves "latest" and misses a non-latest install; the
-            // version the info resolved is the one the status column vouched for.
-            val version = infoFor(name)?.version?.takeIf { it.isNotBlank() }
+            // version the row or the info vouches for is what gets pinned. An installed
+            // view's row names its version outright; a declared row falls to the info's
+            // resolved version, then to the first the store holds.
+            val version = row.takeIf { it.isInstalled }?.version
+                ?: infoFor(name)?.version?.takeIf { infoFor(name)?.installed == true }
+                ?: onDiskVersions(name, null).firstOrNull()
             val spec = version?.let { "$name $it" } ?: name
             service.prepareCommand(prepare = { createRequireUninstall(spec) }) { command ->
                 confirmAndRun("Uninstall package", "Uninstalling '$spec'.", command)
