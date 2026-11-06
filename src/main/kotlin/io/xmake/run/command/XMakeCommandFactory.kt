@@ -381,6 +381,12 @@ class XMakeCommandFactory(
             require { import = true; packages = listOf(archivePath) }
         }
 
+    /** One `xmake require --scan`: the inventory of what is installed, plain text. */
+    fun createRequireScan(): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { scan = true }
+        }
+
     /** One `xmake require --search <term>`: the repository hits, plain text only. */
     fun createRequireSearch(term: String): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {

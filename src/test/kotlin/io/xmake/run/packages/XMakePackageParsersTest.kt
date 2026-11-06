@@ -425,6 +425,100 @@ class XMakePackageParsersTest {
     }
 
     @Test
+    fun `the scan inventory answers the versions a living install backs`() {
+        val output = "\u001B[0mscanning packages ..\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mnlohmann_json-v3.11.3\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mec1183311a224b34b5c138edda96fdde\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n" +
+            "    -> {cmake=false,debug=false,pic=true,shared=false}\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mnlohmann_json-v3.11.2\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mdeadbeef\u001B[0m: \u001B[38;5;2m, \u001B[0m\u001B[0m, \u001B[38;5;1mempty\u001B[0m\r\n"
+
+        val installed = XMakePackageParsers.parseInstalledScan(output)
+
+        assertEquals(listOf("nlohmann_json"), installed.map { it.require })
+        assertEquals(listOf("v3.11.3"), installed.map { it.version })
+    }
+
+    @Test
+    fun `the scan inventory keeps two installed versions of one package`() {
+        val output = "\u001B[0mscanning packages ..\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mnlohmann_json-v3.11.3\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mec1183311a224b34b5c138edda96fdde\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mnlohmann_json-v3.11.2\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mdeadbeefcafebabe\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n"
+
+        val installed = XMakePackageParsers.parseInstalledScan(output)
+
+        assertEquals(listOf("v3.11.3", "v3.11.2"), installed.map { it.version })
+        assertEquals(listOf("nlohmann_json", "nlohmann_json"), installed.map { it.require })
+    }
+
+    @Test
+    fun `a drained version directory answers nothing after its uninstall`() {
+        // The headings xmake leaves behind once the hash directories are gone - the
+        // empty version dir survives the uninstall, the listing does not.
+        val output = "\u001B[0mscanning packages ..\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mnlohmann_json-v3.11.3\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mec1183311a224b34b5c138edda96fdde\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mnlohmann_json-v3.11.2\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mzstd-1.5.6\u001B[0m:\u001B[0m\r\n"
+
+        val installed = XMakePackageParsers.parseInstalledScan(output)
+
+        assertEquals(listOf("nlohmann_json"), installed.map { it.require })
+        assertEquals(listOf("v3.11.3"), installed.map { it.version })
+    }
+
+    @Test
+    fun `a manifest-less hash counts as invalid, a reference-less one stays installed`() {
+        val output = "\u001B[0mscanning packages ..\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mrsync-3.4.1\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3m0e556441fe434ada89acc3145dd89245\u001B[0m: \u001B[38;5;2m, \u001B[0m\u001B[0m, \u001B[38;5;1minvalid\u001B[0m\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mzstd-v1.5.7\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mb7f056e2143b418a895dd18f17faee9e\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m, \u001B[38;5;1munused\u001B[0m\r\n"
+
+        val installed = XMakePackageParsers.parseInstalledScan(output)
+
+        assertEquals(listOf("zstd"), installed.map { it.require })
+        assertEquals(listOf("v1.5.7"), installed.map { it.version })
+    }
+
+    @Test
+    fun `the scan heading splits dashed names and dashed versions`() {
+        val output = "\u001B[0mscanning packages ..\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mcpp-httplib-0.11.3\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mhashone\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mopenssl-1.1.1-w\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mhashtwo\u001B[0m: \u001B[38;5;2mwindows, x64\u001B[0m\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mfoo-v2-1.0\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mhashthree\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n"
+
+        val installed = XMakePackageParsers.parseInstalledScan(output)
+
+        assertEquals(
+            listOf(
+                "cpp-httplib" to "0.11.3",
+                "openssl" to "1.1.1-w",
+                "foo-v2" to "1.0",
+            ),
+            installed.map { it.require to it.version },
+        )
+    }
+
+    @Test
+    fun `an unparsed heading keeps its children from vouching for the previous version`() {
+        val output = "\u001B[0mscanning packages ..\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mzlib-1.2.13\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mhashok\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n" +
+            "\u001B[0m\u001B[38;5;5;1mzlib-master\u001B[0m:\u001B[0m\r\n" +
+            "\u001B[0m  -> \u001B[38;5;3mhashbranch\u001B[0m: \u001B[38;5;2mlinux, x86_64\u001B[0m\r\n"
+
+        val installed = XMakePackageParsers.parseInstalledScan(output)
+
+        assertEquals(listOf("1.2.13"), installed.map { it.version })
+    }
+
+    @Test
     fun `parses the depgraph json`() {
         val output = """
             {

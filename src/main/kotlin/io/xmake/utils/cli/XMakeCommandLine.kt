@@ -175,6 +175,7 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         flag("--check", options.check)
         flag("--export", options.export)
         flag("--import", options.import)
+        flag("--scan", options.scan)
         flag("--format=json", options.json)
         flag("-y", options.yes)
         args(options.packages)
@@ -300,6 +301,7 @@ internal class RequireScope internal constructor() {
     var check: Boolean = false
     var export: Boolean = false
     var import: Boolean = false
+    var scan: Boolean = false
     /** Answers xmake's interactive prompt; the executor channel cannot, so mutations always set it. */
     var yes: Boolean = false
     /** The packages the action names: the search term, the info target, or the install/uninstall set. */

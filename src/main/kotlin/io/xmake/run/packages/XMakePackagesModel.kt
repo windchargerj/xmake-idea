@@ -110,4 +110,6 @@ data class XMakePackagesSnapshot(
     val infos: Map<String, XMakePackageInfo?> = emptyMap(),
     val closures: Map<String, List<XMakePackageInfo>> = emptyMap(),
     val searchResults: XMakeSearchResults? = null,
+    /** The `--scan` inventory of what is actually installed, null until scanned. */
+    val installed: List<XMakePackageInfo>? = null,
 )
