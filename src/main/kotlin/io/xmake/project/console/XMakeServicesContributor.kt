@@ -249,10 +249,11 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
             JPanel().apply {
                 isOpaque = false
                 layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-                add(JBLabel("Build services").apply {
+                add(JBLabel("Build services", XMakeIcons.XMAKE, javax.swing.SwingConstants.LEADING).apply {
                     font = com.intellij.util.ui.JBFont.create(
                         com.intellij.util.ui.UIUtil.getLabelFont().deriveFont(java.awt.Font.BOLD, 16f),
                     )
+                    iconTextGap = JBUI.scale(8)
                 })
                 add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
                 add(statusLabel)
@@ -381,7 +382,9 @@ internal class AddServiceActionGroup : DefaultActionGroup {
     constructor() : super("Add XMake Service", true)
 
     init {
-        templatePresentation.icon = AllIcons.General.Add
+        // The mark, not a generic plus: the button names whose service it adds, and the
+        // tree's root already wears the same icon - one brand on both ends of the tree.
+        templatePresentation.icon = XMakeIcons.XMAKE
         templatePresentation.description = "Add a build service to the tree"
     }
 
