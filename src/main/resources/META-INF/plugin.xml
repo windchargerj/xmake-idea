@@ -221,6 +221,17 @@
             <add-to-group group-id="ExecutionTargets.Additional"/>
         </group>
 
+        <!-- The Services tree starts empty, and the platform's model drops an empty
+             contributor's root outright (ServiceModel.reset discards the node when
+             getServices comes back empty), so a brand-new project has no root toolbar
+             to reach the + from. Riding the Services tool window's own "+" group - the
+             same mechanism the Run Dashboard and the cloud connections use - keeps the
+             add entry visible before the first instance exists. -->
+        <group id="XMake.Services.AddService"
+               class="io.xmake.project.console.AddServiceActionGroup">
+            <add-to-group group-id="ServiceView.AddService"/>
+        </group>
+
         <action id="XMake.RunToolbar.Build"
                 class="io.xmake.actions.RunToolbarBuildAction"
                 text="Build XMake Profile"

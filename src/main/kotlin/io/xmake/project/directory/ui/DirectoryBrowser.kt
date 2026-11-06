@@ -37,10 +37,16 @@ import io.xmake.utils.extension.ToolkitHostExtension
 import java.awt.event.ActionListener
 
 class DirectoryBrowser(
-    val project: Project?,
+    project: Project?,
     private val browseTitle: String = "Working Directory",
     private val browseDescription: String = "Select the working directory",
 ) : TextFieldWithBrowseButton() {
+
+    /** The project anchoring the chooser's starting directory. An editor that is built
+     *  before its configuration is known starts with null and points at the real project
+     *  on reset; the browse listeners read the value when they are built, so resolving
+     *  the toolkit after the assignment re-anchors them. */
+    var project: Project? = project
 
     private val listeners = mutableSetOf<ActionListener>()
 

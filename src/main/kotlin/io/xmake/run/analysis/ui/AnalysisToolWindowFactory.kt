@@ -33,6 +33,10 @@ internal class AnalysisToolWindowFactory : ToolWindowFactory, DumbAware {
         val content = ContentFactory.getInstance().createContent(null, "Findings", false)
         val panel = AnalysisPanel(project, content)
         content.component = panel
+        // Activating the tool window lands the focus on the findings table itself: the
+        // keyboard flow - walking the findings, jumping to source - starts without a
+        // mouse click first.
+        content.preferredFocusableComponent = panel.focusTarget
         content.setDisposer(panel)
         toolWindow.contentManager.addContent(content)
     }

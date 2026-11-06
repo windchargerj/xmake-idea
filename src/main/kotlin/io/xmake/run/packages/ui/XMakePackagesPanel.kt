@@ -77,11 +77,11 @@ import java.awt.event.ActionEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import javax.swing.AbstractAction
-import javax.swing.JEditorPane
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTable
+import javax.swing.JTextPane
 import javax.swing.KeyStroke
 import javax.swing.ListSelectionModel
 import javax.swing.ScrollPaneConstants
@@ -97,7 +97,8 @@ import javax.swing.ScrollPaneConstants
  * `require --info` reports. Search swaps the rows to the repository hits, and Esc, or
  * an emptied field plus Enter, brings the declared list back. Dependencies are not
  * rows: the depgraph's answer for the selected package reads in the details grid.
- * Two clicks on a row open the install flow. Everything mutates only through a
+ * Two clicks on a row open the install flow, an installed row excluded - the
+ * toolbar's guard holds there too. Everything mutates only through a
  * confirmation naming the exact command line, then streams into the XMake console.
  * The view reflects; it never computes package state itself.
  */
@@ -153,8 +154,12 @@ internal class XMakePackagesPanel(
     /** The header-click sorter: one click sorts the column, another flips the direction -
      *  the arrows render in the platform header. The status column sorts by its state's
      *  weight, so the groups land installed, declared, available - the order the eye
-     *  triages. */
+     *  triages. The version column counts the dot-separated segments numerically, so
+     *  1.10.0 lands after 1.9.0 where the lexicographic order would read it ahead. */
     private val tableSorter = javax.swing.table.TableRowSorter(tableModel).apply {
+        setComparator(COLUMN_VERSION, java.util.Comparator<String> { left, right ->
+            compareVersions(left, right)
+        })
         setComparator(COLUMN_STATUS, java.util.Comparator<String> { left, right ->
             statusWeight(left) - statusWeight(right)
         })
@@ -320,12 +325,17 @@ internal class XMakePackagesPanel(
     }
 
     /** Hands [term] to the repositories - the debounce and Enter both land here. An
-     *  empty term leaves search mode; a one-letter term waits for a fuller ask. */
+     *  empty term leaves search mode; a one-letter term asks nothing of the
+     *  repositories, and the line says so instead of the Enter landing silent. */
     private fun searchNow(rawTerm: String) {
         val term = rawTerm.trim()
         when {
             term.isEmpty() -> service.exitSearch()
-            term.length < MIN_SEARCH_LENGTH -> Unit
+            term.length < MIN_SEARCH_LENGTH -> {
+                // The repositories hear nothing of a one-letter ask; without this line
+                // the Enter would land silent and read as dead.
+                statusLabel.text = "Type at least $MIN_SEARCH_LENGTH characters to search the repositories"
+            }
             else -> {
                 service.search(term)
                 // Behind a mutation the search queues; the line says so instead of the
@@ -341,7 +351,8 @@ internal class XMakePackagesPanel(
      *  containing it - "available" gathers everything the repositories offer. Empty shows
      *  everything again. The sorter applies the filter before its order. */
     private fun applyRowFilter(term: String) {
-        val query = term.trim().lowercase()
+        val trimmed = term.trim()
+        val query = trimmed.lowercase()
         tableSorter.rowFilter = if (query.isEmpty()) {
             null
         } else {
@@ -357,13 +368,17 @@ internal class XMakePackagesPanel(
             }
         }
         // The empty state speaks for what is on screen: a filter that hides every row
-        // says so with the term, instead of repeating the list-level narration.
+        // says so with the term as typed, not the lowercased one the match ran on - and
+        // while the first load is still landing there are no rows to miss yet, so the
+        // loading narration stays instead of a false "no package matches".
         val empty = table.emptyText
-        if (query.isNotEmpty() && table.rowCount == 0) {
-            empty.clear()
-            empty.text = "No package matches '$query'"
-        } else {
-            applyEmptyText(service.snapshot)
+        when {
+            service.snapshot == null -> {}
+            query.isNotEmpty() && table.rowCount == 0 -> {
+                empty.clear()
+                empty.text = "No package matches '$trimmed'"
+            }
+            else -> applyEmptyText(service.snapshot)
         }
     }
 
@@ -460,7 +475,7 @@ internal class XMakePackagesPanel(
         background = mainBackground()
         border = JBUI.Borders.compound(
             CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
-            JBUI.Borders.empty(10, 16, 8, 16),
+            JBUI.Borders.empty(10, 12, 8, 12),
         )
         fun row(gridy: Int, component: JComponent, stretch: Boolean = true) = add(
             component,
@@ -484,13 +499,14 @@ internal class XMakePackagesPanel(
     /** The details page's body: one HTML document, so the typography is real - a
      *  paragraph for the description, lettered section headings, indented dependency
      *  entries, install and uninstall links beside each version. The links route back
-     *  to the same confirmation flows the toolbar uses. */
-    private val detailsBody = JEditorPane().apply {
+     *  to the same confirmation flows the toolbar uses, and the loading row embeds its
+     *  spinner here - hence the text pane, the editor pane's component-embedding one. */
+    private val detailsBody = JTextPane().apply {
         isEditable = false
         isOpaque = false
         contentType = "text/html"
         editorKit = htmlKit()
-        border = JBUI.Borders.empty(8, 16, 12, 16)
+        border = JBUI.Borders.empty(8, 12, 12, 12)
         addHyperlinkListener { event ->
             if (event.eventType != javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) return@addHyperlinkListener
             val target = event.description ?: return@addHyperlinkListener
@@ -501,19 +517,10 @@ internal class XMakePackagesPanel(
         }
     }
 
-    /** The info query's spinner; reused across rebuilds so one icon animates the wait,
-     *  wherever the body currently sits. */
+    /** The info query's spinner: the loading row embeds it in the details body, so one
+     *  icon animates the wait - the query rides the executor lane, over SSH in the
+     *  worst case, and the icon says the click was heard - reused across renders. */
     private val infoLoading = AsyncProcessIcon("XMakePackagesInfoLoading")
-
-    /** The loading card: the query rides the executor lane, over SSH in the worst case;
-     *  the spinner says the click was heard. */
-    private val detailsLoading = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
-        isOpaque = true
-        background = mainBackground()
-        border = JBUI.Borders.empty(12, 16)
-        add(infoLoading)
-        add(JBLabel("Loading...").apply { foreground = infoForeground() })
-    }
 
     /** The details pane as the Marketplace page lays it out: the header fixed, the page
      *  scrolling under it. */
@@ -538,8 +545,8 @@ internal class XMakePackagesPanel(
         emptyText.text = "Select a package to read its details"
     }
 
-    /** The right pane of the split; swaps between the details, the loading card, and
-     *  the nothing-selected card. */
+    /** The right pane of the split; swaps between the details page and the
+     *  nothing-selected card - the loading state renders in the page's body. */
     private val detailsCard = JPanel(BorderLayout())
 
     init {
@@ -562,9 +569,12 @@ internal class XMakePackagesPanel(
         exitSearchOnEscape(table)
         // The platform's own double-click handling (the Analysis view's pattern): two
         // clicks on a row are the Install entry - where a search hit starts its flow.
+        // The toolbar's guard rides along: an installed row does not reinstall, so the
+        // double-click stays quiet instead of re-asking what the button refuses.
         object : DoubleClickListener() {
             override fun onDoubleClick(event: MouseEvent): Boolean {
                 val name = selectedPackageName() ?: return false
+                if (infoFor(name)?.installed == true) return true
                 installPackage(name)
                 return true
             }
@@ -582,7 +592,9 @@ internal class XMakePackagesPanel(
                 CustomLineBorder(infoBorderColor(), JBUI.insetsBottom(1)),
                 JBUI.Borders.empty(6, 8),
             )
-            addToCenter(searchField)
+            // The field rides the left slot at the 220 width its preference declares; a
+            // center slot would stretch it across the column.
+            addToLeft(searchField)
             addToRight(toolbar().component)
         }
 
@@ -599,6 +611,17 @@ internal class XMakePackagesPanel(
                 .addToCenter(split)
                 .addToBottom(statusPanel),
         )
+        // The status line promises Esc without naming a component, so the exit-search
+        // action also rides the root's WHEN_IN_FOCUSED_WINDOW map: focus on the toolbar,
+        // the details page, or anywhere else in the panel leaves search mode just the
+        // same. The table and the field keep their focused bindings.
+        getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+            .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), EXIT_SEARCH)
+        actionMap.put(EXIT_SEARCH, object : AbstractAction() {
+            override fun actionPerformed(event: ActionEvent) {
+                leaveSearch()
+            }
+        })
 
         project.messageBus.connect(parentDisposable).subscribe(
             XMakePackagesService.TOPIC,
@@ -776,7 +799,7 @@ internal class XMakePackagesPanel(
                 append(" - Esc, or an emptied field plus Enter, returns to the package list")
             }
             snapshot != null -> "${snapshot.packages.size} declared package(s)"
-            else -> "Press Refresh to list the declared packages"
+            else -> "Loading the declared packages..."
         }
         val filtered = table.rowCount
         val allRows = tableModel.rowCount
@@ -820,6 +843,27 @@ internal class XMakePackagesPanel(
         else -> 3
     }
 
+    /** The version sort's order: the dot-separated segments count numerically, so
+     *  1.10.0 lands after 1.9.0 - the lexicographic order reads the ten as a one. A
+     *  segment's leading digits are the number (the "(+n)" count a hit's cell carries
+     *  rides along harmlessly), a segment without digits counts 0, and a missing
+     *  version sorts last. */
+    private fun compareVersions(left: String?, right: String?): Int {
+        if (left == null && right == null) return 0
+        if (left == null) return 1
+        if (right == null) return -1
+        val leftSegments = left.split('.')
+        val rightSegments = right.split('.')
+        for (index in 0 until maxOf(leftSegments.size, rightSegments.size)) {
+            val diff = leftSegments[index].leadingNumber() - rightSegments[index].leadingNumber()
+            if (diff != 0) return diff
+        }
+        return 0
+    }
+
+    /** The number a version segment opens with: its leading digits, or 0 without any. */
+    private fun String.leadingNumber(): Int = takeWhile(Char::isDigit).toIntOrNull() ?: 0
+
     /** The bare package name, the way the closure's require fields read. */
     private fun bareName(pkgRequire: String?): String? =
         pkgRequire?.trim()?.substringBefore(" ")?.substringAfterLast("::")?.lowercase()
@@ -833,8 +877,8 @@ internal class XMakePackagesPanel(
 
     /**
      * Renders the selected package: the header (name, badges, meta) over the details
-     * page, the loading card while the query rides the lane, or the nothing-selected
-     * card.
+     * page - whose body carries the spinner row or the wait note while the info is not
+     * there yet - or the nothing-selected card.
      */
     private fun renderDetails(name: String?) {
         detailsPackage = name
@@ -850,6 +894,9 @@ internal class XMakePackagesPanel(
                 detailsName.text = name
                 renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
                 detailsMeta.text = " "
+                // The links belong to the package the header names; a render that keeps
+                // the header clears them, or the previous selection's would survive.
+                renderRepoLink(null)
                 detailsBody.text = wrapHtml(
                     "<p class='g'>Waiting for the current operation to finish before loading the info of " +
                         "'${esc(name)}' - ${esc(service.currentOperation ?: "working")} - then the row loads " +
@@ -858,8 +905,17 @@ internal class XMakePackagesPanel(
                 detailsBody.caretPosition = 0
             }
             infoFor(name) == null && service.busy -> {
-                showDetailsCard(detailsLoading)
-                return
+                // The plain busy wait rides the same page as the info will: the header
+                // keeps the selection, the body the spinner row - the pane never
+                // collapses into a nameless card mid-read.
+                showDetailsCard(detailsPane)
+                detailsName.text = name
+                renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
+                detailsMeta.text = " "
+                renderRepoLink(null)
+                detailsBody.text = wrapHtml("<p class='g'>Loading '${esc(name)}'...</p>")
+                detailsBody.caretPosition = 0
+                detailsBody.insertComponent(infoLoading)
             }
             infoFor(name) == null -> {
                 showDetailsCard(detailsPane)
@@ -927,8 +983,8 @@ internal class XMakePackagesPanel(
         detailsRepoSlot.repaint()
     }
 
-    /** Swaps the right pane among the three cards: the nothing-selected state, the
-     *  details page, and the loading spinner. */
+    /** Swaps the right pane between the two cards: the nothing-selected state and the
+     *  details page - the loading state renders in the page's body. */
     private fun showDetailsCard(card: JComponent) {
         detailsCard.removeAll()
         detailsCard.add(card, BorderLayout.CENTER)
@@ -1241,10 +1297,11 @@ internal class XMakePackagesPanel(
         /** The splitter's persistence key; the user's split survives restarts. */
         private const val SPLIT_KEY = "XMakePackagesView"
 
-        /** The input-map key of the exit-search binding, shared by the table and the field. */
+        /** The input-map key of the exit-search binding, shared by the table, the field,
+         *  and the panel root's window-wide map. */
         private const val EXIT_SEARCH = "XMakePackages.exitSearch"
 
-        private const val LOADING = "Loading the declared packages... - or press Refresh"
+        private const val LOADING = "Loading the declared packages..."
 
         /** How long typing must pause before the repositories are asked. */
         private const val SEARCH_DEBOUNCE_MS = 600
@@ -1329,12 +1386,12 @@ internal class Chip(text: String, private val tone: Color) : JPanel(null) {
 
     override fun getPreferredSize(): Dimension {
         val text = label.preferredSize
-        return Dimension(text.width + PAD_X * 2, text.height + PAD_Y * 2)
+        return Dimension(text.width + JBUI.scale(PAD_X) * 2, text.height + JBUI.scale(PAD_Y) * 2)
     }
 
     override fun doLayout() {
         label.setBounds(
-            PAD_X,
+            JBUI.scale(PAD_X),
             (height - label.preferredSize.height) / 2,
             label.preferredSize.width,
             label.preferredSize.height,

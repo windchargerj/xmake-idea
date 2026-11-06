@@ -17,11 +17,16 @@
 package io.xmake.project.console
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.project.Project
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
+import com.intellij.util.messages.MessageBusConnection
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
+import io.xmake.run.target.SELECT_BUILD_PROFILE_FIRST
 import io.xmake.utils.cli.XMakeServiceKind
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -33,6 +38,8 @@ import java.awt.event.KeyEvent
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 
 /** The human name of one service kind, shared by the tree nodes and the detail rows. */
 internal fun kindName(kind: XMakeServiceKind): String = when (kind) {
@@ -77,21 +84,22 @@ internal fun serviceStatusIcon(state: XMakeServiceState, probed: Boolean): Icon 
 }
 
 /**
- * The editor and switchboard of one service kind, shared by both surfaces: the XMake
+ * The editor and switchboard of one service instance, shared by both surfaces: the XMake
  * tool window's tab embeds one per kind, and the platform Services contributor shows
  * the selected node's instance in its detail pane.
  *
- * The panel is a plain view: it renders the state its owner pushes via [show], and
- * every button forwards to [XMakeServicesSnapshotService], which runs the real xmake
- * command on the executor lane and re-probes - the panel itself never touches the
- * toolkit, a socket, or a file.
+ * The panel is a plain view: it renders the state its owner pushes via [show], re-renders
+ * itself on every [XMakeServicesSnapshotService.TOPIC] event so an action's result is
+ * visible where the action happened, and every button forwards to
+ * [XMakeServicesSnapshotService], which runs the real xmake command on the executor lane
+ * and re-probes - the panel itself never touches the toolkit, a socket, or a file.
  */
 class XMakeServiceDetailPanel(
     private val project: Project,
     val kind: XMakeServiceKind,
     /** The instance this panel edits; its endpoint record is keyed by this name. */
     val instanceName: String = kind.name,
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), Disposable {
 
     /** The rows live in their own grid, anchored to the top of the pane: a GridBag in a
      *  BorderLayout's NORTH keeps its own height instead of floating in the middle of an
@@ -104,6 +112,12 @@ class XMakeServiceDetailPanel(
     private val clearButton = JButton("Clear")
     private val connectButton = JButton("Connect")
     private val disconnectButton = JButton("Disconnect")
+
+    /** The kind-level connection the Connect/Disconnect verbs actually act on, spelled
+     *  out beside them when it is not what this panel's field shows. */
+    private val connectionTargetLabel = JBLabel().apply {
+        foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+    }
     private val hintLabel = JBLabel()
 
     /** The last snapshot's state and the busy flag, so every control's enablement is
@@ -111,17 +125,24 @@ class XMakeServiceDetailPanel(
     private var lastState: XMakeServiceState? = null
     private var busy = false
 
+    /** The bus subscription, alive only while the panel sits on a component tree: the
+     *  Services tree rebuilds its descriptors on every reset, and a retired panel must
+     *  stop listening instead of keeping the connection alive. */
+    private var busConnection: MessageBusConnection? = null
+
     init {
         isOpaque = false
         border = JBUI.Borders.empty(12, 16, 12, 16)
         rows.isOpaque = false
         add(rows, BorderLayout.NORTH)
 
-        // Row 0: the summary line - name and the state beside it. The full state
-        // sentence rides the tooltip, the way the Services tree nodes do.
+        // Row 0: the summary line - name and the state beside it. The instance name
+        // rides the title: two instances of one kind must read apart here the way
+        // their tree nodes do. The full state sentence rides the tooltip.
         addRow(
             0,
-            JBLabel(kindName(kind)).apply { font = JBFont.label().biggerOn(2f).deriveFont(java.awt.Font.BOLD) },
+            JBLabel("${kindName(kind)} - $instanceName")
+                .apply { font = JBFont.label().biggerOn(2f).deriveFont(java.awt.Font.BOLD) },
             statusLabel,
         )
 
@@ -129,32 +150,51 @@ class XMakeServiceDetailPanel(
         // field a field's width, the buttons at their natural size.
         addRow(1, caption("Endpoint"), endpointField.apply {
             preferredSize = Dimension(JBUI.scale(260), preferredSize.height)
+            // Narrow details panes shrink the field instead of clipping the row's
+            // buttons away.
+            minimumSize = Dimension(JBUI.scale(120), minimumSize.height)
         }, applyButton, clearButton)
 
-        // Row 2: the connection verbs, mutually exclusive as before.
-        addRow(2, caption("Connection"), connectButton, disconnectButton)
+        // Row 2: the connection verbs, mutually exclusive in enablement as before,
+        // plus the annotation of the kind-level connection they act on when this
+        // instance's own endpoint record is not it.
+        addRow(2, caption("Connection"), connectButton, disconnectButton, connectionTargetLabel)
 
-        // Row 3: what the connection is missing; the row hides itself when empty.
+        // Row 3: what the last action produced or the connection is missing; the row
+        // hides itself when empty.
         hintLabel.foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
         addRow(3, hintLabel)
 
-        applyButton.addActionListener {
-            project.xmakeServicesSnapshots.applyEndpoint(instanceName, kind, endpointField.text)
-        }
+        applyButton.addActionListener { applyEndpointField() }
         clearButton.addActionListener {
-            project.xmakeServicesSnapshots.clearEndpoint(instanceName)
+            project.xmakeServicesSnapshots.clearEndpoint(instanceName, kind)
         }
         connectButton.addActionListener {
-            project.xmakeServicesSnapshots.connectService(kind)
+            // The instance's own record rides the connect: two instances of one kind
+            // connect to the addresses their nodes name, not to whichever was applied
+            // last.
+            project.xmakeServicesSnapshots.connectService(
+                kind,
+                project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(instanceName),
+            )
         }
         disconnectButton.addActionListener {
             project.xmakeServicesSnapshots.disconnectService(kind)
         }
         // Enter in the field applies - the field is the primary input, the Apply button
         // stays for mouse users.
-        endpointField.addActionListener {
-            project.xmakeServicesSnapshots.applyEndpoint(instanceName, kind, endpointField.text)
-        }
+        endpointField.addActionListener { applyEndpointField() }
+        // Editing the field retires the red outline a refused apply left behind: the
+        // next apply is judged on its own text.
+        endpointField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(event: DocumentEvent) = clearEndpointError()
+            override fun removeUpdate(event: DocumentEvent) = clearEndpointError()
+            override fun changedUpdate(event: DocumentEvent) = clearEndpointError()
+
+            private fun clearEndpointError() {
+                endpointField.putClientProperty("JComponent.outline", null)
+            }
+        })
     }
 
     /** A caption in the label's gray, the same rule the details pages use for theirs. */
@@ -171,7 +211,9 @@ class XMakeServiceDetailPanel(
             anchor = GridBagConstraints.WEST
             // A summary line keeps its own height; control rows stretch across the page.
             fill = if (row == 0) GridBagConstraints.NONE else GridBagConstraints.HORIZONTAL
-            insets = JBUI.insets(if (row == 0) 0 else 8, 0)
+            // Rows own only their top gap: one rhythm of 8px between every line,
+            // instead of the doubled 16px side insets added up to.
+            insets = JBUI.insetsTop(if (row == 0) 0 else 8)
         }
         val line = JPanel(GridBagLayout()).apply { isOpaque = false }
         components.forEachIndexed { index, component ->
@@ -180,8 +222,15 @@ class XMakeServiceDetailPanel(
                 GridBagConstraints().apply {
                     gridx = index
                     anchor = GridBagConstraints.WEST
-                    fill = GridBagConstraints.NONE
-                    weightx = 0.0
+                    // The endpoint field is the one stretchable cell: it yields width
+                    // when the pane is narrow, so the row's buttons stay visible.
+                    if (component === endpointField) {
+                        fill = GridBagConstraints.HORIZONTAL
+                        weightx = 1.0
+                    } else {
+                        fill = GridBagConstraints.NONE
+                        weightx = 0.0
+                    }
                     insets = JBUI.insetsRight(if (index == 0) 10 else 6)
                 },
             )
@@ -197,17 +246,13 @@ class XMakeServiceDetailPanel(
         statusLabel.text = state.shortStatus(probed)
         statusLabel.icon = serviceStatusIcon(state, probed)
         statusLabel.toolTipText = serviceStatusText(state, probed)
+        val ownEndpoint = project.getService(XMakeServiceEndpointsService::class.java)
+            .configuredEndpoint(instanceName)
         if (!endpointField.isFocusOwner) {
-            endpointField.text = project.getService(XMakeServiceEndpointsService::class.java)
-                .configuredEndpoint(instanceName)
-                ?: state.endpoint
-                ?: ""
+            endpointField.text = ownEndpoint ?: state.endpoint ?: ""
         }
-        hintLabel.text = when {
-            state.endpoint == null || state.tokenKnown -> ""
-            else -> "No token is stored for this endpoint - connecting needs one (see Console)"
-        }
-        hintLabel.parent?.isVisible = hintLabel.text.isNotEmpty()
+        renderHint(state)
+        renderConnectionTarget(ownEndpoint)
         refreshEnabled()
     }
 
@@ -219,14 +264,124 @@ class XMakeServiceDetailPanel(
         refreshEnabled()
     }
 
+    /** The render path every snapshot event reruns: the same state the contributor's
+     *  tree node computes (the kind's probe answer with this instance's own endpoint
+     *  where one is recorded), shown and busy-gated from the freshest snapshot. */
+    private fun renderFromSnapshot() {
+        if (project.isDisposed) return
+        val snapshots = project.serviceOrNull<XMakeServicesSnapshotService>()
+        val snapshot = snapshots?.snapshot
+        val kindState = snapshot?.services?.get(kind) ?: kind.unprobedState()
+        val state = project.getService(XMakeServiceEndpointsService::class.java)
+            .configuredEndpoint(instanceName)
+            ?.let { kindState.copy(endpoint = it) }
+            ?: kindState
+        show(state, snapshot != null)
+        setBusy(snapshots?.probing ?: false)
+    }
+
+    /** The hint row, loudest voice first: the last operation's failure in the error
+     *  red, a refused apply with the field outlined, the token nudge. The probe's
+     *  progress and "probed" narration stay off the panel - the summary line carries
+     *  the state and the root overview the running status message. */
+    private fun renderHint(state: XMakeServiceState) {
+        val snapshots = project.serviceOrNull<XMakeServicesSnapshotService>()
+        val message = snapshots?.statusMessage
+        val failed = snapshots?.statusIsFailure == true
+        // A refused apply is a failed operation like a failed probe: the red line rule
+        // the status message's failure flag spells out.
+        val refused = message == XMakeServicesSnapshotService.ENDPOINT_INVALID_MESSAGE ||
+            message == SELECT_BUILD_PROFILE_FIRST
+        hintLabel.text = when {
+            failed || refused -> message ?: ""
+            state.endpoint == null -> "Set an endpoint first - connecting needs one"
+            state.tokenKnown -> ""
+            else -> "No token is stored for this endpoint - run `xmake service --connect --${kind.flag}` once in a terminal"
+        }
+        hintLabel.foreground = if (failed || refused) {
+            JBColor.RED
+        } else {
+            com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+        }
+        hintLabel.parent?.isVisible = hintLabel.text.isNotEmpty()
+        endpointField.putClientProperty(
+            "JComponent.outline",
+            if (message == XMakeServicesSnapshotService.ENDPOINT_INVALID_MESSAGE) "error" else null,
+        )
+    }
+
+    /** The kind-level connection the verbs act on: the snapshot's record for the kind,
+     *  which every instance of the kind shares. The row annotates the divergence only -
+     *  connect re-points that record at this instance's endpoint before connecting, and
+     *  disconnect ends whatever connection the kind holds. */
+    private fun renderConnectionTarget(ownEndpoint: String?) {
+        val kindEndpoint = project.serviceOrNull<XMakeServicesSnapshotService>()
+            ?.snapshot?.services?.get(kind)?.endpoint
+        connectionTargetLabel.text = when {
+            ownEndpoint == null || kindEndpoint == null || kindEndpoint == ownEndpoint -> ""
+            else ->
+                "Connect points the shared ${kindName(kind)} connection at this instance's $ownEndpoint first; " +
+                    "Disconnect ends the connection it holds ($kindEndpoint)"
+        }
+        connectionTargetLabel.isVisible = connectionTargetLabel.text.isNotEmpty()
+    }
+
+    /** The apply verb sets what the field holds: a blank field would silently clear
+     *  the configured endpoint, so blank applies do nothing - clearing is the Clear
+     *  button's own explicit verb. */
+    private fun applyEndpointField() {
+        if (endpointField.text.isBlank()) return
+        project.xmakeServicesSnapshots.applyEndpoint(instanceName, kind, endpointField.text)
+    }
+
     private fun refreshEnabled() {
         val state = lastState
-        val configured = state?.endpoint != null ||
-            project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(instanceName) != null
+        // Clear answers for a record of this instance's own only: the snapshot service
+        // drops a clear with no record, so lighting the button on the kind-level answer
+        // would make the click a silent nothing.
+        val clearable = project.getService(XMakeServiceEndpointsService::class.java)
+            .configuredEndpoint(instanceName) != null
         endpointField.isEnabled = !busy
         applyButton.isEnabled = !busy
-        clearButton.isEnabled = !busy && configured
-        connectButton.isVisible = !busy && state?.endpoint != null && state?.connected != true
-        disconnectButton.isVisible = !busy && state?.connected == true
+        clearButton.isEnabled = !busy && clearable
+        // The verbs stay on the page and say why they are off, the way the tree node's
+        // toolbar actions do: a button that vanishes leaves the row jumping and the
+        // reason unspoken.
+        connectButton.isEnabled = !busy && state?.endpoint != null && state?.connected != true
+        connectButton.toolTipText = when {
+            busy -> "Probing the build cache and service status..."
+            state == null -> "The status is unknown until a probe runs"
+            state.connected -> "Connected - disconnect first"
+            state.endpoint == null -> "Configure an endpoint before connecting"
+            else -> "Connect this service instance through xmake service"
+        }
+        disconnectButton.isEnabled = !busy && state?.connected == true
+        disconnectButton.toolTipText = when {
+            busy -> "Probing the build cache and service status..."
+            state == null -> "The status is unknown until a probe runs"
+            state.connected -> "Disconnect this service instance through xmake service"
+            else -> "Not connected"
+        }
     }
+
+    override fun addNotify() {
+        super.addNotify()
+        if (busConnection != null || project.isDisposed) return
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(
+            XMakeServicesSnapshotService.TOPIC,
+            XMakeServicesSnapshotService.Listener { renderFromSnapshot() },
+        )
+        busConnection = connection
+        // Events may have passed by while the panel was off the tree: arrive current.
+        renderFromSnapshot()
+    }
+
+    override fun removeNotify() {
+        busConnection?.dispose()
+        busConnection = null
+        super.removeNotify()
+    }
+
+    override fun dispose() {}
 }

@@ -19,8 +19,10 @@ package io.xmake.run.pack
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.RawCommandLineEditor
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Cell
@@ -38,8 +40,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.FlowLayout
 import javax.swing.DefaultComboBoxModel
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JTextField
+import javax.swing.event.DocumentEvent
 
 /** The package combo entry meaning "no explicit xpack": `xmake pack` packs every declared one. */
 private const val ALL_PACKAGES = "<all>"
@@ -48,6 +53,31 @@ private const val ALL_PACKAGES = "<all>"
 private const val FORMATS_COMMENT =
     "Formats filter what the xpack already declares in set_formats - " +
             "undeclared formats are silently skipped by xmake"
+
+/** The package row's standing line: what the field takes besides an enumerated xpack name. */
+private const val PACKAGE_COMMENT =
+    "The xpack() to pack; $ALL_PACKAGES packs every declared one"
+
+/** The package row's answer when the enumeration succeeded but found nothing to list. */
+private const val EMPTY_RESULT_HINT =
+    "No xpack() packages found - add includes(\"@builtin/xpack\") " +
+            "and an xpack() section to the project"
+
+/** Appended when the answer came from the enumeration cache: the cache cannot see xpack()
+ *  sections added after it was filled, so the staleness is named on the row instead of
+ *  leaving the Refresh button as the only way to find out. */
+private const val CACHED_SUFFIX = " (cached - press Refresh to re-scan)"
+
+/** The package row's sentence while the enumeration query is in flight. */
+private const val LISTING_HINT = "Listing the project's xpack() packages..."
+
+/** The Refresh button's caption, idle and waiting for a press. */
+private const val REFRESH = "Refresh"
+
+/** The Refresh button's caption while the enumeration query is in flight: the query may
+ *  queue behind a build on the executor's single lane, so a disabled button that says so
+ *  is what keeps "queued" from reading as "hung". */
+private const val REFRESH_LISTING = "Listing..."
 
 /** The pack run's own options: which xpack, its formats, and where the artifacts land. */
 internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConfiguration>() {
@@ -66,8 +96,27 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
     /** The xpack() entries the enumeration query last answered; empty until it succeeds. */
     private var entries: List<XMakePackEntry> = emptyList()
 
+    /** Rewrites the package row's comment; wired to the real line in [createEditor]. The
+     *  enumeration's states live here, not on the formats row: they describe how this
+     *  row's list was filled, and this is the row the user watches for the answer. */
+    private var packageComment: (String) -> Unit = {}
+
     /** Rewrites the formats row's comment; wired to the real line in [createEditor]. */
     private var formatsComment: (String) -> Unit = {}
+
+    /** The Refresh button, wired to the real row in [createEditor]; the enumeration flips
+     *  it to its in-flight caption while its query waits on the executor's lane. */
+    private var refreshButton: JButton? = null
+
+    /** The process sentence - listing, failure, no profile - the enumeration last put on
+     *  the package row. While it stands, name edits keep it verbatim: the unknown-name and
+     *  cached-answer call-outs only compose onto an answer the enumeration has given. */
+    private var processHint: String? = null
+
+    /** Whether the entries on hand came from the enumeration cache, which cannot see
+     *  xpack() sections added after it was filled - the package row says so instead of
+     *  leaving the Refresh button as the only reminder. */
+    private var answeredFromCache = false
 
     /** The formats checked in the row. Kept across package re-selections and round-trips
      *  for the formats the packages share - but pruned to whatever the selected package
@@ -89,12 +138,27 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
 
     init {
         packName.addActionListener {
-            if (!isResetting) refreshFormatsRow()
+            if (!isResetting) {
+                refreshFormatsRow()
+                refreshPackageHint()
+            }
         }
+        // Free text only fires the action listener on Enter; listening to the editor's
+        // document keeps the unknown-name call-out live while the name is being typed.
+        (packName.editor.editorComponent as? JTextField)?.document?.addDocumentListener(
+            object : DocumentAdapter() {
+                override fun textChanged(event: DocumentEvent) {
+                    if (!isResetting) refreshPackageHint()
+                }
+            },
+        )
     }
 
     override fun resetEditorFrom(configuration: XMakePackRunConfiguration) {
         editedProject = configuration.project
+        // The browser is built before any project is known; pointing it at the edited one
+        // here gives the browse listener its project anchor before the toolkit resolves.
+        outputDirectory.project = editedProject
         isResetting = true
         try {
             packName.editor.item = configuration.packName.trim().ifEmpty { ALL_PACKAGES }
@@ -123,10 +187,9 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
 
     override fun createEditor(): JComponent = panel {
         row("Package:") {
-            cell(packName).align(AlignX.FILL)
-                .comment("The xpack() to pack; $ALL_PACKAGES packs every declared one")
-            button("Refresh") { scheduleEnumeration(force = true) }
-                .component.toolTipText = "Re-run the xpack enumeration query"
+            packageComment = cell(packName).align(AlignX.FILL).mutableComment(PACKAGE_COMMENT)
+            refreshButton = button(REFRESH) { scheduleEnumeration(force = true) }.component
+                .apply { toolTipText = "Re-run the xpack enumeration query" }
         }
         row("Formats:") {
             formatsComment = cell(formatsRow).align(AlignX.FILL).mutableComment(FORMATS_COMMENT)
@@ -182,6 +245,12 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
                 }
             })
         }
+        if (declared.isEmpty()) {
+            // With nothing to check the row would collapse to a zero-height empty panel,
+            // leaving the "Formats:" label dangling over nothing; the disabled placeholder
+            // keeps the row - and its "none declared" state - visible on the row itself.
+            formatsRow.add(JBLabel("none declared").apply { isEnabled = false })
+        }
         setFormatsHint(
             when {
                 declared.isNotEmpty() -> FORMATS_COMMENT
@@ -220,19 +289,23 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
         if (project.isDisposed) return
         val profile = project.activeOrSingleXMakeBuildProfile
         if (profile == null) {
-            setFormatsHint("$SELECT_BUILD_PROFILE_FIRST to enumerate the project's xpack() packages")
+            setProcessHint("$SELECT_BUILD_PROFILE_FIRST to enumerate the project's xpack() packages")
             return
         }
         if (!force) {
             ENUMERATION_CACHE[profile.id]?.let { cached ->
+                answeredFromCache = true
                 applyEntries(cached)
                 return
             }
         }
         queryJob?.cancel()
+        answeredFromCache = false
         // The query may queue behind a build on the executor's lane, so say it is running
-        // before submitting - otherwise the stale hint reads as if nothing were loading.
-        setFormatsHint("Listing the project's xpack() packages...")
+        // before submitting - the row's sentence and the disabled, renamed Refresh button
+        // together keep "queued" from reading as "hung".
+        setProcessHint(LISTING_HINT)
+        setQueryInFlight(true)
         queryJob = queryScope.launch {
             val output = try {
                 project.xmakeExecutor.submit {
@@ -243,8 +316,9 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
                 throw cancellation
             } catch (error: Exception) {
                 withContext(uiEdt) {
+                    setQueryInFlight(false)
                     // The same failure sentence shape the Packages panel's first load uses.
-                    setFormatsHint(
+                    setProcessHint(
                         "Could not list the project's xpack() packages: " +
                                 (error.message ?: error.javaClass.simpleName) +
                                 " - fix the problem and press Refresh",
@@ -260,17 +334,16 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
         }
     }
 
-    /** Fills the pickers from one enumeration answer; on the EDT like every other write. */
+    /** Fills the pickers from one enumeration answer; on the EDT like every other write.
+     *  The answer retires the process sentence - the package row switches to its standing
+     *  hint, which the unknown-name and cached-answer call-outs compose onto. */
     private fun applyEntries(parsed: List<XMakePackEntry>) {
         entries = parsed
+        processHint = null
         repopulatePackNames()
         refreshFormatsRow()
-        if (parsed.isEmpty()) {
-            setFormatsHint(
-                "No xpack() packages found - add includes(\"@builtin/xpack\") " +
-                        "and an xpack() section to the project",
-            )
-        }
+        refreshPackageHint()
+        setQueryInFlight(false)
     }
 
     private fun repopulatePackNames() {
@@ -281,8 +354,50 @@ internal class XMakePackRunConfigurationEditor : SettingsEditor<XMakePackRunConf
         packName.editor.item = previous.ifEmpty { ALL_PACKAGES }
     }
 
+    /** Puts an enumeration process sentence on the package row, where it stays until the
+     *  enumeration answers again - even while the name is retyped. */
+    private fun setProcessHint(text: String) {
+        processHint = text
+        setPackageHint(text)
+    }
+
+    /** Rewrites the package row's hint from what the enumeration has answered and what the
+     *  field holds: the standing line, or the empty-result sentence while nothing was
+     *  listed - plus the unknown-name call-out for free text outside the answer, and the
+     *  cache note when the answer came from the cache. A process sentence still standing
+     *  wins outright; it is the news until the enumeration answers over it. */
+    private fun refreshPackageHint() {
+        processHint?.let { process ->
+            setPackageHint(process)
+            return
+        }
+        val base = if (entries.isEmpty()) EMPTY_RESULT_HINT else PACKAGE_COMMENT
+        val name = packNameValue()
+        val unknown = entries.isNotEmpty() && name.isNotEmpty() && entries.none { it.name == name }
+        val cached = if (answeredFromCache) CACHED_SUFFIX else ""
+        setPackageHint(
+            when {
+                unknown -> "$base. \"$name\" is not among the enumerated xpack() packages$cached"
+                else -> base + cached
+            },
+        )
+    }
+
+    private fun setPackageHint(text: String) {
+        packageComment(text)
+    }
+
     private fun setFormatsHint(text: String) {
         formatsComment(text)
+    }
+
+    /** Flips the Refresh button between its idle and in-flight faces; both landing paths -
+     *  an answer and a failure - restore it, so a finished query cannot leave the panel
+     *  looking busy. */
+    private fun setQueryInFlight(inFlight: Boolean) {
+        val button = refreshButton ?: return
+        button.isEnabled = !inFlight
+        button.text = if (inFlight) REFRESH_LISTING else REFRESH
     }
 
     private companion object {
