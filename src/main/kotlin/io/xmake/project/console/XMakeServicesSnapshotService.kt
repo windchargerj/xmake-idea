@@ -157,6 +157,51 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
         }
     }
 
+    /** Reconnects one service kind through `xmake service --reconnect`. */
+    fun reconnectService(kind: XMakeServiceKind) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.RECONNECT, kind))
+        }
+    }
+
+    /** Syncs the project files to the daemon of [kind] through `xmake service --sync`. */
+    fun syncProject(kind: XMakeServiceKind) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.SYNC, kind))
+        }
+    }
+
+    /** Pulls [remotePath] from the daemon of [kind] through `xmake service --pull`. */
+    fun pullFrom(kind: XMakeServiceKind, remotePath: String) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(
+                console,
+                factory.createServicePull(kind, remotePath),
+            )
+        }
+    }
+
+    /** Starts the daemon of [kind] through `xmake service --start`. */
+    fun startDaemon(kind: XMakeServiceKind) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.START, kind))
+        }
+    }
+
+    /** Stops the daemon of [kind] through `xmake service --stop`. */
+    fun stopDaemon(kind: XMakeServiceKind) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.STOP, kind))
+        }
+    }
+
+    /** Restarts the daemon of [kind] through `xmake service --restart`. */
+    fun restartDaemon(kind: XMakeServiceKind) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.RESTART, kind))
+        }
+    }
+
     /** Sets one kind's endpoint from the editor. The value is validated, recorded in
      *  the project's [XMakeServiceEndpointsService], and materialized into xmake's own
      *  project-local client.conf by the bundled setservice.lua script on the executor
