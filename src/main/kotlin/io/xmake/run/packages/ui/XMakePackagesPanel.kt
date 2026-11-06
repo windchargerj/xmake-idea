@@ -1020,6 +1020,8 @@ internal class XMakePackagesPanel(
         val base = UIUtil.getLabelFont()
         val gray = ColorUtil.toHex(infoForeground())
         val link = ColorUtil.toHex(JBColor.namedColor("Link.activeForeground", JBColor(0x1D73BF, 0x4A88C7)))
+        val green = ColorUtil.toHex(badgeForeground(INSTALLED))
+        val mono = java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, base.size).family
         kit.styleSheet.apply {
             addRule("body { font-family: ${base.family}; font-size: ${base.size}pt; }")
             addRule("p { margin: 0 0 8px; }")
@@ -1027,6 +1029,13 @@ internal class XMakePackagesPanel(
             addRule(".dep { margin: 0 0 8px 12px; }")
             addRule(".v { color: #$gray; }")
             addRule(".g { color: #$gray; }")
+            // The state word wears the badge's green: the table's Status column, the
+            // header's badge, and this word read as one language.
+            addRule(".ok { color: #$green; }")
+            addRule(".count { color: #$gray; font-weight: normal; }")
+            // Paths read in the mono face one point down - the editor's own convention
+            // for anything a user may copy into a shell.
+            addRule(".mono { font-family: $mono; font-size: ${base.size - 1}pt; color: #$gray; }")
             addRule("a { color: #$link; text-decoration: none; }")
         }
         return kit
@@ -1060,12 +1069,16 @@ internal class XMakePackagesPanel(
         val versions = row?.versions.orEmpty()
         val installedNow = if (info.installed) info.version else null
         if (versions.isNotEmpty() || info.installed) {
-            page.append("<p class='sec'>VERSIONS</p>")
+            page.append("<p class='sec'>VERSIONS")
+            if (versions.isNotEmpty()) {
+                page.append(" <span class='count'>(").append(versions.size).append(")</span>")
+            }
+            page.append("</p>")
             versions.forEach { version ->
                 val pinned = "$name $version"
                 page.append("<div class='dep'><b>").append(esc(version)).append("</b>")
                 if (version == installedNow) {
-                    page.append(" <span class='g'>installed</span> <a href='action://uninstall/")
+                    page.append(" <span class='ok'>installed</span> <a href='action://uninstall/")
                         .append(esc(pinned)).append("'>Uninstall</a>")
                 } else {
                     page.append(" <span class='g'>available</span> <a href='action://install/")
@@ -1075,14 +1088,15 @@ internal class XMakePackagesPanel(
             }
             if (installedNow != null && versions.none { it == installedNow }) {
                 page.append("<div class='dep'><b>").append(esc(installedNow))
-                    .append("</b> <span class='g'>installed</span> <a href='action://uninstall/")
+                    .append("</b> <span class='ok'>installed</span> <a href='action://uninstall/")
                     .append(esc("$name $installedNow")).append("'>Uninstall</a></div>")
             }
             info.references.orEmpty().forEach { reference ->
-                page.append("<div class='dep'><span class='g'>")
-                    .append(esc(elideMiddle(reference.dir ?: "?", 56)))
-                reference.date?.let { page.append("   ").append(esc(it)) }
-                page.append("</span></div>")
+                page.append("<div class='dep'><span class='mono'>")
+                    .append(esc(elideMiddle(reference.dir ?: "?", 44)))
+                    .append("</span>")
+                reference.date?.let { page.append(" <span class='g'>").append(esc(it)).append("</span>") }
+                page.append("</div>")
             }
         }
 
@@ -1090,8 +1104,14 @@ internal class XMakePackagesPanel(
         // "where is it and is it mine", which a reader checks before asking what it needs.
         page.append("<p class='sec'>INFO</p>")
         page.append("<div class='dep'>")
-        info.installdir?.let { page.append("<span class='g'>Install directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
-        info.cachedir?.let { page.append("<span class='g'>Cache directory:</span> ").append(esc(elideMiddle(it, 64))).append("<br>") }
+        info.installdir?.let {
+            page.append("<span class='g'>Install directory:</span> <span class='mono'>")
+                .append(esc(elideMiddle(it, 48))).append("</span><br>")
+        }
+        info.cachedir?.let {
+            page.append("<span class='g'>Cache directory:</span> <span class='mono'>")
+                .append(esc(elideMiddle(it, 48))).append("</span><br>")
+        }
         if (info.installed) {
             page.append("<span class='g'>References:</span> ${info.references?.size ?: 0} - installed")
         }
