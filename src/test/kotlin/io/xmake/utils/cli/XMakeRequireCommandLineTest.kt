@@ -18,6 +18,7 @@ package io.xmake.utils.cli
 
 import io.xmake.project.toolkit.ToolkitHost
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The `require` action lines the packages view drives; one action per line, like
@@ -28,6 +29,27 @@ class XMakeRequireCommandLineTest {
         xmake(CliInstallation("xmake", ToolkitHost())).apply(configure).arguments
 
     @Test
+    fun `the housekeeping verbs render their flags and packages`() {
+        val rendered = line {
+            require {
+                clean = true
+                fetch = true
+                download = true
+                check = true
+                export = true
+                import = true
+                packages = listOf("zlib", "/tmp/export.tar")
+            }
+        }
+
+        for (flag in listOf("--clean", "--fetch", "--download", "--check", "--export", "--import")) {
+            assertTrue("missing " + flag, rendered.contains(flag))
+        }
+        assertTrue(rendered.contains("zlib"))
+        assertTrue(rendered.contains("/tmp/export.tar"))
+    }
+
+@Test
     fun `builds the read-only queries`() {
         assertEquals(listOf("require", "--list"), line { require { list = true } })
         assertEquals(
