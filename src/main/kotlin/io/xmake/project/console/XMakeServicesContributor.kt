@@ -402,15 +402,24 @@ internal class AddServiceActionGroup : DefaultActionGroup {
                         val name = dialog.instanceName() ?: return
                         XMakeServicesTreeState.getInstance(project)
                             .add(XMakeServiceInstance(kind, name))
+                        // The endpoint the user typed in the dialog applies through the
+                        // same live path the detail panel uses, before the reset: the
+                        // node lands configured, and the reprobe that the apply queues
+                        // reports it.
+                        dialog.endpointValue()?.let { endpoint ->
+                            project.xmakeServicesSnapshots.applyEndpoint(name, kind, endpoint)
+                        }
                         resetTree(project)
                     }
                 }
             }.toTypedArray()
 }
 
-/** The Add dialog: the instance's name inline, with a duplicate or a blank rejected in
- *  the dialog itself - an OK that silently added nothing left the user learning
- *  nothing (instance names key the endpoint records, so a collision is a real one). */
+/** The Add dialog: everything the user already has in hand - the instance's name and
+ *  its endpoint - lands in one pass, and Add applies the endpoint through the same
+ *  live path the detail panel uses, so the node appears configured and the probe that
+ *  follows reports the real thing. A blank name or a duplicate or a malformed endpoint
+ *  is rejected in the dialog, not after it. */
 private class AddServiceInstanceDialog(
     project: Project,
     private val kind: XMakeServiceKind,
@@ -418,7 +427,8 @@ private class AddServiceInstanceDialog(
 
     private val treeState = XMakeServicesTreeState.getInstance(project)
 
-    private val nameField = JBTextField(24).apply { emptyText.text = "the host it runs on, say" }
+    private val nameField = JBTextField(24).apply { emptyText.text = "e.g. the host it runs on" }
+    private val endpointField = JBTextField(24).apply { emptyText.text = "host:port (optional now - editable later)" }
 
     init {
         title = "Add ${kindName(kind)}"
@@ -426,25 +436,53 @@ private class AddServiceInstanceDialog(
         init()
     }
 
-    override fun createCenterPanel(): JComponent = JPanel(BorderLayout()).apply {
+    override fun createCenterPanel(): JComponent = JPanel(java.awt.GridBagLayout()).apply {
         isOpaque = false
-        add(JBLabel("Name this ${kindName(kind)} instance (e.g. the host it runs on):"), BorderLayout.NORTH)
-        add(nameField, BorderLayout.CENTER)
+        fun label(text: String, row: Int): Unit = add(
+            JBLabel(text),
+            java.awt.GridBagConstraints().apply {
+                gridx = 0
+                gridy = row
+                weightx = 0.0
+                anchor = java.awt.GridBagConstraints.WEST
+                insets = JBUI.insets(6, 0, 6, 8)
+            },
+        )
+        fun field(component: JComponent, row: Int): Unit = add(
+            component,
+            java.awt.GridBagConstraints().apply {
+                gridx = 1
+                gridy = row
+                weightx = 1.0
+                anchor = java.awt.GridBagConstraints.WEST
+                fill = java.awt.GridBagConstraints.HORIZONTAL
+                insets = JBUI.insets(6, 0, 6, 0)
+            },
+        )
+        label("Name:", 0)
+        field(nameField, 0)
+        label("Endpoint:", 1)
+        field(endpointField, 1)
     }
 
     override fun getPreferredFocusedComponent(): JComponent = nameField
 
-    override fun doValidate(): ValidationInfo? {
+    override fun doValidate(): com.intellij.openapi.ui.ValidationInfo? {
         val name = nameField.text.trim()
+        val endpoint = endpointField.text.trim()
         return when {
-            name.isEmpty() -> ValidationInfo("Name the instance", nameField)
+            name.isEmpty() -> com.intellij.openapi.ui.ValidationInfo("Name the instance", nameField)
             treeState.instances().any { it.name == name } ->
-                ValidationInfo("\"$name\" is already in the tree - instance names are the endpoint records' keys", nameField)
+                com.intellij.openapi.ui.ValidationInfo("\"$name\" is already in the tree", nameField)
+            endpoint.isNotEmpty() && XMakeServiceEndpointFormat.parse(endpoint) == null ->
+                com.intellij.openapi.ui.ValidationInfo("The endpoint must read host:port", endpointField)
             else -> null
         }
     }
 
     fun instanceName(): String? = nameField.text.trim().takeUnless { it.isEmpty() }
+
+    fun endpointValue(): String? = endpointField.text.trim().takeUnless { it.isEmpty() }
 }
 
 /** Removes the selected instance from the tree and drops its endpoint record with it:
