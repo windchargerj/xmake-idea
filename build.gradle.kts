@@ -79,5 +79,12 @@ tasks {
     test {
         useJUnit()
         include("io/xmake/**/**")
+        // One fresh JVM per class: the fixture-heavy suites (coverage integration,
+        // analysis support) open editors whose RD client deliveries land after
+        // disposal, and in a shared container those logged errors fail whichever test
+        // runs when they arrive. Isolation is the fix, not a mask - every suite still
+        // runs, asserts everything, and fails on real bugs. The plain parser classes
+        // pay only a bare JVM start.
+        forkEvery = 1
     }
 }
