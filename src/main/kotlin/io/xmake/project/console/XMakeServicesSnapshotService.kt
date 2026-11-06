@@ -124,20 +124,28 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
     /** Connects one service kind through `xmake service --connect`. The one-time
      *  connect of a user-protected server prompts for a password on stdin, which the
      *  command channel cannot answer - so a connect without a stored token is
-     *  explained instead of silently hanging the lane. */
-    fun connectService(kind: XMakeServiceKind) {
+     *  explained instead of silently hanging the lane.
+     *
+     *  [endpoint] is the calling instance's own record when it has one: the kind's
+     *  client.conf is re-pointed at it before the connect verb runs, so two instances
+     *  of one kind connect to the addresses their nodes name instead of whichever
+     *  record was applied last. */
+    fun connectService(kind: XMakeServiceKind, endpoint: String? = null) {
         val state = currentSnapshot?.services?.get(kind) ?: return
-        val endpoint = state.endpoint ?: return
+        val effective = endpoint ?: state.endpoint ?: return
         if (!state.tokenKnown) {
             project.notify(
                 "XMake services",
-                "No token is stored for ${StringUtil.escapeXmlEntities(endpoint)}, so connecting would ask for a " +
+                "No token is stored for ${StringUtil.escapeXmlEntities(effective)}, so connecting would ask for a " +
                     "password on stdin. Run `xmake service --connect --${kind.flag}` in a terminal once to store it " +
                     "(server-side setup: `xmake service --add-user`, `xmake service --gen-token`).",
             )
             return
         }
         runThenReprobe { console, factory ->
+            if (endpoint != null && endpoint != state.endpoint) {
+                project.xmakeExecutor.execute(console, factory.createSetServiceEndpoint(kind, endpoint))
+            }
             project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.CONNECT, kind))
         }
     }
@@ -161,7 +169,7 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
     fun applyEndpoint(key: String, kind: XMakeServiceKind, raw: String) {
         val endpoint = raw.trim()
         if (endpoint.isEmpty()) {
-            clearEndpoint(key)
+            clearEndpoint(key, kind)
             return
         }
         if (XMakeServiceEndpointFormat.parse(endpoint) == null) {
@@ -179,15 +187,17 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
         }
     }
 
-    /** Removes the kind's project-local endpoint entry (and the stale persisted
-     *  connection state with it) through the same script as [applyEndpoint]. */
-    fun clearEndpoint(key: String) {
+    /** Removes the key's project-local endpoint entry (and the stale persisted
+     *  connection state with it) through the same script as [applyEndpoint]. [kind]
+     *  is the service whose client.conf entry the empty endpoint materializes into -
+     *  the caller knows it; guessing it from the key's name cleared a differently
+     *  named instance into the wrong kind's config. */
+    fun clearEndpoint(key: String, kind: XMakeServiceKind) {
         val hasAny = endpoints.configuredEndpoint(key) != null
         if (!hasAny) {
             return
         }
         endpoints.setConfiguredEndpoint(key, null)
-        val kind = XMakeServiceKind.entries.firstOrNull { it.name == key } ?: XMakeServiceKind.REMOTE_BUILD
         runThenReprobe { console, factory ->
             project.xmakeExecutor.execute(console, factory.createSetServiceEndpoint(kind, ""))
         }
@@ -259,13 +269,12 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
         }
     }
 
-    /** Announces new state everywhere: the platform Services tree re-queries
-     *  `getServices` on the RESET event, the plugin's own surfaces re-render from
-     *  [TOPIC]. */
+    /** Announces new state everywhere: the plugin's own surfaces re-render from
+     *  [TOPIC], and the platform Services tree re-queries `getServices` on the RESET
+     *  event fired alongside - the promise the probe's doc makes. */
     private fun publishSnapshotChanged() {
-        if (!project.isDisposed) {
-            }
         project.publish(TOPIC) { snapshotUpdated() }
+        resetTree(project)
     }
 
     private fun setMessage(message: String) {
