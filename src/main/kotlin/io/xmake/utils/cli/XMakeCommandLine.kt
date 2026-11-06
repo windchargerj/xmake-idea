@@ -150,6 +150,8 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         beginAction("service")
         options.verb?.let { flag("--${it.flag}") }
         options.kind?.let { flag("--${it.flag}") }
+        option("--session" to options.session)
+        options.pullPath?.let { args(listOf(it)) }
     }
 
     /** Adds `require`; the xrepo package action: listing, info, search, and the dependency
@@ -214,6 +216,9 @@ enum class XMakeServiceVerb(internal val flag: String) {
     CONNECT("connect"),
     DISCONNECT("disconnect"),
     RECONNECT("reconnect"),
+    SYNC("sync"),
+    PULL("pull"),
+    RESTART("restart"),
 }
 
 /** The `xmake service` kinds. The remote cache answers to xmake's `--ccache` flag, and
@@ -272,6 +277,12 @@ internal class LuaScope internal constructor() {
 internal class ServiceScope internal constructor() {
     var verb: XMakeServiceVerb? = null
     var kind: XMakeServiceKind? = null
+
+    /** `--session=<name>`: connect under a named session id. */
+    var session: String? = null
+
+    /** `--pull <path>`: pull the given file or directory from the daemon. */
+    var pullPath: String? = null
 }
 
 @CliDsl
