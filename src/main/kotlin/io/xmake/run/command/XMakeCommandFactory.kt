@@ -326,6 +326,47 @@ class XMakeCommandFactory(
             require { info = true; packages = listOf(packageName) }
         }
 
+    /** One `xmake require --clean`: uninstalls all installed packages and clears the
+     *  package caches. The confirm dialog is the user's seat before it runs. */
+    fun createRequireClean(): XMakeCommand =
+        createCommand {
+            require { clean = true }
+        }
+
+    /** One `xmake require --fetch <package>`: fetches the package's library info from
+     *  the repository without installing it. */
+    fun createRequireFetch(packageName: String): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { fetch = true; packages = listOf(packageName) }
+        }
+
+    /** One `xmake require --download-only` companion: fetch the source archives of the
+     *  named packages. */
+    fun createRequireDownload(packageName: String): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { download = true; packages = listOf(packageName) }
+        }
+
+    /** One `xmake require --check <package>`: whether the package is supported on the
+     *  current platform and toolchain. */
+    fun createRequireCheck(packageName: String): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { check = true; packages = listOf(packageName) }
+        }
+
+    /** One `xmake require --export <package>`: exports the installed package and its
+     *  dependencies to a portable archive. */
+    fun createRequireExport(packageName: String): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { export = true; packages = listOf(packageName) }
+        }
+
+    /** One `xmake require --import`: imports previously exported packages. */
+    fun createRequireImport(archivePath: String): XMakeCommand =
+        createCommand {
+            require { import = true; packages = listOf(archivePath) }
+        }
+
     /** One `xmake require --search <term>`: the repository hits, plain text only. */
     fun createRequireSearch(term: String): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {

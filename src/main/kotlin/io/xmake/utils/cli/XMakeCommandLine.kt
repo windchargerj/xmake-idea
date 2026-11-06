@@ -167,6 +167,12 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         flag("--uninstall", options.uninstall)
         flag("--upgrade", options.upgrade)
         flag("--depgraph", options.depgraph)
+        flag("--clean", options.clean)
+        flag("--fetch", options.fetch)
+        flag("--download", options.download)
+        flag("--check", options.check)
+        flag("--export", options.export)
+        flag("--import", options.import)
         flag("--format=json", options.json)
         flag("-y", options.yes)
         args(options.packages)
@@ -277,6 +283,12 @@ internal class RequireScope internal constructor() {
     var upgrade: Boolean = false
     var depgraph: Boolean = false
     var json: Boolean = false
+    var clean: Boolean = false
+    var fetch: Boolean = false
+    var download: Boolean = false
+    var check: Boolean = false
+    var export: Boolean = false
+    var import: Boolean = false
     /** Answers xmake's interactive prompt; the executor channel cannot, so mutations always set it. */
     var yes: Boolean = false
     /** The packages the action names: the search term, the info target, or the install/uninstall set. */
