@@ -112,4 +112,9 @@ data class XMakePackagesSnapshot(
     val searchResults: XMakeSearchResults? = null,
     /** The `--scan` inventory of what is actually installed, null until scanned. */
     val installed: List<XMakePackageInfo>? = null,
+    /** The versions of each package the store holds on disk, one targeted `--scan <name>`
+     *  per selection - multi-version truth the details page's VERSIONS section and the
+     *  uninstall flow read. The full inventory lands in [installed] only when the
+     *  installed view is toggled; this map is what a plain selection collects. */
+    val installedVersions: Map<String, List<String>> = emptyMap(),
 )

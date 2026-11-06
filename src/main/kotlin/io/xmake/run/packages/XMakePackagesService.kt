@@ -183,7 +183,28 @@ internal class XMakePackagesService(private val project: Project) {
                         }
                 }
             }
-            base?.copy(infos = base.infos + (packageName to info), closures = base.closures + (packageName to closure))
+            // The versions the store holds of this package, one targeted --scan in the
+            // same pass - local cost, no repository round trip. The multi-version truth
+            // the details page's VERSIONS section and the uninstall pin read; the info's
+            // resolved version alone answers "what this project resolves to", not what
+            // the store holds. An external-manager ask names a package the store does
+            // not keep, so it scans nothing.
+            val bare = packageName.substringBefore(' ')
+            var versions = emptyList<String>()
+            if (bare.isNotEmpty() && !packageName.contains("::")) {
+                versions = runCancellable {
+                    XMakePackageParsers.parseInstalledScan(
+                        project.xmakeExecutor.captureStandardOutput(factory.createRequireScan(listOf(bare))),
+                    )
+                }.getOrNull().orEmpty()
+                    .filter { it.require == bare.lowercase() }
+                    .mapNotNull { it.version }
+            }
+            base?.copy(
+                infos = base.infos + (packageName to info),
+                closures = base.closures + (packageName to closure),
+                installedVersions = base.installedVersions + (packageName to versions),
+            )
         }
     }
 
