@@ -513,6 +513,139 @@ private class RemoveServiceAction : DumbAwareAction(
     }
 }
 
+/** Reconnects this service kind; xmake re-establishes the persisted session. */
+private class ReconnectServiceAction : DumbAwareAction(
+    "Reconnect",
+    "Reconnect this service through xmake service --reconnect",
+    AllIcons.Actions.Refresh,
+) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
+        event.presentation.isEnabled = kind != null &&
+            event.project?.xmakeServicesSnapshots?.probing == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY) ?: return
+        event.project?.xmakeServicesSnapshots?.reconnectService(kind)
+    }
+}
+
+/** Syncs the project files to this kind's daemon. */
+private class SyncServiceAction : DumbAwareAction(
+    "Sync project",
+    "Sync current project files to the daemon (xmake service --sync)",
+    AllIcons.Actions.Commit,
+) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
+        event.presentation.isEnabled = kind != null &&
+            event.project?.xmakeServicesSnapshots?.probing == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY) ?: return
+        event.project?.xmakeServicesSnapshots?.syncProject(kind)
+    }
+}
+
+/** Pulls a path from this kind's daemon, asked by input dialog. */
+private class PullServiceAction : DumbAwareAction(
+    "Pull from daemon",
+    "Pull a file or directory from the daemon into the project (xmake service --pull)",
+    com.intellij.icons.AllIcons.Actions.Download,
+) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
+        event.presentation.isEnabled = kind != null &&
+            event.project?.xmakeServicesSnapshots?.probing == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        val project = event.project ?: return
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY) ?: return
+        val path = com.intellij.openapi.ui.Messages.showInputDialog(
+            project,
+            "Pull which file or directory from the daemon?",
+            "Pull from ${kindName(kind)}",
+            null,
+        )?.trim().takeUnless { it.isNullOrEmpty() } ?: return
+        project.xmakeServicesSnapshots.pullFrom(kind, path)
+    }
+}
+
+/** Starts this kind's daemon. */
+private class StartDaemonAction : DumbAwareAction(
+    "Start daemon",
+    "Start the daemon service (xmake service --start)",
+    com.intellij.icons.AllIcons.Actions.Execute,
+) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
+        event.presentation.isEnabled = kind != null &&
+            event.project?.xmakeServicesSnapshots?.probing == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY) ?: return
+        event.project?.xmakeServicesSnapshots?.startDaemon(kind)
+    }
+}
+
+/** Stops this kind's daemon. */
+private class StopDaemonAction : DumbAwareAction(
+    "Stop daemon",
+    "Stop the daemon service (xmake service --stop)",
+    com.intellij.icons.AllIcons.Actions.Suspend,
+) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
+        event.presentation.isEnabled = kind != null &&
+            event.project?.xmakeServicesSnapshots?.probing == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY) ?: return
+        event.project?.xmakeServicesSnapshots?.stopDaemon(kind)
+    }
+}
+
+/** Restarts this kind's daemon. */
+private class RestartDaemonAction : DumbAwareAction(
+    "Restart daemon",
+    "Restart the daemon service (xmake service --restart)",
+    com.intellij.icons.AllIcons.Actions.Rerun,
+) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
+        event.presentation.isEnabled = kind != null &&
+            event.project?.xmakeServicesSnapshots?.probing == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        val kind = event.getData(XMAKE_SERVICE_KIND_KEY) ?: return
+        event.project?.xmakeServicesSnapshots?.restartDaemon(kind)
+    }
+}
+
 /** Asks the Services tree to re-read [XMakeServicesContributor.getServices]; the
  * snapshot service fires it with every announced snapshot change. */
 internal fun resetTree(project: Project) {

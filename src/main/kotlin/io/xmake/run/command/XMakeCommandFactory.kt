@@ -290,6 +290,20 @@ class XMakeCommandFactory(
             }
         }
 
+    /**
+     * One `xmake service --pull <path> --<kind>`: pulls the given file or directory
+     * from the daemon of [kind] into the project. The human-readable output belongs in
+     * the visible console.
+     */
+    fun createServicePull(kind: XMakeServiceKind, remotePath: String): XMakeCommand =
+        createCommand {
+            service {
+                verb = XMakeServiceVerb.PULL
+                this.kind = kind
+                pullPath = remotePath
+            }
+        }
+
     fun createInfoQuery(queryName: String, jsonOutput: Boolean = true): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             show(queryName, json = jsonOutput)
