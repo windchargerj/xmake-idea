@@ -28,13 +28,15 @@ data class XMakeRequireEntry(
 )
 
 /**
- * What one package's `xmake require --info --format=json` reported.
+ * What one package's info ask reported, and whether the store backs it.
  *
- * [references] is present exactly when the package is installed and referenced - the
- * authoritative installed marker, because the listing's `-> ` detail lines survive an
- * uninstall (docs/roadmap-designs/xrepo-packages.md, verified on 3.1.2). A package that
- * exists nowhere still reports `version: "latest"` with no repo, so a missing [repoName]
- * means "not found in the configured repositories", not a failed query.
+ * [version] is the resolution this project gets (a package that exists nowhere reports
+ * `latest` with no repo, so a missing [repoName] means "not found in the configured
+ * repositories", not a failed query). [installed] is the store's answer - the asked
+ * version sits in the installed inventory the probe's scan section read - and it is
+ * the one installed truth the view reads; the listing's `-> ` detail lines survive an
+ * uninstall (docs/roadmap-designs/xrepo-packages.md, verified on 3.1.2), so nothing
+ * else may vouch.
  */
 data class XMakePackageInfo(
     val require: String,
@@ -45,17 +47,7 @@ data class XMakePackageInfo(
     val installdir: String?,
     val cachedir: String?,
     val platforms: List<String>,
-    val references: List<XMakePackageReference>?,
-) {
-    val installed: Boolean
-        get() = references != null
-}
-
-/** One installation reference of an installed package: where and when it was installed. */
-data class XMakePackageReference(
-    val dir: String?,
-    val date: String?,
-    val exists: Boolean?,
+    val installed: Boolean = false,
 )
 
 /** One repository hit of `xmake require --search`. */

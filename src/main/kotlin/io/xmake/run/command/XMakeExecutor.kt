@@ -91,26 +91,6 @@ class XMakeExecutor(
     /** Runs a command operation without interleaving it with another XMake operation. */
     suspend fun <T> runExclusive(task: suspend () -> T): T = withContext(lane) { task() }
 
-    /**
-     * Runs [task] on the lane of the *store* [storeKey] names - a project directory on a
-     * host, the thing xmake actually serializes against (`--info` configures the store
-     * under the hood, so same-store reads are not read-only against a concurrent build).
-     * The project's own store keeps the primary [lane]; other keys - a service instance
-     * on an SSH host, a WSL distro, ahead of services-backends.md phase 1 - take a lane
-     * of their own, so a remote verb never queues behind a two-hour local build.
-     * Distinct keys may run concurrently; one key serializes exactly like [runExclusive].
-     */
-    fun <T> submitOnStore(storeKey: String, task: suspend () -> T): Deferred<T> {
-        val storeLane = storeLanes.computeIfAbsent(storeKey) {
-            Dispatchers.Default.limitedParallelism(1)
-        }
-        return coroutineScope.async { withContext(storeLane) { task() } }
-    }
-
-    /** One lane per named store; the project store never enters this map - it stays the
-     *  [lane] every existing caller shares. */
-    private val storeLanes = java.util.concurrent.ConcurrentHashMap<String, kotlin.coroutines.CoroutineContext>()
-
     suspend fun execute(
         console: XMakeConsole,
         command: XMakeCommand,
@@ -154,9 +134,12 @@ class XMakeExecutor(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
-            val match = (error as? XMakeCommandException)?.output?.let(MINIMUM_VERSION::find) ?: throw error
-            val (_, minimumVersion) = match.destructured
-            throw XMakeVersionRefusalException(XMakeVersionRefusal(command.toolkit, minimumVersion), error)
+            // The refusal's classification rode in on the exception - one regex home,
+            // the failure classifier's.
+            val refusal = (error as? XMakeCommandException)?.failure
+                as? XMakeCommandFailure.VersionRefusal
+                ?: throw error
+            throw XMakeVersionRefusalException(XMakeVersionRefusal(command.toolkit, refusal.required), error)
         }
         return output.toString()
     }
@@ -211,7 +194,3 @@ class XMakeExecutor(
 
 val Project.xmakeExecutor: XMakeExecutor
     get() = serviceOrNull() ?: error("Failed to get XMakeExecutor for $this")
-
-// xmake's interpreter refuses the whole project script when its set_xmakever exceeds the
-// running version; this text is identical on 2.8.7 and 3.x.
-private val MINIMUM_VERSION = Regex("xmake v(\\S+) < v(\\S+), please run")

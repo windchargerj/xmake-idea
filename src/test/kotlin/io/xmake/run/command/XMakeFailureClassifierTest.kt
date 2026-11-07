@@ -63,12 +63,12 @@ class XMakeFailureClassifierTest {
             255,
             "Please input user jacky password to connect <127.0.0.1:9692>:",
         )
-        assertEquals(XMakeCommandFailure.AuthPrompt, failure)
+        assertEquals(XMakeCommandFailure.AuthRequired, failure)
     }
 
     @Test
     fun `anything else rides as other with its evidence`() {
         val failure = XMakeCommandFailure.classify(3, "note: something unclassifiable")
-        assertEquals(XMakeCommandFailure.Other(3, "note: something unclassifiable"), failure)
+        assertEquals(XMakeCommandFailure.Unclassified(3, "note: something unclassifiable"), failure)
     }
 }
