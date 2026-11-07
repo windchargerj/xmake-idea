@@ -92,3 +92,4 @@ class XMakePackCommandLineTest {
         assertEquals("XMake command line already starts with 'pack'; add one action per command", error)
     }
 }
+

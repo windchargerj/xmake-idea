@@ -20,6 +20,8 @@
 package io.xmake.utils.cli
 
 import io.xmake.project.toolkit.Toolkit
+import io.xmake.project.toolkit.XMakeCapability
+import io.xmake.project.toolkit.XMakeVersion
 import io.xmake.project.toolkit.ToolkitHost
 import io.xmake.project.toolkit.ToolkitHostType.LOCAL
 
@@ -149,9 +151,23 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
      *  A verb that takes a value renders the equals form xmake's help documents
      *  (`--add-user=root`) - one argv element, no two-element ambiguity; a missing value
      *  leaves the bare flag, which xmake then errors about visibly. */
+    /** Adds `service`; [ServiceScope.verb] and [ServiceScope.kind] are xmake's own long flags.
+     *  A verb that takes a value renders the equals form xmake's help documents
+     *  (`--add-user=root`) - one argv element, no two-element ambiguity; a missing value
+     *  leaves the bare flag, which xmake then errors about visibly. The read-only verbs
+     *  are version-gated here, at the rendering, like [require]'s flags. */
     fun service(configure: ServiceScope.() -> Unit): XMakeCommandLine = apply {
         val options = ServiceScope().apply(configure)
         beginAction("service")
+        val capability = when (options.verb) {
+            XMakeServiceVerb.STATUS -> XMakeCapability.SERVICE_STATUS
+            XMakeServiceVerb.LOGS -> XMakeCapability.SERVICE_LOGS
+            else -> null
+        }
+        capability?.let {
+            check(supports(it)) { "service --${options.verb?.flag} needs ${it.requirement}" }
+        }
+        val readOnly = capability != null
         options.verb?.let { verb ->
             val value = if (verb.takesValue) verb.valueFrom(options) else null
             if (value != null) {
@@ -164,6 +180,7 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         options.session?.let { args("--session=$it") }
         flag("--all", options.all)
         options.pullPath?.let { args(listOf(it)) }
+        if (readOnly) environment.putAll(QUERY_ENVIRONMENT)
     }
 
     /** Adds `require`; the xrepo package action: listing, info, search, and the dependency
@@ -171,7 +188,12 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
      *  set [RequireScope.yes] - xmake's own prompt waits on a TTY that never answers, and
      *  the command would die at timeout. `--format=json` rides on [RequireScope.json]
      *  verbatim, which `--info` and `--depgraph` honor; the listing silently ignores it
-     *  (docs/roadmap-designs/xrepo-packages.md, verified on xmake 3.1.2). */
+     *  (docs/roadmap-designs/xrepo-packages.md, verified on xmake 3.1.2).
+     *
+     *  The version gates live here, at the rendering: a flag the toolkit's xmake rejects
+     *  below its capability version fails construction with the requirement in the
+     *  message - an impossible line cannot leave the DSL. Read-only asks answer with the
+     *  clean query environment by construction, so no call site remembers it. */
     fun require(configure: RequireScope.() -> Unit): XMakeCommandLine = apply {
         val options = RequireScope().apply(configure)
         beginAction("require")
@@ -183,8 +205,8 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         flag("--depgraph", options.depgraph)
         flag("--clean", options.clean)
         flag("--fetch", options.fetch)
-        flag("--download", options.download)
-        flag("--check", options.check)
+        gate(options.download, XMakeCapability.REQUIRE_DOWNLOAD, "--download") { flag("--download") }
+        gate(options.check, XMakeCapability.REQUIRE_CHECK, "--check") { flag("--check") }
         flag("--export", options.export)
         flag("--import", options.import)
         flag("--scan", options.scan)
@@ -196,6 +218,7 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         flag("--format=json", options.json)
         flag("-y", options.yes)
         args(options.packages)
+        if (options.readOnly) environment.putAll(QUERY_ENVIRONMENT)
     }
 
     /** Adds `pack`; [configure] fills the options and the package names. The scope exists so
@@ -215,6 +238,20 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         }
         args(options.extraArguments)
         args(options.names)
+    }
+
+    /** The version contract, evaluated for this installation's own probe answer: the
+     *  rendering refuses a flag the binary cannot parse. */
+    private fun supports(capability: XMakeCapability): Boolean =
+        XMakeVersion.parse(installation.version) >= capability.since
+
+    /** Renders [render] only when [capability] holds for this installation; below the
+     *  version, construction fails with the requirement - an impossible line cannot
+     *  leave the DSL. */
+    private fun gate(enabled: Boolean, capability: XMakeCapability, asks: String, render: () -> Unit) {
+        if (!enabled) return
+        check(supports(capability)) { "$asks needs ${capability.requirement}" }
+        render()
     }
 
     internal companion object {
@@ -363,6 +400,11 @@ internal class RequireScope internal constructor() {
     var packageDir: String? = null
     /** `--extra="{...}"`: the extra config the ask carries. */
     var extra: String? = null
+
+    /** True for the asks whose output the plugin parses: they answer with the clean
+     *  query environment by construction. */
+    val readOnly: Boolean
+        get() = list || info || search || scan || depgraph || fetch
     /** Answers xmake's interactive prompt; the executor channel cannot, so mutations always set it. */
     var yes: Boolean = false
     /** The packages the action names: the search term, the info target, or the install/uninstall set. */
@@ -392,7 +434,8 @@ internal class PackScope internal constructor() {
 }
 
 /** Starts an xmake command line for [toolkit]. */
-internal fun xmake(toolkit: Toolkit): XMakeCommandLine = xmake(CliInstallation(toolkit.path, toolkit.host))
+internal fun xmake(toolkit: Toolkit): XMakeCommandLine =
+    xmake(CliInstallation(toolkit.path, toolkit.host, toolkit.version))
 
 /** Starts an xmake command line for [installation]. */
 internal fun xmake(installation: CliInstallation): XMakeCommandLine = XMakeCommandLine(installation)

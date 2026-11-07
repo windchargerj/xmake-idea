@@ -91,6 +91,22 @@ class XMakeExecutor(
     /** Runs a command operation without interleaving it with another XMake operation. */
     suspend fun <T> runExclusive(task: suspend () -> T): T = withContext(lane) { task() }
 
+    /**
+     * Runs a read-only query on the quiet lane: serialized against other queries, but
+     * never queued behind a build or a mutation. The overlap is deliberate - a query
+     * reads the cached configuration and the package store, and both reads degrade
+     * honestly when the store is mid-write (the scan parser excludes the drained or
+     * half-written hash directories by their own markers), so browsing stays live for
+     * the seconds-to-minutes an exclusive operation runs, at the price of an answer
+     * that may briefly lag the store.
+     */
+    fun <T> submitQuery(task: suspend () -> T): Deferred<T> =
+        coroutineScope.async { withContext(queryLane) { task() } }
+
+    /** The quiet lane the read-only queries share - one query at a time, zero coupling
+     *  to the exclusive [lane]. */
+    private val queryLane = Dispatchers.Default.limitedParallelism(1)
+
     suspend fun execute(
         console: XMakeConsole,
         command: XMakeCommand,

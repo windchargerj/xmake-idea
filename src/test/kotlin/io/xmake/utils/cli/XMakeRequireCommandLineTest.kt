@@ -28,9 +28,12 @@ class XMakeRequireCommandLineTest {
     private fun line(configure: XMakeCommandLine.() -> Unit): List<String> =
         xmake(CliInstallation("xmake", ToolkitHost())).apply(configure).arguments
 
+    private fun lineOn(version: String, configure: XMakeCommandLine.() -> Unit): List<String> =
+        xmake(CliInstallation("xmake", ToolkitHost(), version)).apply(configure).arguments
+
     @Test
     fun `the housekeeping verbs render their flags and packages`() {
-        val rendered = line {
+        val rendered = lineOn("3.1.2") {
             require {
                 clean = true
                 fetch = true
@@ -153,5 +156,36 @@ class XMakeRequireCommandLineTest {
             error.message
         }
         assertEquals("XMake command line already starts with 'require'; add one action per command", error)
+    }
+
+    @Test
+    fun `a gated flag fails construction below its version and renders at it`() {
+        val error = try {
+            lineOn("2.8.7") {
+                require { download = true; packages = listOf("tinytest") }
+            }
+            null
+        } catch (error: IllegalStateException) {
+            error.message
+        }
+        assertEquals("--download needs xmake 3.1.2", error)
+
+        assertEquals(
+            listOf("require", "--download", "tinytest"),
+            lineOn("3.1.2") { require { download = true; packages = listOf("tinytest") } },
+        )
+    }
+
+    @Test
+    fun `an unprobed version refuses the gated flags but renders the ungated ones`() {
+        val error = try {
+            line { require { download = true; packages = listOf("tinytest") } }
+            null
+        } catch (error: IllegalStateException) {
+            error.message
+        }
+        assertEquals("--download needs xmake 3.1.2", error)
+
+        assertEquals(listOf("require", "--list"), line { require { list = true } })
     }
 }

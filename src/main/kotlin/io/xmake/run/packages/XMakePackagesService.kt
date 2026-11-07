@@ -155,32 +155,36 @@ internal class XMakePackagesService(private val project: Project) {
      */
     fun fetchInfo(packageName: String) {
         val current = snapshot ?: return
-        if (busy) return
         // The closure is what a selection still needs: the batched prefetch already
         // answered the row's facts, but only a single-package ask can attribute the
         // closure to the package that needs it.
         if (current.closures.containsKey(packageName)) return
         val asked = XMakePackageSpec.parse(packageName)
-        claim(null) { factory ->
+        // The query rides the quiet lane, outside the claim machinery: it flips no
+        // busy flag and narrates nothing, so selections answer live while a build or
+        // an install holds the exclusive lane. Both reads degrade honestly on a store
+        // mid-write, which is the price of not freezing the browsing.
+        project.xmakeExecutor.submitQuery {
             val base = snapshot
-            // ONE spawn: the bundled probe runs xmake's own info and scan actions
+            try {
+            // ONE spawn: the bundled query runs xmake's own info and scan actions
             // for this package - the answer carries no flag-version sensitivity,
             // because the script calls the modules the CLI itself calls. The text
             // parsers read the whole output; the store scan of the ask rides in
             // the same answer.
-            val query = runQuery { factory.createPackagesProbe(asked) }
-            val probe = query.getOrNull()
-            val info = probe?.let { text ->
+            val query = runQuery { packageFactory().createPackagesQuery(asked) }
+            val answer = query.getOrNull()
+            val info = answer?.let { text ->
                 runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
             }
-            val closure = probe?.let { text ->
+            val closure = answer?.let { text ->
                 runCancellable { XMakePackageParsers.parsePackageClosureText(text) }.getOrNull()
             }.orEmpty()
             val bare = asked.name
-            val versions = if (probe == null || bare.isEmpty() || packageName.contains("::")) {
+            val versions = if (answer == null || bare.isEmpty() || packageName.contains("::")) {
                 emptyList()
             } else {
-                XMakePackageParsers.parseInstalledScan(probe)
+                XMakePackageParsers.parseInstalledScan(answer)
                     .filter { it.require == bare.lowercase() }
                     .mapNotNull { it.version }
             }
@@ -191,9 +195,9 @@ internal class XMakePackagesService(private val project: Project) {
             val composed = info?.copy(installed = versions.contains(info.version))
             val failure = when {
                 composed != null -> null
-                probe == null -> query.exceptionOrNull()?.describeFailure()
-                    ?: "the probe answered nothing"
-                else -> "the probe output carried no info for '$packageName'"
+                answer == null -> query.exceptionOrNull()?.describeFailure()
+                    ?: "the query answered nothing"
+                else -> "the query output carried no info for '$packageName'"
             }
             base?.copy(
                 infos = base.infos + (packageName to composed),
@@ -205,6 +209,16 @@ internal class XMakePackagesService(private val project: Project) {
                     base.infoFailures - packageName
                 },
             )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.warn("XMake package info query failed", error)
+                snapshot?.let {
+                    finish(
+                        it.copy(infoFailures = it.infoFailures + (packageName to (error.message ?: error.toString()))),
+                        null,
+                    )
+                }
+            }
         }
     }
 
@@ -257,7 +271,7 @@ internal class XMakePackagesService(private val project: Project) {
         }.getOrNull().orEmpty()
 
     /** The inventory grouped per package name - the version cache's shape, so the full
-     *  scan feeds the same cache the probe's targeted scan does. */
+     *  scan feeds the same cache the targeted scan does. */
     private fun List<XMakePackageInfo>.groupByVersion(): Map<String, List<String>> =
         groupBy({ it.require }, { it.version ?: "" })
             .mapValues { (_, versions) -> versions.filter(String::isNotEmpty) }
@@ -427,7 +441,7 @@ internal class XMakePackagesService(private val project: Project) {
         // The installed inventory, when the view is on, is re-scanned rather than
         // carried: a mutation just changed the store, and the view's whole job is to
         // say what the store holds now. Its names refill the version cache - the one
-        // installed truth, same as the toggle and the probe feed it.
+        // installed truth, same as the toggle and the query feed it.
         val carried = snapshot?.installed
         val inventory = if (carried != null) {
             scanInventory(factory)

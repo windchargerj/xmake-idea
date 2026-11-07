@@ -27,8 +27,13 @@ import io.xmake.utils.execute.CommandResult
 import io.xmake.utils.execute.executeOn
 import kotlin.time.Duration
 
-/** A CLI executable installed on one host; its path is meaningful only there. */
-internal data class CliInstallation(val executable: String, val host: ToolkitHost) {
+/** A CLI executable installed on one host; its path is meaningful only there, and
+ *  [version] is the probe's answer for it - empty when never probed. */
+internal data class CliInstallation(
+    val executable: String,
+    val host: ToolkitHost,
+    val version: String = "",
+) {
     init {
         require(executable.isNotBlank()) { "CLI executable path must not be blank" }
     }
