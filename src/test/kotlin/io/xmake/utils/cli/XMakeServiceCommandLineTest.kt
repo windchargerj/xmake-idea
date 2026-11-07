@@ -51,4 +51,63 @@ class XMakeServiceCommandLineTest {
         }
         assertEquals(listOf("service", "--reconnect"), line.arguments)
     }
+
+    @Test
+    fun `the value verbs read their value off the scope field they belong to`() {
+        val addUser = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.ADD_USER
+                user = "root"
+            }
+        }
+        assertEquals(listOf("service", "--add-user=root"), addUser.arguments)
+
+        val xmakeSrc = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.XMAKE_SRC
+                kind = XMakeServiceKind.REMOTE_BUILD
+                xmakeSrc = "/xmakeproj/xmake"
+            }
+        }
+        assertEquals(
+            listOf("service", "--xmakesrc=/xmakeproj/xmake", "--remote"),
+            xmakeSrc.arguments,
+        )
+    }
+
+    @Test
+    fun `a value verb without its value emits the bare flag - the caller's bug, visible`() {
+        val line = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service { verb = XMakeServiceVerb.RM_USER }
+        }
+        assertEquals(listOf("service", "--rm-user"), line.arguments)
+    }
+
+    @Test
+    fun `the clean widens with all and scopes by kind`() {
+        val line = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.CLEAN
+                kind = XMakeServiceKind.REMOTE_BUILD
+                all = true
+            }
+        }
+        assertEquals(listOf("service", "--clean", "--remote", "--all"), line.arguments)
+    }
+
+    @Test
+    fun `the read-only verbs render their flags`() {
+        val status = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.STATUS
+                kind = XMakeServiceKind.REMOTE_CACHE
+            }
+        }
+        assertEquals(listOf("service", "--status", "--ccache"), status.arguments)
+
+        val logs = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service { verb = XMakeServiceVerb.LOGS }
+        }
+        assertEquals(listOf("service", "--logs"), logs.arguments)
+    }
 }

@@ -25,13 +25,16 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.util.messages.Topic
 import io.xmake.project.console.XMakeConsoleManager
+import io.xmake.project.toolkit.XMakeCapability
 import io.xmake.run.command.XMakeCommand
+import io.xmake.run.command.XMakeCommandException
 import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.xmakeCommands
 import io.xmake.run.command.xmakeExecutor
 import io.xmake.run.target.SELECT_BUILD_PROFILE_FIRST
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
+import io.xmake.utils.cli.XPackageSpec
 import io.xmake.utils.notify
 import io.xmake.utils.runCancellable
 import kotlinx.coroutines.CancellationException
@@ -155,57 +158,123 @@ internal class XMakePackagesService(private val project: Project) {
         // answered the row's facts, but only a single-package ask can attribute the
         // closure to the package that needs it.
         if (current.closures.containsKey(packageName)) return
+        val asked = XPackageSpec.parse(packageName)
         claim(null) { factory ->
             val base = snapshot
-            val output = runCancellable {
-                project.xmakeExecutor.captureStandardOutput(factory.createRequireInfo(packageName))
-            }.getOrNull()
+            var infoFailure: String? = null
+            // ONE spawn first: the bundled probe runs xmake's own info and scan actions
+            // for this package, so the answer carries no flag-version sensitivity - the
+            // script calls the same modules the CLI does, on every toolkit this plugin
+            // serves. The plain-text info, closure, and scan parsers read it whole.
+            val probe = runQuery { factory.createPackagesProbe(asked) }
+                .onFailure { infoFailure = it.describeFailure() }
+                .getOrNull()
+            var info = probe?.let { text ->
+                runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }
+                    .onFailure { infoFailure = it.message ?: it.toString() }
+                    .getOrNull()
+            }
+            var closure = probe?.let { text ->
+                runCancellable { XMakePackageParsers.parsePackageClosureText(text) }.getOrNull()
+            }.orEmpty()
             // One query per package per context: a landed answer - a failed parse
             // included - is the record, whatever it said. The closure rides with the
             // asked package's own answer; it is what the query handed back.
-            var info = output?.let { runCancellable { XMakePackageParsers.parsePackageInfo(it, packageName) }.getOrNull() }
-            var closure = output?.let { runCancellable { XMakePackageParsers.parsePackageClosure(it) }.getOrNull() }.orEmpty()
-            // The JSON flag is newer than some toolkits: a 2.8.7 answers its usage text
-            // for --format=json. The plain --info form predates it and every toolkit
-            // reads it - the fallback fetch, same lane pass, closure included: the text
-            // answer lists the whole dependency closure as its blocks.
+            val bare = asked.name
+            val scanEligible = bare.isNotEmpty() && !packageName.contains("::")
+            var versions = probe?.let { text ->
+                if (scanEligible) {
+                    XMakePackageParsers.parseInstalledScan(text)
+                        .filter { it.require == bare.lowercase() }
+                        .mapNotNull { it.version }
+                } else {
+                    emptyList()
+                }
+            }.orEmpty()
+            // Degrade path for the toolkit where the probe cannot answer: the old
+            // per-flag chain - JSON when the capability holds, text always, the scan
+            // its own ask - same record-keeping, keyed on the same failure slot.
             if (info == null) {
-                val plain = runCancellable {
-                    project.xmakeExecutor.captureStandardOutput(factory.createRequireInfoText(packageName))
-                }.getOrNull()
-                plain?.let { text ->
-                    runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
-                        ?.let { textInfo ->
-                            info = textInfo
-                            closure = runCancellable {
-                                XMakePackageParsers.parsePackageClosureText(text)
-                            }.getOrNull().orEmpty()
+                val jsonFirst = factory.supports(XMakeCapability.REQUIRE_FORMAT_JSON)
+                val output = if (jsonFirst) {
+                    runQuery { factory.createRequireInfo(asked) }
+                        .onFailure { infoFailure = it.describeFailure() }
+                        .getOrNull()
+                } else {
+                    null
+                }
+                info = output?.let { text ->
+                    runCancellable { XMakePackageParsers.parsePackageInfo(text, packageName) }
+                        .onFailure { infoFailure = it.message ?: it.toString() }
+                        .getOrNull()
+                }
+                if (info != null) {
+                    closure = output?.let { text ->
+                        runCancellable { XMakePackageParsers.parsePackageClosure(text) }.getOrNull()
+                    }.orEmpty()
+                } else {
+                    runQuery { factory.createRequireInfoText(asked) }
+                        .onFailure { if (jsonFirst) infoFailure = it.describeFailure() }
+                        .getOrNull()
+                        ?.let { text ->
+                            runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }
+                                .onFailure { if (jsonFirst) infoFailure = it.message ?: it.toString() }
+                                .getOrNull()
+                                ?.let { textInfo ->
+                                    info = textInfo
+                                    infoFailure = null
+                                    closure = runCancellable {
+                                        XMakePackageParsers.parsePackageClosureText(text)
+                                    }.getOrNull().orEmpty()
+                                }
                         }
                 }
-            }
-            // The versions the store holds of this package, one targeted --scan in the
-            // same pass - local cost, no repository round trip. The multi-version truth
-            // the details page's VERSIONS section and the uninstall pin read; the info's
-            // resolved version alone answers "what this project resolves to", not what
-            // the store holds. An external-manager ask names a package the store does
-            // not keep, so it scans nothing.
-            val bare = packageName.substringBefore(' ')
-            var versions = emptyList<String>()
-            if (bare.isNotEmpty() && !packageName.contains("::")) {
-                versions = runCancellable {
-                    XMakePackageParsers.parseInstalledScan(
-                        project.xmakeExecutor.captureStandardOutput(factory.createRequireScan(listOf(bare))),
-                    )
-                }.getOrNull().orEmpty()
-                    .filter { it.require == bare.lowercase() }
-                    .mapNotNull { it.version }
+                if (info == null && scanEligible && factory.supports(XMakeCapability.REQUIRE_SCAN)) {
+                    versions = runQuery { factory.createRequireScan(listOf(XPackageSpec(bare))) }
+                        .getOrNull()
+                        ?.let { text ->
+                            XMakePackageParsers.parseInstalledScan(text)
+                                .filter { it.require == bare.lowercase() }
+                                .mapNotNull { it.version }
+                        }
+                        .orEmpty()
+                }
             }
             base?.copy(
                 infos = base.infos + (packageName to info),
                 closures = base.closures + (packageName to closure),
                 installedVersions = base.installedVersions + (packageName to versions),
+                infoFailures = if (info == null) {
+                    base.infoFailures + (packageName to (infoFailure ?: "the info query answered nothing usable"))
+                } else {
+                    base.infoFailures - packageName
+                },
             )
         }
+    }
+
+    /** One captured query, with failures kept typed: the classifier's words ride in. */
+    private suspend fun runQuery(build: () -> XMakeCommand) = runCancellable {
+        project.xmakeExecutor.captureStandardOutput(build())
+    }
+
+    /** The failure's sentence, the taxonomy's own: a classified command failure reads
+     *  its describe, anything else keeps its message. */
+    private fun Throwable.describeFailure(): String = when (val failure = (this as? XMakeCommandException)?.failure) {
+        null -> message ?: toString()
+        else -> failure.describe()
+    }
+
+    /**
+     * Whether the active profile's toolkit answers [capability]'s CLI surface - the
+     * panels ask this before enabling a version-gated verb, and the factory guards the
+     * same fact at command construction. False when no profile stands, so a gated verb
+     * stays off until a toolkit exists to answer it.
+     */
+    fun supports(capability: XMakeCapability): Boolean = try {
+        packageFactory().supports(capability)
+    } catch (_: Exception) {
+        false
     }
 
     /**

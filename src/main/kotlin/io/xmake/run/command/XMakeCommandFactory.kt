@@ -23,13 +23,16 @@ import com.intellij.openapi.project.Project
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.project.toolkit.Toolkit
+import io.xmake.project.toolkit.XMakeCapability
 import io.xmake.project.toolkit.ToolkitHostType
+import io.xmake.project.toolkit.supports
 import io.xmake.project.toolkit.ToolkitHostType.LOCAL
 import io.xmake.project.toolkit.ToolkitHostType.SSH
 import io.xmake.project.toolkit.ToolkitHostType.WSL
 import io.xmake.project.xmakeSettings
 import io.xmake.utils.SystemUtils
 import io.xmake.utils.cli.XMakeCommandLine
+import io.xmake.utils.cli.XPackageSpec
 import io.xmake.utils.cli.DEFAULT_TARGET
 import io.xmake.utils.cli.QUERY_ENVIRONMENT
 import io.xmake.utils.cli.XMakeServiceKind
@@ -57,6 +60,11 @@ class XMakeCommandFactory(
         ?: throw RuntimeConfigurationError(
             "XMake toolkit is not set, is unavailable in this project, or is no longer registered",
         )
+
+    /** Whether this factory's toolkit answers [capability]'s CLI surface - the same
+     *  truth the command guards below enforce, offered to the panels so a button
+     *  disables before the guard ever fires. */
+    fun supports(capability: XMakeCapability): Boolean = toolkit.supports(capability)
 
     private val buildDirectoryOption = profile.buildDirectory.takeIf { it.isNotEmpty() }
 
@@ -227,6 +235,22 @@ class XMakeCommandFactory(
         }
 
     /**
+     * One packages probe for [asked]: a single spawn where xmake's own action modules
+     * render the package's info block and the installed scan of its store entries
+     * (packagesprobe.lua calls `require.info.main` and `require.scan.main` directly, so
+     * the answer carries no flag-version sensitivity). The output reads whole with the
+     * plain-text info, closure, and scan parsers - no per-flag gates anywhere on the
+     * path, which is the point: every toolkit this plugin serves answers the same way.
+     */
+    fun createPackagesProbe(asked: XPackageSpec): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            lua {
+                script = scriptArgument("packagesprobe.lua")
+                arguments = listOf(asked.name)
+            }
+        }
+
+    /**
      * Materializes one service endpoint the IDE configured into the active profile's
      * project-local client.conf, or with a blank [endpoint] clears the kind's entry -
      * always through the setservice.lua script on the toolkit's own host: the config
@@ -290,6 +314,69 @@ class XMakeCommandFactory(
             }
         }
 
+    /** One `xmake service --<clean|status|logs|gen-token>` for [verb], optionally scoped
+     *  to [kind]. `status`/`logs` are version-gated - the guards refuse to emit a line
+     *  a 2.8.7 answers with `Invalid flag`, the panels ask [supports] before offering
+     *  them. The read-only ones ride the query environment. */
+    fun createServiceVerb(
+        verb: XMakeServiceVerb,
+        kind: XMakeServiceKind? = null,
+        all: Boolean = false,
+    ): XMakeCommand {
+        check(verb != XMakeServiceVerb.ADD_USER && verb != XMakeServiceVerb.RM_USER && verb != XMakeServiceVerb.XMAKE_SRC) {
+            "$verb carries a value - use its dedicated factory method"
+        }
+        if (verb == XMakeServiceVerb.STATUS) {
+            check(toolkit.supports(XMakeCapability.SERVICE_STATUS)) {
+                "service --status needs ${XMakeCapability.SERVICE_STATUS.requirement}"
+            }
+        }
+        if (verb == XMakeServiceVerb.LOGS) {
+            check(toolkit.supports(XMakeCapability.SERVICE_LOGS)) {
+                "service --logs needs ${XMakeCapability.SERVICE_LOGS.requirement}"
+            }
+        }
+        return createCommand(
+            environmentOverrides = if (verb == XMakeServiceVerb.STATUS || verb == XMakeServiceVerb.LOGS) {
+                QUERY_ENVIRONMENT
+            } else {
+                emptyMap()
+            },
+        ) {
+            service {
+                this.verb = verb
+                kind?.let { this.kind = it }
+                this.all = all
+            }
+        }
+    }
+
+    /** One `xmake service --add-user=<user>` / `--rm-user=<user>`: the server's user
+     *  table. These mutate the daemon's accounts, so the confirm dialog that wraps any
+     *  run of this command is the user's seat. */
+    fun createServiceUserAdmin(verb: XMakeServiceVerb, user: String): XMakeCommand {
+        check(verb == XMakeServiceVerb.ADD_USER || verb == XMakeServiceVerb.RM_USER) {
+            "$verb is not a user-admin verb"
+        }
+        return createCommand {
+            service {
+                this.verb = verb
+                this.user = user
+            }
+        }
+    }
+
+    /** One `xmake service --xmakesrc=<path>`: syncs the local xmake program files at
+     *  [path] to the daemon, [kind] scoped. */
+    fun createServiceXmakeSrcSync(kind: XMakeServiceKind, path: String): XMakeCommand =
+        createCommand {
+            service {
+                verb = XMakeServiceVerb.XMAKE_SRC
+                this.kind = kind
+                xmakeSrc = path
+            }
+        }
+
     /**
      * One `xmake service --pull <path> --<kind>`: pulls the given file or directory
      * from the daemon of [kind] into the project. The human-readable output belongs in
@@ -325,9 +412,9 @@ class XMakeCommandFactory(
      * xmake 3.1.2; older toolkits reject it, the query fails, and the caller falls back to
      * [createRequireInfoText] instead.
      */
-    fun createRequireInfo(packageName: String): XMakeCommand =
+    fun createRequireInfo(spec: XPackageSpec): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { info = true; json = true; packages = listOf(packageName) }
+            require { info = true; json = true; packages = listOf(spec.render()) }
         }
 
     /**
@@ -335,63 +422,74 @@ class XMakeCommandFactory(
      * predates the JSON flag - the form every toolkit answers, 2.8.7 included. The text
      * reads as `require(name):` blocks of `-> key: value` lines.
      */
-    fun createRequireInfoText(packageName: String): XMakeCommand =
+    fun createRequireInfoText(spec: XPackageSpec): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { info = true; packages = listOf(packageName) }
+            require { info = true; packages = listOf(spec.render()) }
         }
 
     /**
      * One `xmake require --clean`: clears the package caches and uninstalls the packages
      * nothing references - xmake's own help text, and both 2.8.7 and 3.1.2 read it the
-     * same way; this is NOT "uninstall everything". With [packageNames] the sweep scopes
-     * to those (`--clean zlib tbox`), which is how a row-scoped Clean acts. The confirm
+     * same way; this is NOT "uninstall everything". With [specs] the sweep scopes
+     * to those (`--clean zlib`), which is how a row-scoped Clean acts. The confirm
      * dialog is the user's seat before it runs.
      */
-    fun createRequireClean(packageNames: List<String> = emptyList()): XMakeCommand =
+    fun createRequireClean(specs: List<XPackageSpec> = emptyList()): XMakeCommand =
         createCommand {
-            require { clean = true; packages = packageNames }
+            require { clean = true; packages = specs.map { it.render() } }
         }
 
     /** One `xmake require --fetch <package>`: fetches the package's library info from
      *  the repository without installing it. */
-    fun createRequireFetch(packageName: String): XMakeCommand =
+    fun createRequireFetch(spec: XPackageSpec): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { fetch = true; packages = listOf(packageName) }
+            require { fetch = true; packages = listOf(spec.render()) }
         }
 
-    /** One `xmake require --download-only` companion: fetch the source archives of the
-     *  named packages. */
-    fun createRequireDownload(packageName: String): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { download = true; packages = listOf(packageName) }
+    /** One `xmake require --download <package>`: fetch the source archive without
+     *  installing. The flag is newer than some toolkits - the guard keeps the factory
+     *  from emitting a line the toolkit answers with `Invalid flag`; the panels ask
+     *  [XMakeCapability.REQUIRE_DOWNLOAD] before offering the verb. */
+    fun createRequireDownload(spec: XPackageSpec): XMakeCommand {
+        check(toolkit.supports(XMakeCapability.REQUIRE_DOWNLOAD)) {
+            "require --download needs ${XMakeCapability.REQUIRE_DOWNLOAD.requirement}"
         }
+        return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { download = true; packages = listOf(spec.render()) }
+        }
+    }
 
     /** One `xmake require --check <package>`: whether the package is supported on the
-     *  current platform and toolchain. */
-    fun createRequireCheck(packageName: String): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { check = true; packages = listOf(packageName) }
+     *  current platform and toolchain. Guarded like [createRequireDownload]. */
+    fun createRequireCheck(spec: XPackageSpec): XMakeCommand {
+        check(toolkit.supports(XMakeCapability.REQUIRE_CHECK)) {
+            "require --check needs ${XMakeCapability.REQUIRE_CHECK.requirement}"
         }
+        return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            require { check = true; packages = listOf(spec.render()) }
+        }
+    }
 
     /** One `xmake require --export <package>`: exports the installed package and its
      *  dependencies to a portable archive. */
-    fun createRequireExport(packageName: String): XMakeCommand =
+    fun createRequireExport(spec: XPackageSpec): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { export = true; packages = listOf(packageName) }
+            require { export = true; packages = listOf(spec.render()) }
         }
 
-    /** One `xmake require --import`: imports previously exported packages. */
-    fun createRequireImport(archivePath: String): XMakeCommand =
+    /** One `xmake require --import`: imports previously exported packages, named by
+     *  [spec] and searched in the project's `packages` directory. */
+    fun createRequireImport(spec: XPackageSpec): XMakeCommand =
         createCommand {
-            require { import = true; packages = listOf(archivePath) }
+            require { import = true; packages = listOf(spec.render()) }
         }
 
     /** One `xmake require --scan`: the inventory of what is installed, plain text. With
-     *  [packageNames] the scan answers just those (`--scan zlib`), one heading per
+     *  [specs] the scan answers just those (`--scan zlib`), one heading per
      *  installed version - the targeted ask the details page rides. */
-    fun createRequireScan(packageNames: List<String> = emptyList()): XMakeCommand =
+    fun createRequireScan(specs: List<XPackageSpec> = emptyList()): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
-            require { scan = true; packages = packageNames }
+            require { scan = true; packages = specs.map { it.render() } }
         }
 
     /** One `xmake require --search <term>`: the repository hits, plain text only. */
@@ -407,31 +505,32 @@ class XMakeCommandFactory(
         }
 
     /**
-     * Installs [packageName] with `xmake require -y`. The `-y` is baked in so callers cannot
+     * Installs [spec] with `xmake require -y`. The `-y` is baked in so callers cannot
      * forget it: xmake's own prompt waits on a TTY that never answers, and the command would
      * hang until the executor timeout.
      */
-    fun createRequireInstall(packageName: String): XMakeCommand =
+    fun createRequireInstall(spec: XPackageSpec): XMakeCommand =
         createCommand {
-            require { yes = true; packages = listOf(packageName) }
+            require { yes = true; packages = listOf(spec.render()) }
         }
 
     /** Upgrades with `xmake require --upgrade -y`: every declared package without
-     *  [packageName], just that one with it - the name rides the generic requires
+     *  [spec], just that one with it - the name rides the generic requires
      *  arguments, verified to pass through on 2.8.7 and 3.1.2 alike. */
-    fun createRequireUpgrade(packageName: String? = null): XMakeCommand =
+    fun createRequireUpgrade(spec: XPackageSpec? = null): XMakeCommand =
         createCommand {
             require {
                 yes = true
                 upgrade = true
-                packageName?.let { packages = listOf(it) }
+                spec?.let { packages = listOf(it.render()) }
             }
         }
 
-    /** Removes [packageName] with `xmake require --uninstall -y`. */
-    fun createRequireUninstall(packageName: String): XMakeCommand =
+    /** Removes [spec] with `xmake require --uninstall -y` - the ask decides which
+     *  installed build's directory xmake removes. */
+    fun createRequireUninstall(spec: XPackageSpec): XMakeCommand =
         createCommand {
-            require { yes = true; uninstall = true; packages = listOf(packageName) }
+            require { yes = true; uninstall = true; packages = listOf(spec.render()) }
         }
 
     /**
