@@ -30,9 +30,9 @@ internal sealed class XMakeCommandFailure {
     fun describe(): String = when (this) {
         is InvalidFlag -> "'$flag' is newer than this toolkit - ${flag.trimStart('-')} needs a newer xmake"
         is PackageNotFound -> "no installed package matches '$ask' on this platform and configuration"
-        AuthPrompt -> "xmake is asking for the service password on stdin, which no command channel can answer - store the token first"
+        AuthRequired -> "xmake is asking for the service password on stdin, which no command channel can answer - store the token first"
         is VersionRefusal -> "this project asks for xmake $required or newer"
-        is Other -> "xmake exited with code $exitCode"
+        is Unclassified -> "xmake exited with code $exitCode"
     }
 
     /** `error: Invalid flag: --download` - the flag is newer than the toolkit. The
@@ -48,14 +48,14 @@ internal sealed class XMakeCommandFailure {
     /** The connect would prompt for a password on stdin
      *  ("Please input user <user> password to connect <host:port>:") - the command
      *  channel cannot answer, so xmake hangs. Recoverable: store the token first. */
-    data object AuthPrompt : XMakeCommandFailure()
+    data object AuthRequired : XMakeCommandFailure()
 
     /** A version refusal the classifier saw but no caller specialized - the executor
      *  itself turns this into XMakeVersionRefusalException before it reaches callers. */
     data class VersionRefusal(val required: String) : XMakeCommandFailure()
 
     /** Anything else: the exit code and the merged output travel with it. */
-    data class Other(val exitCode: Int, val output: String) : XMakeCommandFailure()
+    data class Unclassified(val exitCode: Int, val output: String) : XMakeCommandFailure()
 
     companion object {
 
@@ -65,8 +65,8 @@ internal sealed class XMakeCommandFailure {
             VERSION_REFUSAL.find(output)?.let { return XMakeCommandFailure.VersionRefusal(it.groupValues[1]) }
             INVALID_FLAG.find(output)?.let { return XMakeCommandFailure.InvalidFlag(it.groupValues[1]) }
             NOT_FOUND.find(output)?.let { return XMakeCommandFailure.PackageNotFound(it.groupValues[1]) }
-            if (AUTH_PROMPT.containsMatchIn(output)) return XMakeCommandFailure.AuthPrompt
-            return XMakeCommandFailure.Other(exitCode, output)
+            if (AUTH_REQUIRED.containsMatchIn(output)) return XMakeCommandFailure.AuthRequired
+            return XMakeCommandFailure.Unclassified(exitCode, output)
         }
 
         /** xmake 2.8.7 and 3.x, identical text: "xmake v3.1.2 < v3.2.1, please run …". */
@@ -82,6 +82,6 @@ internal sealed class XMakeCommandFailure {
 
         /** xmake 2.8.7 `private/service/remote_cache/client.lua`: "Please input user
          *  <user> password to connect <host:port>:". */
-        private val AUTH_PROMPT = Regex("""Please input user \S+ password to connect""")
+        private val AUTH_REQUIRED = Regex("""Please input user \S+ password to connect""")
     }
 }

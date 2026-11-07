@@ -48,24 +48,25 @@ class XMakeCapabilityTest {
     }
 
     @Test
-    fun `the 2_8_7 toolkit answers the scan but not the newer flags`() {
+    fun `the 2_8_7 toolkit refuses everything the matrix gates`() {
         val t = toolkit("2.8.7")
-        assertTrue(t.supports(XMakeCapability.REQUIRE_SCAN))
         assertFalse(t.supports(XMakeCapability.REQUIRE_DOWNLOAD))
         assertFalse(t.supports(XMakeCapability.REQUIRE_CHECK))
-        assertFalse(t.supports(XMakeCapability.REQUIRE_FORMAT_JSON))
+        assertFalse(t.supports(XMakeCapability.SERVICE_STATUS))
+        assertFalse(t.supports(XMakeCapability.SERVICE_LOGS))
     }
 
     @Test
-    fun `an unknown version answers each capability's own unknown rule`() {
+    fun `an unprobed version refuses every capability`() {
         val t = toolkit("")
-        assertFalse(t.supports(XMakeCapability.REQUIRE_DOWNLOAD))
-        assertTrue(t.supports(XMakeCapability.REQUIRE_SCAN))
+        XMakeCapability.entries.forEach { capability ->
+            assertFalse("$capability should refuse an unknown version", t.supports(capability))
+        }
     }
 
     @Test
     fun `a partially parsed version degrades to what its digits say`() {
-        // "v2" reads as 2.0.0: older than everything gated at 2.8.7.
-        assertFalse(toolkit("v2").supports(XMakeCapability.REQUIRE_SCAN))
+        // "v2" reads as 2.0.0: older than everything the matrix gates at 3.1.2.
+        assertFalse(toolkit("v2").supports(XMakeCapability.REQUIRE_DOWNLOAD))
     }
 }

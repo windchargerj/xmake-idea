@@ -34,7 +34,7 @@ import io.xmake.run.command.xmakeCommands
 import io.xmake.run.command.xmakeExecutor
 import io.xmake.run.target.SELECT_BUILD_PROFILE_FIRST
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
-import io.xmake.utils.cli.XPackageSpec
+import io.xmake.utils.cli.XMakePackageSpec
 import io.xmake.utils.notify
 import io.xmake.utils.runCancellable
 import kotlinx.coroutines.CancellationException
@@ -108,11 +108,13 @@ internal class XMakePackagesService(private val project: Project) {
 
     /** Searches the configured repositories; the hits - and the `note:`/`error:` lines
      *  xmake printed around them - replace the tree's rows until [exitSearch]. A search
-     *  behind a read preempts it; behind a mutation it queues as [pendingSearch]. The
-     *  info cache clears with the mode: a name answered under search queries afresh as
-     *  declared, since the two contexts resolve differently. */
+     *  behind a read preempts it; behind a mutation - or before the catalog ever landed
+     *  (cancelling the first refresh would leave the declared list empty for good) - it
+     *  queues as [pendingSearch]. The info cache clears with the mode: a name answered
+     *  under search queries afresh as declared, since the two contexts resolve
+     *  differently. */
     fun search(term: String) {
-        if (busy && busyWithMutation) {
+        if (busy && (busyWithMutation || snapshot == null)) {
             pendingSearch = term
             return
         }
@@ -158,94 +160,47 @@ internal class XMakePackagesService(private val project: Project) {
         // answered the row's facts, but only a single-package ask can attribute the
         // closure to the package that needs it.
         if (current.closures.containsKey(packageName)) return
-        val asked = XPackageSpec.parse(packageName)
+        val asked = XMakePackageSpec.parse(packageName)
         claim(null) { factory ->
             val base = snapshot
-            var infoFailure: String? = null
-            // ONE spawn first: the bundled probe runs xmake's own info and scan actions
-            // for this package, so the answer carries no flag-version sensitivity - the
-            // script calls the same modules the CLI does, on every toolkit this plugin
-            // serves. The plain-text info, closure, and scan parsers read it whole.
-            val probe = runQuery { factory.createPackagesProbe(asked) }
-                .onFailure { infoFailure = it.describeFailure() }
-                .getOrNull()
-            var info = probe?.let { text ->
-                runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }
-                    .onFailure { infoFailure = it.message ?: it.toString() }
-                    .getOrNull()
+            // ONE spawn: the bundled probe runs xmake's own info and scan actions
+            // for this package - the answer carries no flag-version sensitivity,
+            // because the script calls the modules the CLI itself calls. The text
+            // parsers read the whole output; the store scan of the ask rides in
+            // the same answer.
+            val query = runQuery { factory.createPackagesProbe(asked) }
+            val probe = query.getOrNull()
+            val info = probe?.let { text ->
+                runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
             }
-            var closure = probe?.let { text ->
+            val closure = probe?.let { text ->
                 runCancellable { XMakePackageParsers.parsePackageClosureText(text) }.getOrNull()
             }.orEmpty()
-            // One query per package per context: a landed answer - a failed parse
-            // included - is the record, whatever it said. The closure rides with the
-            // asked package's own answer; it is what the query handed back.
             val bare = asked.name
-            val scanEligible = bare.isNotEmpty() && !packageName.contains("::")
-            var versions = probe?.let { text ->
-                if (scanEligible) {
-                    XMakePackageParsers.parseInstalledScan(text)
-                        .filter { it.require == bare.lowercase() }
-                        .mapNotNull { it.version }
-                } else {
-                    emptyList()
-                }
-            }.orEmpty()
-            // Degrade path for the toolkit where the probe cannot answer: the old
-            // per-flag chain - JSON when the capability holds, text always, the scan
-            // its own ask - same record-keeping, keyed on the same failure slot.
-            if (info == null) {
-                val jsonFirst = factory.supports(XMakeCapability.REQUIRE_FORMAT_JSON)
-                val output = if (jsonFirst) {
-                    runQuery { factory.createRequireInfo(asked) }
-                        .onFailure { infoFailure = it.describeFailure() }
-                        .getOrNull()
-                } else {
-                    null
-                }
-                info = output?.let { text ->
-                    runCancellable { XMakePackageParsers.parsePackageInfo(text, packageName) }
-                        .onFailure { infoFailure = it.message ?: it.toString() }
-                        .getOrNull()
-                }
-                if (info != null) {
-                    closure = output?.let { text ->
-                        runCancellable { XMakePackageParsers.parsePackageClosure(text) }.getOrNull()
-                    }.orEmpty()
-                } else {
-                    runQuery { factory.createRequireInfoText(asked) }
-                        .onFailure { if (jsonFirst) infoFailure = it.describeFailure() }
-                        .getOrNull()
-                        ?.let { text ->
-                            runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }
-                                .onFailure { if (jsonFirst) infoFailure = it.message ?: it.toString() }
-                                .getOrNull()
-                                ?.let { textInfo ->
-                                    info = textInfo
-                                    infoFailure = null
-                                    closure = runCancellable {
-                                        XMakePackageParsers.parsePackageClosureText(text)
-                                    }.getOrNull().orEmpty()
-                                }
-                        }
-                }
-                if (info == null && scanEligible && factory.supports(XMakeCapability.REQUIRE_SCAN)) {
-                    versions = runQuery { factory.createRequireScan(listOf(XPackageSpec(bare))) }
-                        .getOrNull()
-                        ?.let { text ->
-                            XMakePackageParsers.parseInstalledScan(text)
-                                .filter { it.require == bare.lowercase() }
-                                .mapNotNull { it.version }
-                        }
-                        .orEmpty()
-                }
+            val versions = if (probe == null || bare.isEmpty() || packageName.contains("::")) {
+                emptyList()
+            } else {
+                XMakePackageParsers.parseInstalledScan(probe)
+                    .filter { it.require == bare.lowercase() }
+                    .mapNotNull { it.version }
+            }
+            // The store composes the info: the asked version sitting in the scanned
+            // inventory is what "installed" means here - one truth, read from the
+            // same spawn. A landed answer - a failed parse included - is the record,
+            // whatever it said.
+            val composed = info?.copy(installed = versions.contains(info.version))
+            val failure = when {
+                composed != null -> null
+                probe == null -> query.exceptionOrNull()?.describeFailure()
+                    ?: "the probe answered nothing"
+                else -> "the probe output carried no info for '$packageName'"
             }
             base?.copy(
-                infos = base.infos + (packageName to info),
+                infos = base.infos + (packageName to composed),
                 closures = base.closures + (packageName to closure),
-                installedVersions = base.installedVersions + (packageName to versions),
-                infoFailures = if (info == null) {
-                    base.infoFailures + (packageName to (infoFailure ?: "the info query answered nothing usable"))
+                installedVersions = base.installedVersions + (bare.lowercase() to versions),
+                infoFailures = if (composed == null) {
+                    base.infoFailures + (packageName to (failure ?: "the info ask failed"))
                 } else {
                     base.infoFailures - packageName
                 },
@@ -285,14 +240,27 @@ internal class XMakePackagesService(private val project: Project) {
     fun scanInstalled() {
         claim("scanning installed packages") { factory ->
             val base = snapshot
-            val scan = runCancellable {
-                XMakePackageParsers.parseInstalledScan(
-                    project.xmakeExecutor.captureStandardOutput(factory.createRequireScan()),
-                )
-            }.getOrNull().orEmpty()
-            base?.copy(installed = scan)
+            val inventory = scanInventory(factory)
+            base?.copy(
+                installed = inventory,
+                installedVersions = inventory.groupByVersion(),
+            )
         }
     }
+
+    /** One full-store scan: the inventory rows, or empty when the scan died. */
+    private suspend fun scanInventory(factory: XMakeCommandFactory): List<XMakePackageInfo> =
+        runCancellable {
+            XMakePackageParsers.parseInstalledScan(
+                project.xmakeExecutor.captureStandardOutput(factory.createRequireScan()),
+            )
+        }.getOrNull().orEmpty()
+
+    /** The inventory grouped per package name - the version cache's shape, so the full
+     *  scan feeds the same cache the probe's targeted scan does. */
+    private fun List<XMakePackageInfo>.groupByVersion(): Map<String, List<String>> =
+        groupBy({ it.require }, { it.version ?: "" })
+            .mapValues { (_, versions) -> versions.filter(String::isNotEmpty) }
 
     /** Leaves the installed view; the inventory stays in the snapshot, so re-entering
      *  the view costs nothing until a refresh drops it. */
@@ -456,11 +424,22 @@ internal class XMakePackagesService(private val project: Project) {
                 project.xmakeExecutor.captureStandardOutput(factory.createRequireDepgraph()),
             )
         }.getOrNull()
+        // The installed inventory, when the view is on, is re-scanned rather than
+        // carried: a mutation just changed the store, and the view's whole job is to
+        // say what the store holds now. Its names refill the version cache - the one
+        // installed truth, same as the toggle and the probe feed it.
+        val carried = snapshot?.installed
+        val inventory = if (carried != null) {
+            scanInventory(factory)
+        } else {
+            null
+        }
         return XMakePackagesSnapshot(
             packages,
             depgraph,
             searchResults = snapshot?.searchResults,
-            installed = snapshot?.installed,
+            installed = inventory,
+            installedVersions = inventory?.groupByVersion() ?: snapshot?.installedVersions ?: emptyMap(),
         )
     }
 

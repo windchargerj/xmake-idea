@@ -56,10 +56,11 @@ import com.intellij.util.ui.components.BorderLayoutPanel
 import io.xmake.project.console.XMakeConsoleManager
 import io.xmake.project.toolkit.XMakeCapability
 import io.xmake.run.command.XMakeCommand
+import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.packages.XMakePackageInfo
 import io.xmake.run.packages.XMakePackagesService
 import io.xmake.run.packages.XMakePackagesSnapshot
-import io.xmake.utils.cli.XPackageSpec
+import io.xmake.utils.cli.XMakePackageSpec
 import io.xmake.utils.notify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -839,11 +840,7 @@ internal class XMakePackagesPanel(
 
     /** The package name the selection carries - through the sorter's view-to-model
      *  conversion, since the rows may be re-sorted. */
-    private fun selectedPackageName(): String? {
-        val viewRow = table.selectedRow
-        if (viewRow < 0) return null
-        return tableModel.getItem(table.convertRowIndexToModel(viewRow))?.name
-    }
+    private fun selectedPackageName(): String? = selectedRow()?.name
 
     /** The selected row itself, for the state its info query has not answered yet - the
      *  installed inventory's rows carry their proof on the row, not in an info. */
@@ -1063,18 +1060,14 @@ internal class XMakePackagesPanel(
      *  their confirmation flows through it. */
     private var detailsPackage: String? = null
 
-    /** The versions of [name] the package store holds on disk: the targeted scan the
-     *  info query rode, widened by the full inventory when the installed view has been
-     *  toggled, closed by the info's resolved version when that one says installed -
-     *  the references prove it even where a scan has not answered. */
-    private fun onDiskVersions(name: String, installedNow: String?): Set<String> = buildSet {
-        addAll(service.snapshot?.installedVersions?.get(name).orEmpty())
-        val bare = bareName(name)
-        service.snapshot?.installed.orEmpty()
-            .filter { bare != null && it.require == bare }
-            .forEach { it.version?.let(::add) }
-        installedNow?.let { add(it) }
-    }
+    /** The versions of [name] the package store holds on disk: the cache the probe's
+     *  targeted scan, the full inventory, and the refills after a mutation all write -
+     *  one cache, one truth, keyed by the bare name. */
+    private fun onDiskVersions(name: String): Set<String> =
+        bareName(name)
+            ?.let { bare -> service.snapshot?.installedVersions?.get(bare) }
+            .orEmpty()
+            .toSet()
 
     /** The document the details page renders for a package whose info landed. */
     private fun detailsHtml(name: String): String {
@@ -1096,7 +1089,7 @@ internal class XMakePackagesPanel(
         // toolbar's actions stay whole-package - this section is where a version chooses.
         val versions = row?.versions.orEmpty()
         val installedNow = if (info.installed) info.version else null
-        val onDisk = onDiskVersions(name, installedNow)
+        val onDisk = onDiskVersions(name)
         val allVersions = versions + onDisk.filter { onDiskVersion -> versions.none { it == onDiskVersion } }
         if (allVersions.isNotEmpty()) {
             page.append("<p class='sec'>VERSIONS <span class='count'>(")
@@ -1120,17 +1113,10 @@ internal class XMakePackagesPanel(
                 }
                 page.append("</div>")
             }
-            info.references.orEmpty().forEach { reference ->
-                page.append("<div class='dep'><span class='mono'>")
-                    .append(esc(elideMiddle(reference.dir ?: "?", 44)))
-                    .append("</span>")
-                reference.date?.let { page.append(" <span class='g'>").append(esc(it)).append("</span>") }
-                page.append("</div>")
-            }
         }
 
-        // The facts sit before the closure: the paths and the reference count answer
-        // "where is it and is it mine", which a reader checks before asking what it needs.
+        // The facts sit before the closure: the paths answer "where is it", which a
+        // reader checks before asking what it needs.
         page.append("<p class='sec'>INFO</p>")
         page.append("<div class='dep'>")
         info.installdir?.let {
@@ -1140,9 +1126,6 @@ internal class XMakePackagesPanel(
         info.cachedir?.let {
             page.append("<span class='g'>Cache directory:</span> <span class='mono'>")
                 .append(esc(elideMiddle(it, 48))).append("</span><br>")
-        }
-        if (info.installed) {
-            page.append("<span class='g'>References:</span> ${info.references?.size ?: 0} - installed")
         }
         page.append("</div>")
 
@@ -1196,18 +1179,27 @@ internal class XMakePackagesPanel(
         service.runPackageCommand(command, what)
     }
 
+    /** The one mutation shape every action reads: the title, the ask's sentence, and the
+     *  command built on the factory - whose toolkit resolution runs off the EDT inside
+     *  [XMakePackagesService.prepareCommand], while this confirmation stays on it. */
+    private fun confirmAndRun(
+        title: String,
+        what: String,
+        prepare: XMakeCommandFactory.() -> XMakeCommand,
+    ) {
+        service.prepareCommand(prepare = prepare) { command ->
+            confirmAndRun(title, what, command)
+        }
+    }
+
     /** The Install flow the toolbar button, a double-click on a row, and the details
      *  page's version links share. [ask] is the xmake package ask: a bare name, or a
      *  name pinned to one version (`rsync 3.4.1`) - parsed into a spec here, the one
      *  grammar the command ever sees. */
     private fun installPackage(ask: String) {
-        val spec = XPackageSpec.parse(ask)
-        service.prepareCommand(prepare = { createRequireInstall(spec) }) { command ->
-            confirmAndRun(
-                "Install package",
-                "Installing '${spec.render()}' - xmake fetches, builds, and installs it.",
-                command,
-            )
+        val spec = XMakePackageSpec.parse(ask)
+        confirmAndRun("Install package", "Installing '${spec.render()}' - xmake fetches, builds, and installs it.") {
+            createRequireInstall(spec)
         }
     }
 
@@ -1215,9 +1207,9 @@ internal class XMakePackagesPanel(
      *  [ask] is the xmake package ask: a bare name, or a name pinned to one version
      *  (`zstd 1.5.6`) - the pin decides which installed version's directory xmake removes. */
     private fun uninstallPackage(ask: String) {
-        val spec = XPackageSpec.parse(ask)
-        service.prepareCommand(prepare = { createRequireUninstall(spec) }) { command ->
-            confirmAndRun("Uninstall package", "Uninstalling '${spec.render()}'.", command)
+        val spec = XMakePackageSpec.parse(ask)
+        confirmAndRun("Uninstall package", "Uninstalling '${spec.render()}'.") {
+            createRequireUninstall(spec)
         }
     }
 
@@ -1273,8 +1265,8 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             val name = selectedOrNotify() ?: return
-            service.prepareCommand(prepare = { createRequireFetch(XPackageSpec.parse(name)) }) { command ->
-                confirmAndRun("Fetch package", "Fetching the library info of '$name'.", command)
+            confirmAndRun("Fetch package", "Fetching the library info of '$name'.") {
+                createRequireFetch(XMakePackageSpec.parse(name))
             }
         }
     }
@@ -1295,8 +1287,8 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             val name = selectedOrNotify() ?: return
-            service.prepareCommand(prepare = { createRequireDownload(XPackageSpec.parse(name)) }) { command ->
-                confirmAndRun("Download source", "Downloading the source archive of '$name'.", command)
+            confirmAndRun("Download source", "Downloading the source archive of '$name'.") {
+                createRequireDownload(XMakePackageSpec.parse(name))
             }
         }
     }
@@ -1317,8 +1309,8 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             val name = selectedOrNotify() ?: return
-            service.prepareCommand(prepare = { createRequireCheck(XPackageSpec.parse(name)) }) { command ->
-                confirmAndRun("Check support", "Checking whether '$name' is supported here.", command)
+            confirmAndRun("Check support", "Checking whether '$name' is supported here.") {
+                createRequireCheck(XMakePackageSpec.parse(name))
             }
         }
     }
@@ -1339,17 +1331,14 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             val name = selectedOrNotify() ?: return
-            service.prepareCommand(prepare = { createRequireExport(XPackageSpec.parse(name)) }) { command ->
-                // The destination is xmake's own default: a "packages" directory in the
-                // project. Naming it is what makes the verb honest - an export whose
-                // destination nobody knows reads as a no-op.
-                confirmAndRun(
-                    "Export package",
-                    "Exporting the installed '$name' and its dependencies into the project's " +
-                        "'packages' directory.",
-                    command,
-                )
-            }
+            // The destination is xmake's own default: a "packages" directory in the
+            // project. Naming it is what makes the verb honest - an export whose
+            // destination nobody knows reads as a no-op.
+            confirmAndRun(
+                "Export package",
+                "Exporting the installed '$name' and its dependencies into the project's " +
+                    "'packages' directory.",
+            ) { createRequireExport(XMakePackageSpec.parse(name)) }
         }
     }
 
@@ -1375,8 +1364,8 @@ internal class XMakePackagesPanel(
                 "Import packages",
                 null,
             )?.trim().takeUnless { it.isNullOrEmpty() } ?: return
-            service.prepareCommand(prepare = { createRequireImport(XPackageSpec.parse(name)) }) { command ->
-                confirmAndRun("Import packages", "Importing '$name' from the 'packages' directory.", command)
+            confirmAndRun("Import packages", "Importing '$name' from the 'packages' directory.") {
+                createRequireImport(XMakePackageSpec.parse(name))
             }
         }
     }
@@ -1399,18 +1388,15 @@ internal class XMakePackagesPanel(
             // uninstalls the NOT-REFERENCED packages - the projects still using one keep
             // it. The names scope the sweep to a selection when there is one.
             val name = selectedPackageName()
-            service.prepareCommand(
-                prepare = { createRequireClean(name?.let { listOf(XPackageSpec.parse(it)) }.orEmpty()) },
-            ) { command ->
-                confirmAndRun(
-                    "Clean packages",
-                    if (name == null) {
-                        "Clearing the package caches and uninstalling the packages no project references."
-                    } else {
-                        "Clearing the caches of '$name' and uninstalling it if nothing references it."
-                    },
-                    command,
-                )
+            confirmAndRun(
+                "Clean packages",
+                if (name == null) {
+                    "Clearing the package caches and uninstalling the packages no project references."
+                } else {
+                    "Clearing the caches of '$name' and uninstalling it if nothing references it."
+                },
+            ) {
+                createRequireClean(name?.let { listOf(XMakePackageSpec.parse(it)) }.orEmpty())
             }
         }
     }
@@ -1490,17 +1476,14 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             val name = selectedPackageName()
-            service.prepareCommand(prepare = { createRequireUpgrade(name?.let(XPackageSpec::parse)) }) { command ->
-                confirmAndRun(
-                    "Upgrade packages",
-                    if (name == null) {
-                        "Upgrading every declared package to the newest version its requirement allows."
-                    } else {
-                        "Upgrading '$name' to the newest version its requirement allows."
-                    },
-                    command,
-                )
-            }
+            confirmAndRun(
+                "Upgrade packages",
+                if (name == null) {
+                    "Upgrading every declared package to the newest version its requirement allows."
+                } else {
+                    "Upgrading '$name' to the newest version its requirement allows."
+                },
+            ) { createRequireUpgrade(name?.let(XMakePackageSpec::parse)) }
         }
     }
 
@@ -1517,7 +1500,7 @@ internal class XMakePackagesPanel(
             event.presentation.isEnabled = !service.busy && name != null &&
                 (infoFor(name)?.installed == true ||
                         selectedRow()?.isInstalled == true ||
-                        onDiskVersions(name, null).isNotEmpty())
+                        onDiskVersions(name).isNotEmpty())
         }
 
         override fun actionPerformed(event: AnActionEvent) {
@@ -1529,10 +1512,10 @@ internal class XMakePackagesPanel(
             // resolved version, then to the first the store holds.
             val version = row.takeIf { it.isInstalled }?.version
                 ?: infoFor(name)?.version?.takeIf { infoFor(name)?.installed == true }
-                ?: onDiskVersions(name, null).firstOrNull()
-            val spec = XPackageSpec(name).pinnedTo(version)
-            service.prepareCommand(prepare = { createRequireUninstall(spec) }) { command ->
-                confirmAndRun("Uninstall package", "Uninstalling '${spec.render()}'.", command)
+                ?: onDiskVersions(name).firstOrNull()
+            val spec = XMakePackageSpec(name).pinnedTo(version)
+            confirmAndRun("Uninstall package", "Uninstalling '${spec.render()}'.") {
+                createRequireUninstall(spec)
             }
         }
     }
