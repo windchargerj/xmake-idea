@@ -117,4 +117,8 @@ data class XMakePackagesSnapshot(
      *  uninstall flow read. The full inventory lands in [installed] only when the
      *  installed view is toggled; this map is what a plain selection collects. */
     val installedVersions: Map<String, List<String>> = emptyMap(),
+    /** Why an info query answered nothing usable, per asked name: the parse's own
+     *  complaint. The no-info state in the details pane reads it instead of a blank
+     *  "answered nothing" - "xmake answered garbage" and "never asked" stay apart. */
+    val infoFailures: Map<String, String> = emptyMap(),
 )

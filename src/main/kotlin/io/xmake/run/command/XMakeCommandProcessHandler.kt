@@ -221,4 +221,9 @@ internal class XMakeCommandException(
     val exitCode: Int,
     commandLine: String,
     val output: String,
-) : ExecutionException("XMake command failed with exit code $exitCode (command: $commandLine)")
+) : ExecutionException("XMake command failed with exit code $exitCode (command: $commandLine)") {
+
+    /** The output classified once, here - the single place any caller learns what the
+     *  failure means; [XMakeCommandFailure.describe] owns the sentence. */
+    val failure: XMakeCommandFailure = XMakeCommandFailure.classify(exitCode, output)
+}

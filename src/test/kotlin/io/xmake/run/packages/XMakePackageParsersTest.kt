@@ -223,6 +223,39 @@ class XMakePackageParsersTest {
     }
 
     @Test
+    fun `the bundled probe output parses whole - info, closure, and scan in one string`() {
+        // A live capture (2.8.7, markers intact, prologue and ANSI coloring included on
+        // the real thing): one spawn answers the info block and the scan of the store.
+        val output = """
+            __packages_probe_begin__
+            The package info of project:
+                require(nlohmann_json):
+                  -> description: JSON for Modern C++
+                  -> version: v3.12.0
+                  -> repo: xmake-repo https://gitee.com/tboox/xmake-repo.git master
+                  -> installdir: /home/jacky/.xmake/packages/n/nlohmann_json/v3.12.0/b36e201b
+                  -> platforms: all
+
+            scanning packages ..
+            nlohmann_json-v3.11.3:
+              -> ec1183311a224b34b5c138edda96fdde: linux, x86_64
+            nlohmann_json-v3.11.2:
+            nlohmann_json-v3.12.0:
+              -> b36e201b1206419d94ef523b409412cf: , , empty
+            __packages_probe_end__
+        """.trimIndent() + "\n"
+
+        val info = XMakePackageParsers.parsePackageInfoText(output, "nlohmann_json")!!
+        val versions = XMakePackageParsers.parseInstalledScan(output).map { it.version }
+
+        assertEquals("v3.12.0", info.version)
+        assertEquals("JSON for Modern C++", info.description)
+        assertEquals("xmake-repo", info.repoName)
+        assertFalse(info.installed)
+        assertEquals(listOf("v3.11.3"), versions)
+    }
+
+    @Test
     fun `a repository package answers its docs page and the guide`() {
         val links = xmakePackageLinks("zlib")
 

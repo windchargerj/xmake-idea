@@ -142,15 +142,27 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         options.target
             ?.takeUnless { it.isBlank() || it == DEFAULT_TARGET }
             ?.let { args(it) }
+        args(options.arguments)
     }
 
-    /** Adds `service`; [ServiceScope.verb] and [ServiceScope.kind] are xmake's own long flags. */
+    /** Adds `service`; [ServiceScope.verb] and [ServiceScope.kind] are xmake's own long flags.
+     *  A verb that takes a value renders the equals form xmake's help documents
+     *  (`--add-user=root`) - one argv element, no two-element ambiguity; a missing value
+     *  leaves the bare flag, which xmake then errors about visibly. */
     fun service(configure: ServiceScope.() -> Unit): XMakeCommandLine = apply {
         val options = ServiceScope().apply(configure)
         beginAction("service")
-        options.verb?.let { flag("--${it.flag}") }
+        options.verb?.let { verb ->
+            val value = if (verb.takesValue) verb.valueFrom(options) else null
+            if (value != null) {
+                args("--${verb.flag}=$value")
+            } else {
+                flag("--${verb.flag}")
+            }
+        }
         options.kind?.let { flag("--${it.flag}") }
-        option("--session" to options.session)
+        options.session?.let { args("--session=$it") }
+        flag("--all", options.all)
         options.pullPath?.let { args(listOf(it)) }
     }
 
@@ -176,6 +188,11 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         flag("--export", options.export)
         flag("--import", options.import)
         flag("--scan", options.scan)
+        flag("--shallow", options.shallow)
+        flag("--build", options.buildFromSource)
+        flag("--force", options.force)
+        option("--packagedir" to options.packageDir)
+        option("--extra" to options.extra)
         flag("--format=json", options.json)
         flag("-y", options.yes)
         args(options.packages)
@@ -210,8 +227,9 @@ internal const val DEFAULT_TARGET = "default"
 /** The xmake pseudo-target that names every target; [XMakeCommandLine.target] maps it to `-a`. */
 internal const val ALL_TARGET = "all"
 
-/** The `xmake service` verbs this plugin drives; the flags are xmake's own long forms. */
-enum class XMakeServiceVerb(internal val flag: String) {
+/** The `xmake service` verbs this plugin drives; the flags are xmake's own long forms,
+ *  all verified on 2.8.7 except the two read-only ones (3.1.2, capability-gated). */
+enum class XMakeServiceVerb(internal val flag: String, internal val takesValue: Boolean = false) {
     START("start"),
     STOP("stop"),
     CONNECT("connect"),
@@ -220,6 +238,20 @@ enum class XMakeServiceVerb(internal val flag: String) {
     SYNC("sync"),
     PULL("pull"),
     RESTART("restart"),
+    /** Sweeps this project's files off the daemon; the scope's [ServiceScope.all] widens it. */
+    CLEAN("clean"),
+    /** `--xmakesrc=<path>`: syncs the given xmake program files to the daemon. */
+    XMAKE_SRC("xmakesrc", takesValue = true),
+    /** Server-side: mint a fresh token. */
+    GEN_TOKEN("gen-token"),
+    /** Server-side: add a user; the value is the user name. */
+    ADD_USER("add-user", takesValue = true),
+    /** Server-side: remove a user; the value is the user name. */
+    RM_USER("rm-user", takesValue = true),
+    /** Read-only; xmake 3.1.2+ only - [io.xmake.project.toolkit.XMakeCapability.SERVICE_STATUS] gates the ask. */
+    STATUS("status"),
+    /** Read-only; xmake 3.1.2+ only - [io.xmake.project.toolkit.XMakeCapability.SERVICE_LOGS] gates the ask. */
+    LOGS("logs"),
 }
 
 /** The `xmake service` kinds. The remote cache answers to xmake's `--ccache` flag, and
@@ -272,6 +304,9 @@ internal class ProjectScope internal constructor() {
 internal class LuaScope internal constructor() {
     lateinit var script: String
     var target: String? = null
+
+    /** The raw arguments the script's `main(...)` receives, in order. */
+    var arguments: List<String> = emptyList()
 }
 
 @CliDsl
@@ -284,6 +319,22 @@ internal class ServiceScope internal constructor() {
 
     /** `--pull <path>`: pull the given file or directory from the daemon. */
     var pullPath: String? = null
+
+    /** The user `--add-user`/`--rm-user` names. */
+    var user: String? = null
+
+    /** The `--xmakesrc=<path>` program files. */
+    var xmakeSrc: String? = null
+
+    /** `--all`: the clean widens from this project to every project's files. */
+    var all = false
+}
+
+/** The value a takes-value verb reads off the scope it belongs to. */
+private fun XMakeServiceVerb.valueFrom(options: ServiceScope): String? = when (this) {
+    XMakeServiceVerb.ADD_USER, XMakeServiceVerb.RM_USER -> options.user
+    XMakeServiceVerb.XMAKE_SRC -> options.xmakeSrc
+    else -> null
 }
 
 @CliDsl
@@ -302,6 +353,16 @@ internal class RequireScope internal constructor() {
     var export: Boolean = false
     var import: Boolean = false
     var scan: Boolean = false
+    /** `--shallow`: does not install the ask's dependency packages. */
+    var shallow: Boolean = false
+    /** `--build`: always build and install from source, never a cached artifact. */
+    var buildFromSource: Boolean = false
+    /** `--force`: reinstall all package dependencies. */
+    var force: Boolean = false
+    /** `--packagedir=<dir>`: the export/import packages directory. */
+    var packageDir: String? = null
+    /** `--extra="{...}"`: the extra config the ask carries. */
+    var extra: String? = null
     /** Answers xmake's interactive prompt; the executor channel cannot, so mutations always set it. */
     var yes: Boolean = false
     /** The packages the action names: the search term, the info target, or the install/uninstall set. */

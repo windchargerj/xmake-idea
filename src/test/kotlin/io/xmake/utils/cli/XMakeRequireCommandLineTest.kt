@@ -107,6 +107,41 @@ class XMakeRequireCommandLineTest {
     }
 
     @Test
+    fun `the install modifiers and the export or import dirs render their flags`() {
+        assertEquals(
+            listOf("require", "--shallow", "--build", "--force", "tinytest"),
+            line {
+                require {
+                    shallow = true
+                    buildFromSource = true
+                    force = true
+                    packages = listOf("tinytest")
+                }
+            },
+        )
+        assertEquals(
+            listOf("require", "--export", "--packagedir", "packagesdir", "tinytest"),
+            line {
+                require {
+                    export = true
+                    packageDir = "packagesdir"
+                    packages = listOf("tinytest")
+                }
+            },
+        )
+        assertEquals(
+            listOf("require", "--import", "--extra", "{debug=true}", "tinytest"),
+            line {
+                require {
+                    import = true
+                    extra = "{debug=true}"
+                    packages = listOf("tinytest")
+                }
+            },
+        )
+    }
+
+    @Test
     fun `a second action on one command line is refused`() {
         val error = try {
             line {
