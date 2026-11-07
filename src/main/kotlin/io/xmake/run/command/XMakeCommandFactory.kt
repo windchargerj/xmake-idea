@@ -66,12 +66,6 @@ class XMakeCommandFactory(
      *  disables before the guard ever fires. */
     fun supports(capability: XMakeCapability): Boolean = toolkit.supports(capability)
 
-    /** The one construction-time refusal: a flag the toolkit would answer with
-     *  `Invalid flag` never leaves the factory. */
-    private fun guard(capability: XMakeCapability, asks: String) {
-        check(toolkit.supports(capability)) { "$asks needs ${capability.requirement}" }
-    }
-
     private val buildDirectoryOption = profile.buildDirectory.takeIf { it.isNotEmpty() }
 
     private val configureArguments: List<String> = configureArgumentsWith(profile.buildMode)
@@ -241,17 +235,17 @@ class XMakeCommandFactory(
         }
 
     /**
-     * One packages probe for [asked]: a single spawn where xmake's own action modules
+     * One packages query for [asked]: a single spawn where xmake's own action modules
      * render the package's info block and the installed scan of its store entries
-     * (packagesprobe.lua calls `require.info.main` and `require.scan.main` directly, so
+     * (packagesquery.lua calls `require.info.main` and `require.scan.main` directly, so
      * the answer carries no flag-version sensitivity). The output reads whole with the
      * plain-text info, closure, and scan parsers - no per-flag gates anywhere on the
      * path, which is the point: every toolkit this plugin serves answers the same way.
      */
-    fun createPackagesProbe(asked: XMakePackageSpec): XMakeCommand =
+    fun createPackagesQuery(asked: XMakePackageSpec): XMakeCommand =
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             lua {
-                script = scriptArgument("packagesprobe.lua")
+                script = scriptArgument("packagesquery.lua")
                 arguments = listOf(asked.name)
             }
         }
@@ -326,13 +320,7 @@ class XMakeCommandFactory(
         check(verb.takesValue.not()) {
             "$verb carries a value - use its dedicated factory method"
         }
-        val capability = when (verb) {
-            XMakeServiceVerb.STATUS -> XMakeCapability.SERVICE_STATUS
-            XMakeServiceVerb.LOGS -> XMakeCapability.SERVICE_LOGS
-            else -> null
-        }
-        capability?.let { guard(it, "service ${verb.flag}") }
-        return createCommand(environmentOverrides = if (capability != null) QUERY_ENVIRONMENT else emptyMap()) {
+        return createCommand {
             service {
                 this.verb = verb
                 kind?.let { this.kind = it }
@@ -392,7 +380,7 @@ class XMakeCommandFactory(
      * (docs/roadmap-designs/xrepo-packages.md, verified on 3.1.2) - so no json flag goes out.
      */
     fun createRequireList(): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+        createCommand {
             require { list = true }
         }
 
@@ -411,32 +399,28 @@ class XMakeCommandFactory(
     /** One `xmake require --fetch <package>`: fetches the package's library info from
      *  the repository without installing it. */
     fun createRequireFetch(spec: XMakePackageSpec): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+        createCommand {
             require { fetch = true; packages = listOf(spec.render()) }
         }
 
     /** One `xmake require --download <package>`: fetch the source archive without
      *  installing. Guarded: the flag is newer than some toolkits. */
-    fun createRequireDownload(spec: XMakePackageSpec): XMakeCommand {
-        guard(XMakeCapability.REQUIRE_DOWNLOAD, "require --download")
-        return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+    fun createRequireDownload(spec: XMakePackageSpec): XMakeCommand =
+        createCommand {
             require { download = true; packages = listOf(spec.render()) }
         }
-    }
 
     /** One `xmake require --check <package>`: whether the package is supported on the
      *  current platform and toolchain. Guarded like [createRequireDownload]. */
-    fun createRequireCheck(spec: XMakePackageSpec): XMakeCommand {
-        guard(XMakeCapability.REQUIRE_CHECK, "require --check")
-        return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+    fun createRequireCheck(spec: XMakePackageSpec): XMakeCommand =
+        createCommand {
             require { check = true; packages = listOf(spec.render()) }
         }
-    }
 
     /** One `xmake require --export <package>`: exports the installed package and its
      *  dependencies to a portable archive. */
     fun createRequireExport(spec: XMakePackageSpec): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+        createCommand {
             require { export = true; packages = listOf(spec.render()) }
         }
 
@@ -451,19 +435,19 @@ class XMakeCommandFactory(
      *  [specs] the scan answers just those (`--scan zlib`), one heading per
      *  installed version - the targeted ask the details page rides. */
     fun createRequireScan(specs: List<XMakePackageSpec> = emptyList()): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+        createCommand {
             require { scan = true; packages = specs.map { it.render() } }
         }
 
     /** One `xmake require --search <term>`: the repository hits, plain text only. */
     fun createRequireSearch(term: String): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+        createCommand {
             require { search = true; packages = listOf(term) }
         }
 
     /** One `xmake require --depgraph --format=json`: which declared package needs which. */
     fun createRequireDepgraph(): XMakeCommand =
-        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+        createCommand {
             require { depgraph = true; json = true }
         }
 

@@ -33,7 +33,7 @@ data class XMakeRequireEntry(
  * [version] is the resolution this project gets (a package that exists nowhere reports
  * `latest` with no repo, so a missing [repoName] means "not found in the configured
  * repositories", not a failed query). [installed] is the store's answer - the asked
- * version sits in the installed inventory the probe's scan section read - and it is
+ * version sits in the installed inventory the query scan section read - and it is
  * the one installed truth the view reads; the listing's `-> ` detail lines survive an
  * uninstall (docs/roadmap-designs/xrepo-packages.md, verified on 3.1.2), so nothing
  * else may vouch.

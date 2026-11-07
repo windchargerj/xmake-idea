@@ -852,6 +852,10 @@ internal class XMakePackagesPanel(
 
     private fun infoFor(name: String): XMakePackageInfo? = service.snapshot?.infos?.get(name)
 
+    /** The failed info ask's own complaint, when the ask landed one - the quiet probe
+     *  records its failures here instead of anywhere in the busy state. */
+    private fun failureFor(name: String): String? = service.snapshot?.infoFailures?.get(name)
+
     /** The status of a row, in the table's own words: the installed truth when the info
      *  cache holds one, "declared" for a project requirement otherwise - a hit is neither
      *  until its info lands on selection. */
@@ -905,8 +909,9 @@ internal class XMakePackagesPanel(
 
     /**
      * Renders the selected package: the header (name, badges, meta) over the details
-     * page - whose body carries the spinner row or the wait note while the info is not
-     * there yet - or the nothing-selected card.
+     * page - whose body carries the spinner row while the info is not there yet - or
+     * the nothing-selected card. The spinner holds during an exclusive operation too:
+     * the probe rides the quiet lane, so the answer lands live even mid-build.
      */
     private fun renderDetails(name: String?) {
         detailsPackage = name
@@ -915,27 +920,9 @@ internal class XMakePackagesPanel(
                 showDetailsCard(detailsEmpty)
                 return
             }
-            // A busy pipeline with a named operation is not loading this info at all -
-            // the fetchInfo call was a no-op; say what the wait is really on.
-            infoFor(name) == null && service.busy && service.currentOperation != null -> {
-                showDetailsCard(detailsPane)
-                detailsName.text = name
-                renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
-                detailsMeta.text = " "
-                // The links belong to the package the header names; a render that keeps
-                // the header clears them, or the previous selection's would survive.
-                renderRepoLink(null)
-                detailsBody.text = wrapHtml(
-                    "<p class='g'>Waiting for the current operation to finish before loading the info of " +
-                        "'${esc(name)}' - ${esc(service.currentOperation ?: "working")} - then the row loads " +
-                        "its info, or select it again</p>",
-                )
-                detailsBody.caretPosition = 0
-            }
-            infoFor(name) == null && service.busy -> {
-                // The plain busy wait rides the same page as the info will: the header
-                // keeps the selection, the body the spinner row - the pane never
-                // collapses into a nameless card mid-read.
+            // No info record and no failure record: the quiet probe is in flight - the
+            // spinner holds until its answer lands on the snapshot.
+            infoFor(name) == null && failureFor(name) == null -> {
                 showDetailsCard(detailsPane)
                 detailsName.text = name
                 renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
@@ -951,14 +938,13 @@ internal class XMakePackagesPanel(
                 renderBadges(name, tableModel.items.firstOrNull { it.name == name }, null)
                 detailsMeta.text = " "
                 renderRepoLink(null)
-                // The parse failure's own complaint when there is one - "xmake answered
+                // The probe's own complaint when there is one - "xmake answered
                 // garbage" reads differently from "never asked" or "the process died".
-                val why = service.snapshot?.infoFailures?.get(name)
+                val why = failureFor(name)
                 detailsBody.text = wrapHtml(
                     buildString {
                         append("<p class='g'>No info available for '${esc(name)}'")
                         why?.let { append(" - ").append(esc(it)) }
-                            ?: append(" - the info query answered nothing usable")
                         service.lastError?.let { append(": ").append(esc(it)) }
                         append(".</p><p class='g'>")
                         append(unpackHint()?.let { esc(it) } ?: "The xmake on this host may not answer require --info; updating xmake may fix it")

@@ -96,8 +96,8 @@ class XMakeServiceCommandLineTest {
     }
 
     @Test
-    fun `the read-only verbs render their flags`() {
-        val status = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+    fun `the read-only verbs render their flags on a capable toolkit`() {
+        val status = xmake(CliInstallation("xmake", ToolkitHost(), "3.1.2")).apply {
             service {
                 verb = XMakeServiceVerb.STATUS
                 kind = XMakeServiceKind.REMOTE_CACHE
@@ -105,9 +105,22 @@ class XMakeServiceCommandLineTest {
         }
         assertEquals(listOf("service", "--status", "--ccache"), status.arguments)
 
-        val logs = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+        val logs = xmake(CliInstallation("xmake", ToolkitHost(), "3.1.2")).apply {
             service { verb = XMakeServiceVerb.LOGS }
         }
         assertEquals(listOf("service", "--logs"), logs.arguments)
+    }
+
+    @Test
+    fun `the read-only verbs refuse construction below their version`() {
+        val error = try {
+            xmake(CliInstallation("xmake", ToolkitHost(), "2.8.7")).apply {
+                service { verb = XMakeServiceVerb.STATUS }
+            }
+            null
+        } catch (error: IllegalStateException) {
+            error.message
+        }
+        assertEquals("service --status needs xmake 3.1.2", error)
     }
 }
