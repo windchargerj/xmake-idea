@@ -1,6 +1,5 @@
 package io.xmake.project.profile
 
-import com.intellij.openapi.diagnostic.logger
 import com.intellij.util.xmlb.XmlSerializer
 import com.intellij.util.xmlb.annotations.Tag
 import io.xmake.project.directory.LegacyProjectDirectory

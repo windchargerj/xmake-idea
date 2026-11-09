@@ -26,7 +26,6 @@ import com.intellij.coverage.view.CoverageViewExtension
 import com.intellij.execution.configurations.RunConfigurationBase
 import com.intellij.execution.configurations.coverage.CoverageEnabledConfiguration
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import io.xmake.run.XMakeRunConfiguration
 
