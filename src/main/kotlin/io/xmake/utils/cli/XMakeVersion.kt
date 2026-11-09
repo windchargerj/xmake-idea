@@ -14,41 +14,12 @@
  *
  * Copyright (C) 2015-present, Xmake Open Source Community.
  */
-package io.xmake.project.toolkit
+package io.xmake.utils.cli
 
 /**
- * One CLI surface fact: a flag the toolkit *rejects* below [since] with
- * `error: Invalid flag`, verified at the version boundaries this machine holds -
- * 2.8.7 (WSL) and 3.1.2 (Windows). The matrix is the single source both the command
- * factory and the panels consult: the factory refuses to emit a flag the toolkit
- * cannot answer, the panels disable the button and word the tooltip from the same
- * answer - so a capability gap degrades in the UI instead of dying in a console.
- *
- * Queries that merely answer empty on old toolkits (the scan inventory, the
- * plain-text info) do not belong here: nothing fails, the graceful parse decides.
- * Intermediate versions inherit the nearest verified answer; a version the detector
- * never probed refuses every entry.
- */
-enum class XMakeCapability(val since: XMakeVersion) {
-    /** `require --download`: source archives without installing. */
-    REQUIRE_DOWNLOAD(XMakeVersion.of(3, 1, 2)),
-
-    /** `require --check`: platform and toolchain support of a package. */
-    REQUIRE_CHECK(XMakeVersion.of(3, 1, 2)),
-
-    /** `service --status`: the daemon and connection report. Absent from 2.8.7's help. */
-    SERVICE_STATUS(XMakeVersion.of(3, 1, 2)),
-
-    /** `service --logs`: the daemon's log output. Absent from 2.8.7's help. */
-    SERVICE_LOGS(XMakeVersion.of(3, 1, 2)),
-    ;
-
-    /** The requirement as a reader meets it in a tooltip or a guard message. */
-    val requirement: String
-        get() = "xmake ${since.display}"
-}
-
-/**
+ * One xmake version, ordered. The raw string the detector captures
+ * ("v3.1.2+HEAD.5d21e9daf", "2.8.7") is display text; comparisons need numbers.
+ *//**
  * One xmake version, ordered. The raw string the detector captures
  * ("v3.1.2+HEAD.5d21e9daf", "2.8.7") is display text; comparisons need numbers.
  */
@@ -89,7 +60,3 @@ data class XMakeVersion(val major: Int, val minor: Int, val patch: Int, val raw:
         private val VERSION = Regex("""v?(\d+)(?:\.(\d+))?(?:\.(\d+))?""")
     }
 }
-
-/** Whether this toolkit's probed version answers [capability]'s CLI surface. */
-fun Toolkit.supports(capability: XMakeCapability): Boolean =
-    XMakeVersion.parse(version) >= capability.since

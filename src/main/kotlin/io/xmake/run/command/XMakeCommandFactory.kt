@@ -23,9 +23,7 @@ import com.intellij.openapi.project.Project
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.project.toolkit.Toolkit
-import io.xmake.project.toolkit.XMakeCapability
 import io.xmake.project.toolkit.ToolkitHostType
-import io.xmake.project.toolkit.supports
 import io.xmake.project.toolkit.ToolkitHostType.LOCAL
 import io.xmake.project.toolkit.ToolkitHostType.SSH
 import io.xmake.project.toolkit.ToolkitHostType.WSL
@@ -61,10 +59,15 @@ class XMakeCommandFactory(
             "XMake toolkit is not set, is unavailable in this project, or is no longer registered",
         )
 
-    /** Whether this factory's toolkit answers [capability]'s CLI surface - the same
-     *  truth the command guards below enforce, offered to the panels so a button
-     *  disables before the guard ever fires. */
-    fun supports(capability: XMakeCapability): Boolean = toolkit.supports(capability)
+    /** Whether this factory's toolkit answers [ask]: the DSL rendered on it either
+     *  renders or refuses, and the refusal is the answer - the same declaration the
+     *  render guards read, so query and gate cannot drift. */
+    internal fun supports(ask: XMakeCommandLine.() -> Unit): Boolean = try {
+        xmake(toolkit).apply(ask)
+        true
+    } catch (_: IllegalStateException) {
+        false
+    }
 
     private val buildDirectoryOption = profile.buildDirectory.takeIf { it.isNotEmpty() }
 
@@ -133,7 +136,6 @@ class XMakeCommandFactory(
     fun createCleanConfiguration(): XMakeCommand = createCommand {
         config {
             clean = true
-            yes = true
             verbose = profile.verbose
             outputDirectory = buildDirectoryOption
         }
@@ -155,7 +157,6 @@ class XMakeCommandFactory(
         extraArguments: List<String> = emptyList(),
     ): XMakeCommand = createCommand {
         config {
-            yes = true
             arguments = configureArgumentsWith(modeOverride ?: profile.buildMode) + policyArguments(policies) + extraArguments
             verbose = profile.verbose
         }
@@ -164,7 +165,6 @@ class XMakeCommandFactory(
     fun createUpdateCMakeLists(): XMakeCommand = createCommand {
         project {
             kind = "cmake"
-            yes = true
         }
     }
 
@@ -294,7 +294,6 @@ class XMakeCommandFactory(
      */
     fun createCcacheToggle(enabled: Boolean): XMakeCommand = createCommand {
         config {
-            yes = true
             arguments = configureArguments + listOf("--ccache=" + if (enabled) "y" else "n")
             verbose = profile.verbose
         }
@@ -458,7 +457,7 @@ class XMakeCommandFactory(
      */
     fun createRequireInstall(spec: XMakePackageSpec): XMakeCommand =
         createCommand {
-            require { yes = true; packages = listOf(spec.render()) }
+            require { packages = listOf(spec.render()) }
         }
 
     /** Upgrades with `xmake require --upgrade -y`: every declared package without
@@ -467,7 +466,6 @@ class XMakeCommandFactory(
     fun createRequireUpgrade(spec: XMakePackageSpec? = null): XMakeCommand =
         createCommand {
             require {
-                yes = true
                 upgrade = true
                 spec?.let { packages = listOf(it.render()) }
             }
@@ -477,7 +475,7 @@ class XMakeCommandFactory(
      *  installed build's directory xmake removes. */
     fun createRequireUninstall(spec: XMakePackageSpec): XMakeCommand =
         createCommand {
-            require { yes = true; uninstall = true; packages = listOf(spec.render()) }
+            require { uninstall = true; packages = listOf(spec.render()) }
         }
 
     /**
@@ -492,22 +490,18 @@ class XMakeCommandFactory(
 
     /**
      * One `xmake test` pass; [filters] are the group and name patterns the action takes.
-     * `--output-on-failure` only exists from xmake 3.1.2 on - older versions reject the
-     * unknown flag, so the toggle silently drops there and the report section carries
-     * the failing output instead.
+     * `--output-on-failure` is a report nicety the toolkit may not answer: the factory
+     * asks the capability matrix and the DSL gates the flag - one fact source, and the
+     * report degrades by carrying the failing output itself below the version.
      */
     fun createTestRun(
         filters: List<String> = emptyList(),
         outputOnFailure: Boolean = true,
     ): XMakeCommand = createCommand {
-        test(
-            buildList {
-                addAll(filters)
-                if (outputOnFailure && versionAtLeast(toolkit.version, 3, 1, 2)) {
-                    add("--output-on-failure")
-                }
-            },
-        )
+        test {
+            this.filters = filters
+            this.outputOnFailure = outputOnFailure && supports({ test { this.outputOnFailure = true } })
+        }
     }
 
     /**
@@ -661,13 +655,6 @@ class XMakeCommandFactory(
         }
 
         /** True when [version] parses at least major.minor.patch; junk never does. */
-        private fun versionAtLeast(version: String, major: Int, minor: Int, patch: Int): Boolean {
-            val numbers = VERSION_NUMBER.findAll(version).map { it.value.toInt() }.toList()
-            if (numbers.size < 3) return false
-            return (numbers[0] > major) ||
-                    (numbers[0] == major && numbers[1] > minor) ||
-                    (numbers[0] == major && numbers[1] == minor && numbers[2] >= patch)
-        }
 
         private val VERSION_NUMBER = Regex("\\d+")
     }

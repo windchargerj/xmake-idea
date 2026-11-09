@@ -1,0 +1,118 @@
+xmake v3.1.2+HEAD.5d21e9daf, A cross-platform build utility based on Lua
+Copyright (C) 2015-present Ruki Wang, https://xmake.io
+                         _
+    __  ___ __  __  __ _| | ______
+    \ \/ / |  \/  |/ _  | |/ / __ \
+     >  <  | \__/ | /_| |   <  ___/
+    /_/\_\_|_|  |_|\__ \|_|\_\____|
+                         by ruki, xmake.io
+    ??  Manual: https://xmake.io/guide/quick-start
+    ??  Donate: https://xmake.io/about/sponsor
+
+
+Usage: $xmake require [options] [packages]
+
+Install and update required packages.
+
+Common options:
+    -q, --quiet                      Quiet operation.
+    -y, --yes                        Input yes by default if need user confirm.
+        --confirm=CONFIRM            Input the given result if need user confirm.
+                                         - yes
+                                         - no
+                                         - def
+    -v, --verbose                    Print lots of verbose information for users.
+        --root                       Allow to run xmake as root.
+    -D, --diagnosis                  Print lots of diagnosis information (backtrace, check info ..) only for developers.
+                                     And we can append -v to get more whole information.
+                                         e.g. $ xmake -vD
+    -h, --help                       Print this help message and exit.
+
+    -F FILE, --file=FILE             Read a given xmake.lua file.
+    -P PROJECT, --project=PROJECT    Change to the given project directory.
+                                     Search priority:
+                                         1. The Given Command Argument
+                                         2. The Envirnoment Variable: XMAKE_PROJECT_DIR
+                                         3. The Current Directory
+
+Command options (require):
+    -c, --clean                      Clear all package caches and uninstall all not-referenced packages.
+                                     e.g.
+                                         $ xmake require --clean
+                                         $ xmake require --clean zlib tbox pcr*
+        --clean_modes=CLEAN_MODES    Set the modes of cleaning packages.
+                                     e.g.
+                                         $ xmake require --clean --clean_modes=cache,package
+    -f, --force                      Force to reinstall all package dependencies.
+    -j JOBS, --jobs=JOBS             Set the number of parallel compilation jobs. (default: 34)
+        --linkjobs=LINKJOBS          Set the number of parallel link jobs.
+        --shallow                    Does not install or download dependent packages.
+        --build                      Always build and install packages from source.
+        --addon                      Install addon packages from <repository>/addons/.
+        --plugin                     Install plugin packages from <repository>/plugins/.
+                                     (deprecated, please use --addon instead)
+    -l, --list                       List all package dependencies in project.
+                                     e.g.
+                                         $ xmake require --list
+        --scan                       Scan the given or all installed packages.
+                                     e.g.
+                                         $ xmake require --scan
+                                         $ xmake require --scan zlib tbox pcr*
+
+        --info                       Show the given package info.
+                                     e.g.
+                                         $ xmake require --info tbox
+        --depgraph                   Show the dependency graph of the given packages.
+                                     e.g.
+                                         $ xmake require --depgraph libpng
+                                         $ xmake require --depgraph --format=json libpng
+                                         $ xmake require --depgraph --format=dot libpng
+        --format=FORMAT              Set the output format.
+                                     e.g.
+                                         $ xmake require --info --format=json zlib
+                                         $ xmake require --depgraph --format=dot libpng
+                                     values: json (for --info/--depgraph), dot (for --depgraph only)
+                                         - plain
+                                         - json
+                                         - dot
+        --check                      Check whether the given package is supported
+                                     e.g.
+                                         $ xmake require --check tbox
+        --fetch                      Fetch the library info of given package.
+                                     e.g.
+                                         $ xmake require --fetch tbox
+        --fetch_modes=FETCH_MODES    Set the modes of fetching packages.
+                                     e.g.
+                                         $ xmake require --fetch --fetch_modes=cflags,external tbox
+                                         $ xmake require --fetch --fetch_modes=deps,cflags,ldflags tbox
+    -s, --search                     Search for the given packages from repositories.
+                                     e.g.
+                                         $ xmake require --search tbox
+        --upgrade                    Upgrade the installed packages.
+        --download                   Only download the given package source archive files.
+        --uninstall                  Uninstall the installed packages.
+                                     e.g.
+                                         $ xmake require --uninstall
+                                         $ xmake require --uninstall tbox
+                                         $ xmake require --uninstall --extra="{debug=true}" tbox
+        --export                     Export the installed packages and their dependencies.
+                                     e.g.
+                                         $ xmake require --export
+                                         $ xmake require --export tbox zlib
+                                         $ xmake require --export --packagedir=packagesdir zlib
+                                         $ xmake require --export --extra="{debug=true}" tbox
+        --import                     Import the installed packages and their dependencies.
+                                     e.g.
+                                         $ xmake require --import
+                                         $ xmake require --import tbox zlib
+                                         $ xmake require --import --packagedir=packagesdir zlib
+                                         $ xmake require --import --extra="{debug=true}" tbox
+        --packagedir=PACKAGEDIR      Set the packages directory for exporting, importing and downloading. (default: packages)
+        --debugdir=DEBUGDIR          Set the source directory of the current package for debugging.
+        --extra=EXTRA                Set the extra info of packages.
+
+          requires ...               The package requires.
+                                     e.g.
+                                         $ xmake require zlib tbox
+                                         $ xmake require "zlib >=1.2.11" "tbox master"
+                                         $ xmake require --extra="{debug=true,configs={xxx=true}}" tbox

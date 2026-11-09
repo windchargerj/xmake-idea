@@ -36,8 +36,8 @@ internal sealed class XMakeCommandFailure {
     }
 
     /** `error: Invalid flag: --download` - the flag is newer than the toolkit. The
-     *  capability matrix (XMakeCapability) is what keeps this from happening; it lands
-     *  here when something called without asking. */
+     *  version contracts declared at the flags are what keep this from happening; it
+     *  lands here when something called without asking. */
     data class InvalidFlag(val flag: String) : XMakeCommandFailure()
 
     /** `packages(zstd 1.5.6) not found, maybe they don't exactly match the
