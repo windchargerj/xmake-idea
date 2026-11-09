@@ -52,6 +52,19 @@ import java.util.concurrent.atomic.AtomicReference
  * against builds and configuration by construction. Failures degrade: the last good
  * snapshot stays, [lastError] carries the message, and the view keeps working.
  */
+/**
+ * The pipeline's exclusive states. A query for "is the lane busy with a mutation and
+ * what is it narrating" has one answer per state - the three flags the older fields
+ * carried could describe combinations that cannot happen, and a reader could catch
+ * one mid-teardown. [Idle] and [Running] are the only values; [Pipeline.Running.mutation]
+ * decides whether the operation may be abandoned, [Pipeline.Running.doing] is what the
+ * status line narrates (null: the caller narrates its own loading row).
+ */
+private sealed class Pipeline {
+    data object Idle : Pipeline()
+    data class Running(val mutation: Boolean, val doing: String?) : Pipeline()
+}
+
 @Service(Service.Level.PROJECT)
 internal class XMakePackagesService(private val project: Project) {
 
@@ -59,29 +72,33 @@ internal class XMakePackagesService(private val project: Project) {
     var snapshot: XMakePackagesSnapshot? = null
         private set
 
+    /** The pipeline's exclusive state - one immutable value, assigned in one reference
+     *  write, so no reader ever sees a torn combination (busy without its mutation flag
+     *  or its narration). The quiet-lane queries never appear here. */
+    @Volatile
+    private var pipeline: Pipeline = Pipeline.Idle
+
     /** The last operation's failure, for the view's summary line; null after a success. */
     var lastError: String? = null
         private set
 
     /** True while an operation occupies the pipeline; the view disables its actions then. */
-    @Volatile
-    var busy: Boolean = false
-        private set
+    val busy: Boolean
+        get() = pipeline is Pipeline.Running
 
     /**
-     * What the pipeline is doing while [busy]: null names an info fetch - the details
-     * pane's own "Loading" - anything else is the operation the grayed actions wait for,
-     * so a long install reads as a reason, not as a stuck panel.
+     * What the pipeline is doing while [busy]: null names an info query - the details
+     * pane's own "Loading" (the quiet-lane probes never surface here) - anything else is
+     * the operation the grayed actions wait for, so a long install reads as a reason,
+     * not as a stuck panel.
      */
-    @Volatile
-    var currentOperation: String? = null
-        private set
+    val currentOperation: String?
+        get() = (pipeline as? Pipeline.Running)?.doing
 
     /** True when the operation holding the pipeline may not be abandoned: an install or
      *  uninstall must run out, while a read (list, search, info) is safe to cancel. */
-    @Volatile
-    var busyWithMutation: Boolean = false
-        private set
+    val busyWithMutation: Boolean
+        get() = (pipeline as? Pipeline.Running)?.mutation == true
 
     /** The one command this service has on the executor's lane, so a newer request can
      *  abandon a read ([inFlight] cancelled) and queue behind a mutation. */
@@ -395,9 +412,7 @@ internal class XMakePackagesService(private val project: Project) {
     /** Marks the pipeline held by the caller's claim token. Set before the command is
      *  submitted, so no completion can outrun the claim it belongs to. */
     private fun holdClaim(mutation: Boolean, doing: String?): ClaimToken {
-        busy = true
-        busyWithMutation = mutation
-        currentOperation = doing
+        pipeline = Pipeline.Running(mutation, doing)
         val token = ClaimToken()
         claimToken.set(token)
         return token
@@ -407,9 +422,7 @@ internal class XMakePackagesService(private val project: Project) {
      *  stays untouched. */
     private fun releaseClaim(token: ClaimToken) {
         if (!claimToken.compareAndSet(token, null)) return
-        busy = false
-        busyWithMutation = false
-        currentOperation = null
+        pipeline = Pipeline.Idle
     }
 
     /** The pipeline's current claim, or null when the lane is free for a new request. */
@@ -464,8 +477,7 @@ internal class XMakePackagesService(private val project: Project) {
     }
 
     private fun finish(newSnapshot: XMakePackagesSnapshot?, error: String?) {
-        busy = false
-        currentOperation = null
+        pipeline = Pipeline.Idle
         snapshot = newSnapshot
         lastError = error
         project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)

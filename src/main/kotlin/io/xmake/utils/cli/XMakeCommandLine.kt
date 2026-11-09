@@ -25,7 +25,14 @@ import io.xmake.project.toolkit.XMakeVersion
 import io.xmake.project.toolkit.ToolkitHost
 import io.xmake.project.toolkit.ToolkitHostType.LOCAL
 
-/** An xmake command line: the shared CLI grammar plus the xmake actions. */
+/**
+ * An xmake command line: the shared CLI grammar plus the xmake actions. An action takes
+ * a plain function while its options are few (`version`, `check`, `test`, `show`,
+ * `create`) and a scope once they grow (`build`, `config`, `run`, `require`, `service`,
+ * `pack`, `lua`, `project`, `clean`) - the scope keeps a many-option action one block
+ * wide and lets the renderer emit flags structurally before the names, the order
+ * xmake's own parser demands.
+ */
 @CliDsl
 internal class XMakeCommandLine internal constructor(installation: CliInstallation) :
     CliCommandLine(installation) {
@@ -147,10 +154,6 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         args(options.arguments)
     }
 
-    /** Adds `service`; [ServiceScope.verb] and [ServiceScope.kind] are xmake's own long flags.
-     *  A verb that takes a value renders the equals form xmake's help documents
-     *  (`--add-user=root`) - one argv element, no two-element ambiguity; a missing value
-     *  leaves the bare flag, which xmake then errors about visibly. */
     /** Adds `service`; [ServiceScope.verb] and [ServiceScope.kind] are xmake's own long flags.
      *  A verb that takes a value renders the equals form xmake's help documents
      *  (`--add-user=root`) - one argv element, no two-element ambiguity; a missing value

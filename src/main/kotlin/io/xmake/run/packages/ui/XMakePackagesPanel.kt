@@ -21,6 +21,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
@@ -649,16 +650,7 @@ internal class XMakePackagesPanel(
         val group = DefaultActionGroup(
             RefreshAction(),
             Separator.create(),
-            InstallAction(),
-            UpgradeAction(),
-            UninstallAction(),
-            Separator.create(),
-            FetchAction(),
-            DownloadAction(),
-            CheckAction(),
-            ExportAction(),
-            ImportAction(),
-            CleanAction(),
+            *packageActions.map { it as AnAction }.toTypedArray(),
             Separator.create(),
             ShowInConsoleAction(),
         )
@@ -1149,9 +1141,24 @@ internal class XMakePackagesPanel(
         return text.take(head) + " ... " + text.takeLast(tail)
     }
 
-    /** The confirmation the mutating actions share: the exact command line, the packages
-     *  it touches, then the run with `-y` already baked in. */
-    private fun confirmAndRun(title: String, what: String, command: XMakeCommand) {
+    /** The one mutation shape every store-affecting action reads: the title, the ask's
+     *  sentence, and the command built on the factory - whose toolkit resolution runs
+     *  off the EDT inside [XMakePackagesService.prepareCommand], while the approval
+     *  stays on it. */
+    private fun confirmAndRun(
+        title: String,
+        what: String,
+        prepare: XMakeCommandFactory.() -> XMakeCommand,
+    ) {
+        service.prepareCommand(prepare = prepare) { command ->
+            runConfirmed(title, what, command)
+        }
+    }
+
+    /** The approval itself: the exact command line, the packages it touches, then the
+     *  run with `-y` already baked in. Mutations only - the read-only asks take
+     *  [runReported] and stand in no queue for a yes. */
+    private fun runConfirmed(title: String, what: String, command: XMakeCommand) {
         // TODO(v2): name the expected xmake-requires.lock effect here when the policy is on
         // (docs/roadmap-designs/xrepo-packages.md); the diff balloon ships with it.
         if (Messages.showYesNoDialog(
@@ -1165,16 +1172,12 @@ internal class XMakePackagesPanel(
         service.runPackageCommand(command, what)
     }
 
-    /** The one mutation shape every action reads: the title, the ask's sentence, and the
-     *  command built on the factory - whose toolkit resolution runs off the EDT inside
-     *  [XMakePackagesService.prepareCommand], while this confirmation stays on it. */
-    private fun confirmAndRun(
-        title: String,
-        what: String,
-        prepare: XMakeCommandFactory.() -> XMakeCommand,
-    ) {
+    /** The one read-only shape: what ran streams into the console, no approval in
+     *  front - a query never queues for a yes. The symmetric sibling of
+     *  [confirmAndRun], by the command/query line the DSL already draws. */
+    private fun runReported(what: String, prepare: XMakeCommandFactory.() -> XMakeCommand) {
         service.prepareCommand(prepare = prepare) { command ->
-            confirmAndRun(title, what, command)
+            service.runPackageCommand(command, what)
         }
     }
 
@@ -1197,6 +1200,199 @@ internal class XMakePackagesPanel(
         confirmAndRun("Uninstall package", "Uninstalling '${spec.render()}'.") {
             createRequireUninstall(spec)
         }
+    }
+
+    /**
+     * The package actions as one composed table instead of one class per verb: a row is
+     * a fact set - what it says, when it enables, what it runs - and [PanelAction]
+     * renders the AnAction shell around any row. Gates and executions all read one
+     * composed pass of the decision state ([PanelState]), so no action re-derives its
+     * own truth between dimming and running. Refresh, the installed toggle, and the
+     * console hop keep their bespoke classes: they carry state or leave this panel's
+     * grammar.
+     */
+    private val packageActions: List<PanelAction> = listOf(
+        PanelAction(
+            "Install",
+            "Install the selected package after confirming the exact command",
+            AllIcons.Actions.Install,
+            gate = { it.readyForSelection() && !it.installedEvidence() },
+        ) { installPackage(it.name ?: return@PanelAction) },
+        command(
+            "Upgrade",
+            "Upgrade the selected package, or every declared one without a selection, to the " +
+                "newest version its requirement allows (xmake require --upgrade)",
+            AllIcons.Actions.Upload,
+            gate = { !it.busy },
+            sentence = { name ->
+                if (name == null) {
+                    "Upgrading every declared package to the newest version its requirement allows."
+                } else {
+                    "Upgrading '$name' to the newest version its requirement allows."
+                }
+            },
+            run = { name -> createRequireUpgrade(name?.let(XMakePackageSpec::parse)) },
+        ),
+        PanelAction(
+            "Uninstall",
+            "Uninstall the selected package after confirming the exact command",
+            AllIcons.Actions.Uninstall,
+            gate = { it.readyForSelection() && it.installedEvidence() },
+        ) { uninstallPackage(it.name ?: return@PanelAction) },
+        query(
+            "Fetch",
+            "Fetch the package's library info from the repository (xmake require --fetch)",
+            AllIcons.General.Information,
+            gate = { it.readyForSelection() },
+            sentence = { name -> "Fetching the library info of '$name'." },
+            run = { name -> createRequireFetch(XMakePackageSpec.parse(name)) },
+        ),
+        command(
+            "Download source",
+            "Download the package's source archive without installing (xmake require --download; " +
+                "xmake 3.1.2+ - the button answers for the toolkit it runs on)",
+            com.intellij.icons.AllIcons.Actions.Download,
+            gate = { it.readyForSelection() && it.supports(XMakeCapability.REQUIRE_DOWNLOAD) },
+            sentence = { name -> "Downloading the source archive of '$name'." },
+            run = { name -> createRequireDownload(XMakePackageSpec.parse(requireNotNull(name))) },
+        ),
+        query(
+            "Check support",
+            "Whether this package is supported on the current platform (xmake require --check; " +
+                "xmake 3.1.2+ - the button answers for the toolkit it runs on)",
+            com.intellij.icons.AllIcons.Actions.Help,
+            gate = { it.readyForSelection() && it.supports(XMakeCapability.REQUIRE_CHECK) },
+            sentence = { name -> "Checking whether '$name' is supported here." },
+            run = { name -> createRequireCheck(XMakePackageSpec.parse(name)) },
+        ),
+        command(
+            "Export",
+            "Export the installed package and its dependencies to a portable archive (xmake require --export)",
+            com.intellij.icons.AllIcons.ToolbarDecorator.Export,
+            gate = { it.readyForSelection() && it.installedEvidence() },
+            sentence = { name ->
+                // The destination is xmake's own default: a "packages" directory in the
+                // project. Naming it is what makes the verb honest - an export whose
+                // destination nobody knows reads as a no-op.
+                "Exporting the installed '$name' and its dependencies into the project's 'packages' directory."
+            },
+            run = { name -> createRequireExport(XMakePackageSpec.parse(requireNotNull(name))) },
+        ),
+        PanelAction(
+            "Import",
+            "Import previously exported packages (xmake require --import)",
+            com.intellij.icons.AllIcons.ToolbarDecorator.Import,
+            gate = { !it.busy },
+        ) { _ ->
+            // --import takes package NAMES, searched in --packagedir (default "packages"
+            // in the project) - xmake's own help text and its import implementation read
+            // the arguments as requires, not as an archive path.
+            com.intellij.openapi.ui.Messages.showInputDialog(
+                project,
+                "Package to import from the project's 'packages' directory:",
+                "Import packages",
+                null,
+            )?.trim()?.takeUnless(String::isEmpty)?.let { name ->
+                confirmAndRun("Import packages", "Importing '$name' from the 'packages' directory.") {
+                    createRequireImport(XMakePackageSpec.parse(name))
+                }
+            }
+        },
+        command(
+            "Clean",
+            "Clear the package caches and uninstall the packages nothing references; with a " +
+                "selection, just that package (xmake require --clean)",
+            com.intellij.icons.AllIcons.Actions.GC,
+            gate = { !it.busy },
+            sentence = { name ->
+                // xmake's own semantics, both 2.8.7 and 3.1.2: --clean clears the caches
+                // and uninstalls the NOT-REFERENCED packages - the projects still using
+                // one keep it.
+                if (name == null) {
+                    "Clearing the package caches and uninstalling the packages no project references."
+                } else {
+                    "Clearing the caches of '$name' and uninstalling it if nothing references it."
+                }
+            },
+            run = { name -> createRequireClean(name?.let { listOf(XMakePackageSpec.parse(it)) }.orEmpty()) },
+        ),
+    )
+
+    /** A store-affecting row: the approval stands in front of the command. */
+    private fun command(
+        text: String,
+        description: String,
+        icon: javax.swing.Icon,
+        gate: (PanelState) -> Boolean,
+        sentence: (String?) -> String,
+        run: XMakeCommandFactory.(String?) -> XMakeCommand,
+    ): PanelAction = PanelAction(text, description, icon, gate) { state ->
+        confirmAndRun(text, sentence(state.name)) { run(state.name) }
+    }
+
+    /** A read-only row: what ran streams into the console, no approval in front. Its
+     *  gate requires a selection, so the ask always names one. */
+    private fun query(
+        text: String,
+        description: String,
+        icon: javax.swing.Icon,
+        gate: (PanelState) -> Boolean,
+        sentence: (String) -> String,
+        run: XMakeCommandFactory.(String) -> XMakeCommand,
+    ): PanelAction = PanelAction(text, description, icon, gate) { state ->
+        val name = state.name ?: return@PanelAction
+        runReported(sentence(name)) { run(name) }
+    }
+
+    /** The AnAction shell every table row renders through: one gate, one perform, both
+     *  reading the same composed pass of the decision state. */
+    private inner class PanelAction(
+        text: String,
+        description: String,
+        icon: javax.swing.Icon,
+        private val gate: (PanelState) -> Boolean,
+        private val perform: (PanelState) -> Unit,
+    ) : DumbAwareAction(text, description, icon) {
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = gate(state())
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            perform(state())
+        }
+    }
+
+    /** Composes one pass of the decision state from the panel's own sources. */
+    private fun state(): PanelState = PanelState(
+        busy = service.busy,
+        row = selectedRow(),
+        name = selectedRow()?.name,
+        info = selectedRow()?.name?.let(::infoFor),
+        onDisk = selectedRow()?.name?.let(::onDiskVersions).orEmpty(),
+        capable = { capability -> service.supports(capability) },
+    )
+
+    /** One composed pass of the decision state: built once per gate check and once per
+     *  execution, read by every row - no action re-derives its own truth. */
+    private class PanelState(
+        val busy: Boolean,
+        val row: PackageRow?,
+        val name: String?,
+        val info: XMakePackageInfo?,
+        val onDisk: Set<String>,
+        val capable: (XMakeCapability) -> Boolean,
+    ) {
+        /** A selection exists to act on, and the lane is free. */
+        fun readyForSelection(): Boolean = !busy && row != null
+
+        /** The store or the info vouches for an installed copy of the selection. */
+        fun installedEvidence(): Boolean =
+            info?.installed == true || row?.isInstalled == true || onDisk.isNotEmpty()
+
+        fun supports(capability: XMakeCapability): Boolean = capable(capability)
     }
 
     /** Esc leaves search mode from the table as from the field - and empties the field,
@@ -1228,162 +1424,6 @@ internal class XMakePackagesPanel(
             append("Searching for '$term' once the current operation finishes")
             service.currentOperation?.let { operation -> append(" - ").append(operation) }
             service.lastError?.let { append(" - last operation failed: ").append(it) }
-        }
-    }
-
-    /** The package housekeeping verbs act on the selected package; the helpers below
-     *  route each through the confirmation flow the install action uses. */
-    private fun selectedOrNotify(): String? = selectedPackageName().also {
-        if (it == null) statusLabel.text = "Select a package first"
-    }
-
-    private inner class FetchAction : DumbAwareAction(
-        "Fetch",
-        "Fetch the package's library info from the repository (xmake require --fetch)",
-        AllIcons.General.Information,
-    ) {
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectedPackageName() != null
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            val name = selectedOrNotify() ?: return
-            confirmAndRun("Fetch package", "Fetching the library info of '$name'.") {
-                createRequireFetch(XMakePackageSpec.parse(name))
-            }
-        }
-    }
-
-    private inner class DownloadAction : DumbAwareAction(
-        "Download source",
-        "Download the package's source archive without installing (xmake require --download; " +
-            "xmake 3.1.2+ - the button answers for the toolkit it runs on)",
-        com.intellij.icons.AllIcons.Actions.Download,
-    ) {
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectedPackageName() != null &&
-                service.supports(XMakeCapability.REQUIRE_DOWNLOAD)
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            val name = selectedOrNotify() ?: return
-            confirmAndRun("Download source", "Downloading the source archive of '$name'.") {
-                createRequireDownload(XMakePackageSpec.parse(name))
-            }
-        }
-    }
-
-    private inner class CheckAction : DumbAwareAction(
-        "Check support",
-        "Whether this package is supported on the current platform (xmake require --check; " +
-            "xmake 3.1.2+ - the button answers for the toolkit it runs on)",
-        com.intellij.icons.AllIcons.Actions.Help,
-    ) {
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy && selectedPackageName() != null &&
-                service.supports(XMakeCapability.REQUIRE_CHECK)
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            val name = selectedOrNotify() ?: return
-            confirmAndRun("Check support", "Checking whether '$name' is supported here.") {
-                createRequireCheck(XMakePackageSpec.parse(name))
-            }
-        }
-    }
-
-    private inner class ExportAction : DumbAwareAction(
-        "Export",
-        "Export the installed package and its dependencies to a portable archive (xmake require --export)",
-        com.intellij.icons.AllIcons.ToolbarDecorator.Export,
-    ) {
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            val name = selectedPackageName()
-            event.presentation.isEnabled = !service.busy && name != null &&
-                (infoFor(name)?.installed == true || selectedRow()?.isInstalled == true)
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            val name = selectedOrNotify() ?: return
-            // The destination is xmake's own default: a "packages" directory in the
-            // project. Naming it is what makes the verb honest - an export whose
-            // destination nobody knows reads as a no-op.
-            confirmAndRun(
-                "Export package",
-                "Exporting the installed '$name' and its dependencies into the project's " +
-                    "'packages' directory.",
-            ) { createRequireExport(XMakePackageSpec.parse(name)) }
-        }
-    }
-
-    private inner class ImportAction : DumbAwareAction(
-        "Import",
-        "Import previously exported packages (xmake require --import)",
-        com.intellij.icons.AllIcons.ToolbarDecorator.Import,
-    ) {
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            // --import takes package NAMES, searched in --packagedir (default "packages"
-            // in the project) - xmake's own help text and its import implementation read
-            // the arguments as requires, not as an archive path.
-            val name = com.intellij.openapi.ui.Messages.showInputDialog(
-                project,
-                "Package to import from the project's 'packages' directory:",
-                "Import packages",
-                null,
-            )?.trim().takeUnless { it.isNullOrEmpty() } ?: return
-            confirmAndRun("Import packages", "Importing '$name' from the 'packages' directory.") {
-                createRequireImport(XMakePackageSpec.parse(name))
-            }
-        }
-    }
-
-    private inner class CleanAction : DumbAwareAction(
-        "Clean",
-        "Clear the package caches and uninstall the packages nothing references; with a " +
-            "selection, just that package (xmake require --clean)",
-        com.intellij.icons.AllIcons.Actions.GC,
-    ) {
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            // xmake's own semantics, both 2.8.7 and 3.1.2: --clean clears the caches and
-            // uninstalls the NOT-REFERENCED packages - the projects still using one keep
-            // it. The names scope the sweep to a selection when there is one.
-            val name = selectedPackageName()
-            confirmAndRun(
-                "Clean packages",
-                if (name == null) {
-                    "Clearing the package caches and uninstalling the packages no project references."
-                } else {
-                    "Clearing the caches of '$name' and uninstalling it if nothing references it."
-                },
-            ) {
-                createRequireClean(name?.let { listOf(XMakePackageSpec.parse(it)) }.orEmpty())
-            }
         }
     }
 
@@ -1425,84 +1465,6 @@ internal class XMakePackagesPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             service.refresh()
-        }
-    }
-
-    private inner class InstallAction : DumbAwareAction(
-        "Install",
-        "Install the selected package after confirming the exact command",
-        AllIcons.Actions.Install,
-    ) {
-
-        override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            val row = selectedRow()
-            event.presentation.isEnabled = !service.busy && row != null &&
-                infoFor(row.name)?.installed != true && !row.isInstalled
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            installPackage(selectedPackageName() ?: return)
-        }
-    }
-
-    private inner class UpgradeAction : DumbAwareAction(
-        "Upgrade",
-        "Upgrade the selected package, or every declared one without a selection, to the " +
-            "newest version its requirement allows (xmake require --upgrade)",
-        AllIcons.Actions.Upload,
-    ) {
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !service.busy
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            val name = selectedPackageName()
-            confirmAndRun(
-                "Upgrade packages",
-                if (name == null) {
-                    "Upgrading every declared package to the newest version its requirement allows."
-                } else {
-                    "Upgrading '$name' to the newest version its requirement allows."
-                },
-            ) { createRequireUpgrade(name?.let(XMakePackageSpec::parse)) }
-        }
-    }
-
-    private inner class UninstallAction : DumbAwareAction(
-        "Uninstall",
-        "Uninstall the selected package after confirming the exact command",
-        AllIcons.Actions.Uninstall,
-    ) {
-
-        override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            val name = selectedPackageName()
-            event.presentation.isEnabled = !service.busy && name != null &&
-                (infoFor(name)?.installed == true ||
-                        selectedRow()?.isInstalled == true ||
-                        onDiskVersions(name).isNotEmpty())
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            val row = selectedRow() ?: return
-            val name = row.name
-            // Bare-name uninstall resolves "latest" and misses a non-latest install; the
-            // version the row or the info vouches for is what gets pinned. An installed
-            // view's row names its version outright; a declared row falls to the info's
-            // resolved version, then to the first the store holds.
-            val version = row.takeIf { it.isInstalled }?.version
-                ?: infoFor(name)?.version?.takeIf { infoFor(name)?.installed == true }
-                ?: onDiskVersions(name).firstOrNull()
-            val spec = XMakePackageSpec(name).pinnedTo(version)
-            confirmAndRun("Uninstall package", "Uninstalling '${spec.render()}'.") {
-                createRequireUninstall(spec)
-            }
         }
     }
 
