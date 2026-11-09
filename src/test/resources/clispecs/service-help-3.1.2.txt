@@ -1,0 +1,91 @@
+xmake v3.1.2+HEAD.5d21e9daf, A cross-platform build utility based on Lua
+Copyright (C) 2015-present Ruki Wang, https://xmake.io
+                         _
+    __  ___ __  __  __ _| | ______
+    \ \/ / |  \/  |/ _  | |/ / __ \
+     >  <  | \__/ | /_| |   <  ___/
+    /_/\_\_|_|  |_|\__ \|_|\_\____|
+                         by ruki, xmake.io
+    ??  Manual: https://xmake.io/guide/quick-start
+    ??  Donate: https://xmake.io/about/sponsor
+
+
+Usage: $xmake service [options]
+
+Start service for remote or distributed compilation and etc.
+
+Common options:
+    -q, --quiet                      Quiet operation.
+    -y, --yes                        Input yes by default if need user confirm.
+        --confirm=CONFIRM            Input the given result if need user confirm.
+                                         - yes
+                                         - no
+                                         - def
+    -v, --verbose                    Print lots of verbose information for users.
+        --root                       Allow to run xmake as root.
+    -D, --diagnosis                  Print lots of diagnosis information (backtrace, check info ..) only for developers.
+                                     And we can append -v to get more whole information.
+                                         e.g. $ xmake -vD
+    -h, --help                       Print this help message and exit.
+
+    -F FILE, --file=FILE             Read a given xmake.lua file.
+    -P PROJECT, --project=PROJECT    Change to the given project directory.
+                                     Search priority:
+                                         1. The Given Command Argument
+                                         2. The Envirnoment Variable: XMAKE_PROJECT_DIR
+                                         3. The Current Directory
+
+Command options (service):
+        --start                      Start daemon service.
+                                     e.g.
+                                         - xmake service --start
+                                         - xmake service --start --remote
+                                         - xmake service --start --distcc
+                                         - xmake service --start --remote --distcc
+        --restart                    Restart daemon service.
+        --stop                       Stop daemon service.
+        --connect                    Connect current project to the remote daemon service.
+                                     e.g.
+                                         - xmake service --connect
+                                         - xmake service --connect --remote
+                                         - xmake service --connect --distcc
+                                         - xmake service --connect --remote --distcc
+                                         - xmake service --connect --host=windows
+                                         - xmake service --connect --host=10.5.139.8:9691
+        --session=SESSION            Connect with the given session name, it will generate a session id via name.
+                                     e.g.
+                                         -- xmake service --connect --ccache --session=foo
+        --reconnect                  Reconnect current project to the remote daemon service.
+        --disconnect                 Disconnect current project in the remote daemon service.
+        --remote                     Start or connect the remote build service.
+        --distcc                     Start or connect the distributed build service.
+        --ccache                     Start or connect the remote c/c++ cache service.
+        --sync                       Sync current project files in the remote daemon service.
+        --xmakesrc=XMAKESRC          Sync xmake program files in the remote daemon service.
+                                     e.g.
+                                         - xmake service --sync --xmakesrc=/xmakeproj/xmake
+        --pull                       Pull the given file or directory in the remote daemon service.
+                                     e.g.
+                                         - xmake service --pull build outputdir
+                                         - xmake service --pull 'build/**' outputdir
+        --clean                      Clean current project files in the remote daemon service.
+        --all                        Clean all project files in the remote daemon service.
+                                     e.g.
+                                         - xmake service --clean --all
+        --add-user=ADD-USER          Add user in the server.
+                                     e.g.
+                                         - xmake service --add-user=root
+        --rm-user=RM-USER            Remove user in the server.
+                                     e.g.
+                                         - xmake service --rm-user=root
+        --gen-token                  Generate a new token in the server.
+                                     e.g.
+                                         - xmake service --gen-token
+        --host=HOST                  Connect to the specific host by name or address.
+                                     e.g.
+                                         - xmake service --connect --host=windows
+                                         - xmake service --connect --host=10.5.139.8:9691
+                                         - xmake service --connect --host=10.5.139.8
+        --logs                       Show service logs if the daemon service has been started.
+        --status                     Show service status if the daemon service has been started.
+          values ...                 The values list for pull/.. options.

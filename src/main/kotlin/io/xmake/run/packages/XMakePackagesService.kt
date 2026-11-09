@@ -25,7 +25,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.util.messages.Topic
 import io.xmake.project.console.XMakeConsoleManager
-import io.xmake.project.toolkit.XMakeCapability
+import io.xmake.utils.cli.XMakeCommandLine
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeCommandException
 import io.xmake.run.command.XMakeCommandFactory
@@ -252,13 +252,12 @@ internal class XMakePackagesService(private val project: Project) {
     }
 
     /**
-     * Whether the active profile's toolkit answers [capability]'s CLI surface - the
-     * panels ask this before enabling a version-gated verb, and the factory guards the
-     * same fact at command construction. False when no profile stands, so a gated verb
-     * stays off until a toolkit exists to answer it.
+     * Whether the active profile's toolkit answers [ask] - the panels question in the
+     * DSL's own grammar, and the answer is whether the line renders. False when no
+     * profile stands, so a gated verb stays off until a toolkit exists to answer it.
      */
-    fun supports(capability: XMakeCapability): Boolean = try {
-        packageFactory().supports(capability)
+    fun supports(ask: XMakeCommandLine.() -> Unit): Boolean = try {
+        packageFactory().supports(ask)
     } catch (_: Exception) {
         false
     }
@@ -446,11 +445,17 @@ internal class XMakePackagesService(private val project: Project) {
         val packages = XMakePackageParsers.parseRequireList(
             project.xmakeExecutor.captureStandardOutput(factory.createRequireList()),
         )
-        val depgraph = runCancellable {
-            XMakePackageParsers.parseDepgraph(
-                project.xmakeExecutor.captureStandardOutput(factory.createRequireDepgraph()),
-            )
-        }.getOrNull()
+        // The graph is a nicety and the flag is not universal: below the capability the
+        // ask is skipped, not fired and errored - the tree degrades to childless rows.
+        val depgraph = if (factory.supports({ require { depgraph = true } })) {
+            runCancellable {
+                XMakePackageParsers.parseDepgraph(
+                    project.xmakeExecutor.captureStandardOutput(factory.createRequireDepgraph()),
+                )
+            }.getOrNull()
+        } else {
+            null
+        }
         // The installed inventory, when the view is on, is re-scanned rather than
         // carried: a mutation just changed the store, and the view's whole job is to
         // say what the store holds now. Its names refill the version cache - the one

@@ -55,7 +55,7 @@ import com.intellij.util.ui.ListTableModel
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.components.BorderLayoutPanel
 import io.xmake.project.console.XMakeConsoleManager
-import io.xmake.project.toolkit.XMakeCapability
+import io.xmake.utils.cli.XMakeCommandLine
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.packages.XMakePackageInfo
@@ -1252,7 +1252,7 @@ internal class XMakePackagesPanel(
             "Download the package's source archive without installing (xmake require --download; " +
                 "xmake 3.1.2+ - the button answers for the toolkit it runs on)",
             com.intellij.icons.AllIcons.Actions.Download,
-            gate = { it.readyForSelection() && it.supports(XMakeCapability.REQUIRE_DOWNLOAD) },
+            gate = { it.readyForSelection() && it.supports({ require { download = true } }) },
             sentence = { name -> "Downloading the source archive of '$name'." },
             run = { name -> createRequireDownload(XMakePackageSpec.parse(requireNotNull(name))) },
         ),
@@ -1261,7 +1261,7 @@ internal class XMakePackagesPanel(
             "Whether this package is supported on the current platform (xmake require --check; " +
                 "xmake 3.1.2+ - the button answers for the toolkit it runs on)",
             com.intellij.icons.AllIcons.Actions.Help,
-            gate = { it.readyForSelection() && it.supports(XMakeCapability.REQUIRE_CHECK) },
+            gate = { it.readyForSelection() && it.supports({ require { check = true } }) },
             sentence = { name -> "Checking whether '$name' is supported here." },
             run = { name -> createRequireCheck(XMakePackageSpec.parse(name)) },
         ),
@@ -1383,7 +1383,7 @@ internal class XMakePackagesPanel(
         val name: String?,
         val info: XMakePackageInfo?,
         val onDisk: Set<String>,
-        val capable: (XMakeCapability) -> Boolean,
+        val capable: (XMakeCommandLine.() -> Unit) -> Boolean,
     ) {
         /** A selection exists to act on, and the lane is free. */
         fun readyForSelection(): Boolean = !busy && row != null
@@ -1392,7 +1392,7 @@ internal class XMakePackagesPanel(
         fun installedEvidence(): Boolean =
             info?.installed == true || row?.isInstalled == true || onDisk.isNotEmpty()
 
-        fun supports(capability: XMakeCapability): Boolean = capable(capability)
+        fun supports(ask: XMakeCommandLine.() -> Unit): Boolean = capable(ask)
     }
 
     /** Esc leaves search mode from the table as from the field - and empties the field,

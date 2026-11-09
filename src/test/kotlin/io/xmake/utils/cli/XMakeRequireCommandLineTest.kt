@@ -57,7 +57,7 @@ class XMakeRequireCommandLineTest {
         assertEquals(listOf("require", "--list"), line { require { list = true } })
         assertEquals(
             listOf("require", "--info", "--format=json", "tinytest"),
-            line { require { info = true; json = true; packages = listOf("tinytest") } },
+            lineOn("3.1.2") { require { info = true; json = true; packages = listOf("tinytest") } },
         )
         assertEquals(
             listOf("require", "--search", "tiny"),
@@ -65,23 +65,23 @@ class XMakeRequireCommandLineTest {
         )
         assertEquals(
             listOf("require", "--depgraph", "--format=json"),
-            line { require { depgraph = true; json = true } },
+            lineOn("3.1.2") { require { depgraph = true; json = true } },
         )
     }
 
     @Test
-    fun `builds the mutations with -y baked in`() {
+    fun `mutations carry -y by construction and queries carry none`() {
         assertEquals(
             listOf("require", "-y", "tinytest"),
-            line { require { yes = true; packages = listOf("tinytest") } },
+            line { require { packages = listOf("tinytest") } },
         )
         assertEquals(
             listOf("require", "--uninstall", "-y", "tinytest"),
-            line { require { yes = true; uninstall = true; packages = listOf("tinytest") } },
+            line { require { uninstall = true; packages = listOf("tinytest") } },
         )
         assertEquals(
             listOf("require", "--upgrade", "-y"),
-            line { require { yes = true; upgrade = true } },
+            line { require { upgrade = true } },
         )
     }
 
@@ -89,14 +89,16 @@ class XMakeRequireCommandLineTest {
     fun `the upgrade, clean, and scan scopes ride their names`() {
         assertEquals(
             listOf("require", "--upgrade", "-y", "tinytest"),
-            line { require { yes = true; upgrade = true; packages = listOf("tinytest") } },
+            line { require { upgrade = true; packages = listOf("tinytest") } },
         )
+        // A sweep without -y would die on xmake's confirm prompt - the channel cannot
+        // answer, so the DSL bakes it into every mutation.
         assertEquals(
-            listOf("require", "--clean", "tinytest"),
+            listOf("require", "--clean", "-y", "tinytest"),
             line { require { clean = true; packages = listOf("tinytest") } },
         )
         assertEquals(
-            listOf("require", "--clean"),
+            listOf("require", "--clean", "-y"),
             line { require { clean = true } },
         )
         assertEquals(
@@ -112,7 +114,7 @@ class XMakeRequireCommandLineTest {
     @Test
     fun `the install modifiers and the export or import dirs render their flags`() {
         assertEquals(
-            listOf("require", "--shallow", "--build", "--force", "tinytest"),
+            listOf("require", "--shallow", "--build", "--force", "-y", "tinytest"),
             line {
                 require {
                     shallow = true
@@ -123,7 +125,7 @@ class XMakeRequireCommandLineTest {
             },
         )
         assertEquals(
-            listOf("require", "--export", "--packagedir", "packagesdir", "tinytest"),
+            listOf("require", "--export", "--packagedir", "packagesdir", "-y", "tinytest"),
             line {
                 require {
                     export = true
@@ -133,7 +135,7 @@ class XMakeRequireCommandLineTest {
             },
         )
         assertEquals(
-            listOf("require", "--import", "--extra", "{debug=true}", "tinytest"),
+            listOf("require", "--import", "--extra", "{debug=true}", "-y", "tinytest"),
             line {
                 require {
                     import = true
@@ -171,7 +173,7 @@ class XMakeRequireCommandLineTest {
         assertEquals("--download needs xmake 3.1.2", error)
 
         assertEquals(
-            listOf("require", "--download", "tinytest"),
+            listOf("require", "--download", "-y", "tinytest"),
             lineOn("3.1.2") { require { download = true; packages = listOf("tinytest") } },
         )
     }

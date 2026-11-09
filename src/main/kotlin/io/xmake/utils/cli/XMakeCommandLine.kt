@@ -20,8 +20,6 @@
 package io.xmake.utils.cli
 
 import io.xmake.project.toolkit.Toolkit
-import io.xmake.project.toolkit.XMakeCapability
-import io.xmake.project.toolkit.XMakeVersion
 import io.xmake.project.toolkit.ToolkitHost
 import io.xmake.project.toolkit.ToolkitHostType.LOCAL
 
@@ -65,10 +63,15 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         args(checker)
     }
 
-    /** Adds `test`; [arguments] are the test filters and options the action takes. */
-    fun test(arguments: List<String> = emptyList()): XMakeCommandLine = apply {
+    /** Adds `test`; [filters] are the group and name patterns the action takes, the
+     *  failing output riding [TestScope.outputOnFailure] when the toolkit answers the
+     *  flag - version-gated here, at the rendering, like [require]'s flags. */
+    fun test(configure: TestScope.() -> Unit): XMakeCommandLine = apply {
+        val options = TestScope().apply(configure)
         beginAction("test")
-        args(arguments)
+        args(options.filters)
+        flag("--output-on-failure", options.outputOnFailure, since = "3.1.2")
+        args(options.extraArguments)
     }
 
     /** Adds `show`; [listing] selects one `-l` listing and [json] asks for the JSON form. */
@@ -112,7 +115,8 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         val options = ConfigScope().apply(configure)
         beginAction("config")
         flag("-c", options.clean)
-        flag("-y", options.yes)
+        // Baked like build's: configure writes state and the channel cannot answer.
+        flag("-y")
         args(options.arguments)
         flag("-v", options.verbose)
         option("-o" to options.outputDirectory)
@@ -139,7 +143,7 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         val options = ProjectScope().apply(configure)
         beginAction("project")
         option("-k" to options.kind)
-        flag("-y", options.yes)
+        flag("-y")
         options.lsp?.let { args("--lsp=$it") }
         options.outputDirectory?.let { args("--outputdir=$it") }
     }
@@ -162,21 +166,22 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
     fun service(configure: ServiceScope.() -> Unit): XMakeCommandLine = apply {
         val options = ServiceScope().apply(configure)
         beginAction("service")
-        val capability = when (options.verb) {
-            XMakeServiceVerb.STATUS -> XMakeCapability.SERVICE_STATUS
-            XMakeServiceVerb.LOGS -> XMakeCapability.SERVICE_LOGS
-            else -> null
-        }
-        capability?.let {
-            check(supports(it)) { "service --${options.verb?.flag} needs ${it.requirement}" }
-        }
-        val readOnly = capability != null
+        // status and logs read, and both answer on every toolkit in the support window
+        // (verified against each version's own help and live runs) - ungated reads.
+        val readOnly = options.verb == XMakeServiceVerb.STATUS || options.verb == XMakeServiceVerb.LOGS
         options.verb?.let { verb ->
             val value = if (verb.takesValue) verb.valueFrom(options) else null
             if (value != null) {
                 args("--${verb.flag}=$value")
             } else {
                 flag("--${verb.flag}")
+            }
+        }
+        // A value field set without the verb that reads it would drop silently - the
+        // one quiet path the DSL forbids: mislaid input errors here, visibly.
+        if (options.user != null || options.xmakeSrc != null) {
+            check(options.verb?.takesValue == true && options.verb?.valueFrom(options) != null) {
+                "user/xmakeSrc ride a value verb (--add-user, --rm-user, --xmakesrc)"
             }
         }
         options.kind?.let { flag("--${it.flag}") }
@@ -187,14 +192,14 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
     }
 
     /** Adds `require`; the xrepo package action: listing, info, search, and the dependency
-     *  graph as read-only queries, install/upgrade/uninstall as mutations. Mutations must
-     *  set [RequireScope.yes] - xmake's own prompt waits on a TTY that never answers, and
-     *  the command would die at timeout. `--format=json` rides on [RequireScope.json]
+     *  graph as read-only queries, install/upgrade/uninstall as mutations - and the
+     *  classification carries the policy: queries answer with the clean query
+     *  environment, mutations carry -y by construction. `--format=json` rides on [RequireScope.json]
      *  verbatim, which `--info` and `--depgraph` honor; the listing silently ignores it
      *  (docs/roadmap-designs/xrepo-packages.md, verified on xmake 3.1.2).
      *
-     *  The version gates live here, at the rendering: a flag the toolkit's xmake rejects
-     *  below its capability version fails construction with the requirement in the
+     *  The version contracts are declared at the flags themselves (`since`), and a flag
+     *  the toolkit's xmake rejects fails construction with the requirement in the
      *  message - an impossible line cannot leave the DSL. Read-only asks answer with the
      *  clean query environment by construction, so no call site remembers it. */
     fun require(configure: RequireScope.() -> Unit): XMakeCommandLine = apply {
@@ -205,11 +210,11 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         flag("--search", options.search)
         flag("--uninstall", options.uninstall)
         flag("--upgrade", options.upgrade)
-        flag("--depgraph", options.depgraph)
         flag("--clean", options.clean)
         flag("--fetch", options.fetch)
-        gate(options.download, XMakeCapability.REQUIRE_DOWNLOAD, "--download") { flag("--download") }
-        gate(options.check, XMakeCapability.REQUIRE_CHECK, "--check") { flag("--check") }
+        flag("--download", options.download, since = "3.1.2")
+        flag("--check", options.check, since = "3.1.2")
+        flag("--depgraph", options.depgraph, since = "3.1.2")
         flag("--export", options.export)
         flag("--import", options.import)
         flag("--scan", options.scan)
@@ -218,10 +223,13 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         flag("--force", options.force)
         option("--packagedir" to options.packageDir)
         option("--extra" to options.extra)
-        flag("--format=json", options.json)
-        flag("-y", options.yes)
+        flag("--format=json", options.json, since = "3.1.2")
+        // Channel safety, baked: the executor's channel cannot answer a prompt, so a
+        // mutation line carries -y by construction - no caller remembers it, and no
+        // line the DSL emits can die waiting on a TTY that never answers.
+        flag("-y", !options.query)
         args(options.packages)
-        if (options.readOnly) environment.putAll(QUERY_ENVIRONMENT)
+        if (options.query) environment.putAll(QUERY_ENVIRONMENT)
     }
 
     /** Adds `pack`; [configure] fills the options and the package names. The scope exists so
@@ -243,18 +251,17 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         args(options.names)
     }
 
-    /** The version contract, evaluated for this installation's own probe answer: the
-     *  rendering refuses a flag the binary cannot parse. */
-    private fun supports(capability: XMakeCapability): Boolean =
-        XMakeVersion.parse(installation.version) >= capability.since
+    /** The version contract, evaluated for this installation's own probe answer. */
+    private fun atLeast(since: String): Boolean =
+        XMakeVersion.parse(since) <= XMakeVersion.parse(installation.version)
 
-    /** Renders [render] only when [capability] holds for this installation; below the
-     *  version, construction fails with the requirement - an impossible line cannot
-     *  leave the DSL. */
-    private fun gate(enabled: Boolean, capability: XMakeCapability, asks: String, render: () -> Unit) {
+    /** Renders `name` when `enabled`; below `since` the construction refuses, naming
+     *  the requirement - the version contract declared where the grammar is, and an
+     *  impossible line cannot leave the DSL. */
+    private fun flag(name: String, enabled: Boolean, since: String) {
         if (!enabled) return
-        check(supports(capability)) { "$asks needs ${capability.requirement}" }
-        render()
+        check(atLeast(since)) { "$name needs xmake $since" }
+        addParameter(name)
     }
 
     internal companion object {
@@ -288,9 +295,9 @@ enum class XMakeServiceVerb(internal val flag: String, internal val takesValue: 
     ADD_USER("add-user", takesValue = true),
     /** Server-side: remove a user; the value is the user name. */
     RM_USER("rm-user", takesValue = true),
-    /** Read-only; xmake 3.1.2+ only - [io.xmake.project.toolkit.XMakeCapability.SERVICE_STATUS] gates the ask. */
+    /** Read-only; answers on every toolkit in the support window (help-verified). */
     STATUS("status"),
-    /** Read-only; xmake 3.1.2+ only - [io.xmake.project.toolkit.XMakeCapability.SERVICE_LOGS] gates the ask. */
+    /** Read-only; answers on every toolkit in the support window (help-verified). */
     LOGS("logs"),
 }
 
@@ -304,6 +311,20 @@ enum class XMakeServiceKind(internal val flag: String, internal val statusDir: S
 }
 
 @CliDsl
+internal class TestScope internal constructor() {
+    /** The group and name patterns, as `xmake test` takes them. */
+    var filters: List<String> = emptyList()
+
+    /** `--output-on-failure`: the failing output rides the report. The toolkit's answer
+     *  decides whether the flag renders - below the capability the report degrades by
+     *  carrying the output itself, so the factory asks before setting it true. */
+    var outputOnFailure: Boolean = false
+
+    /** Extra passthrough arguments after the gated flag. */
+    var extraArguments: List<String> = emptyList()
+}
+
+@CliDsl
 internal class BuildScope internal constructor() {
     var target: String? = null
     var rebuild: Boolean = false
@@ -313,7 +334,6 @@ internal class BuildScope internal constructor() {
 @CliDsl
 internal class ConfigScope internal constructor() {
     var clean: Boolean = false
-    var yes: Boolean = false
     var arguments: List<String> = emptyList()
     var verbose: Boolean = false
     var outputDirectory: String? = null
@@ -335,7 +355,6 @@ internal class RunScope internal constructor() {
 @CliDsl
 internal class ProjectScope internal constructor() {
     lateinit var kind: String
-    var yes: Boolean = false
     var lsp: String? = null
     var outputDirectory: String? = null
 }
@@ -404,12 +423,11 @@ internal class RequireScope internal constructor() {
     /** `--extra="{...}"`: the extra config the ask carries. */
     var extra: String? = null
 
-    /** True for the asks whose output the plugin parses: they answer with the clean
-     *  query environment by construction. */
-    val readOnly: Boolean
-        get() = list || info || search || scan || depgraph || fetch
-    /** Answers xmake's interactive prompt; the executor channel cannot, so mutations always set it. */
-    var yes: Boolean = false
+    /** The read asks, by the command/query line itself: they answer with the clean query
+     *  environment and never carry -y; every other combination is a mutation. */
+    val query: Boolean
+        get() = list || info || search || scan || depgraph || fetch || check
+
     /** The packages the action names: the search term, the info target, or the install/uninstall set. */
     var packages: List<String> = emptyList()
 }

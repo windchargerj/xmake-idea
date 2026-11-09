@@ -1,0 +1,59 @@
+xmake v3.1.2+HEAD.5d21e9daf, A cross-platform build utility based on Lua
+Copyright (C) 2015-present Ruki Wang, https://xmake.io
+                         _
+    __  ___ __  __  __ _| | ______
+    \ \/ / |  \/  |/ _  | |/ / __ \
+     >  <  | \__/ | /_| |   <  ___/
+    /_/\_\_|_|  |_|\__ \|_|\_\____|
+                         by ruki, xmake.io
+    ??  Manual: https://xmake.io/guide/quick-start
+    ??  Donate: https://xmake.io/about/sponsor
+
+
+Usage: $xmake test [options] [tests]
+
+Run the project tests.
+
+Common options:
+    -q, --quiet                      Quiet operation.
+    -y, --yes                        Input yes by default if need user confirm.
+        --confirm=CONFIRM            Input the given result if need user confirm.
+                                         - yes
+                                         - no
+                                         - def
+    -v, --verbose                    Print lots of verbose information for users.
+        --root                       Allow to run xmake as root.
+    -D, --diagnosis                  Print lots of diagnosis information (backtrace, check info ..) only for developers.
+                                     And we can append -v to get more whole information.
+                                         e.g. $ xmake -vD
+    -h, --help                       Print this help message and exit.
+
+    -F FILE, --file=FILE             Read a given xmake.lua file.
+    -P PROJECT, --project=PROJECT    Change to the given project directory.
+                                     Search priority:
+                                         1. The Given Command Argument
+                                         2. The Envirnoment Variable: XMAKE_PROJECT_DIR
+                                         3. The Current Directory
+
+Command options (test):
+    -g GROUP, --group=GROUP          Run all tests of the given group. It supports path pattern matching.
+                                     e.g.
+                                         xmake test -g test
+                                         xmake test -g test_*
+                                         xmake test --group=benchmark/*
+    -w WORKDIR, --workdir=WORKDIR    Work directory of running targets, default is folder of targetfile
+                                     e.g.
+                                         xmake test -w .
+                                         xmake test --workdir=`pwd`
+    -j JOBS, --jobs=JOBS             Set the number of parallel compilation jobs. (default: 34)
+    -r, --rebuild                    Rebuild the target.
+        --output-on-failure          Show the output of the tests that did not behave as expected.
+                                     e.g.
+                                         xmake test --output-on-failure
+                                         xmake test --output-on-failure test_*/*
+
+          tests ...                  The test names. It supports pattern matching.
+                                     e.g.
+                                         xmake test foo
+                                         xmake test */foo
+                                         xmake test targetname/*
