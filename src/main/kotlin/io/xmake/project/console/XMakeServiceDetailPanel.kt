@@ -28,13 +28,12 @@ import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import io.xmake.run.target.SELECT_BUILD_PROFILE_FIRST
 import io.xmake.utils.cli.XMakeServiceKind
+import io.xmake.utils.ui.Badge
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.Icon
-import java.awt.GridLayout
-import java.awt.event.KeyEvent
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -72,9 +71,16 @@ internal fun XMakeServiceState.shortStatus(probed: Boolean): String = when {
     else -> "not connected"
 }
 
-/** The status icon of one service kind: green connected, yellow connected-but-server-
- *  down, red unreachable, gray idle/not configured. The colors carry the state the
- *  text spells out, so a Services tree scan answers "is my build server up?". */
+/** The state's tone for the detail pill and the tree icon alike: green connected,
+ *  yellow connected-but-server-down, red reachable-and-refused, gray everything else. */
+internal fun serviceTone(state: XMakeServiceState, probed: Boolean): java.awt.Color = when {
+    !probed || state.endpoint == null -> com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+    state.connected && state.reachable != XMakeReachability.NO -> JBColor(0x3F7E33, 0x57965C)
+    state.connected -> JBColor(0x8A6A00, 0xC9A34C)
+    state.reachable == XMakeReachability.NO -> JBColor(0xC0392B, 0xCF6A5E)
+    else -> com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+}
+
 internal fun serviceStatusIcon(state: XMakeServiceState, probed: Boolean): Icon = when {
     !probed || state.endpoint == null -> AllIcons.General.InspectionsOKEmpty
     state.connected && state.reachable != XMakeReachability.NO -> AllIcons.General.InspectionsOK
@@ -106,7 +112,10 @@ class XMakeServiceDetailPanel(
      *  otherwise empty page. */
     private val rows = JPanel(GridBagLayout())
 
-    private val statusLabel = JBLabel()
+    /** The state as a pill - the same badge language the packages page speaks, so one
+     *  glance answers "is my build server up" in either panel. Rebuilt per render; the
+     *  full sentence rides the tooltip. */
+    private val statusPill = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
     private val endpointField = JBTextField(18).apply { emptyText.text = "host:port" }
     private val applyButton = JButton("Apply")
     private val clearButton = JButton("Clear")
@@ -143,7 +152,7 @@ class XMakeServiceDetailPanel(
             0,
             JBLabel("${kindName(kind)} - $instanceName")
                 .apply { font = JBFont.label().biggerOn(2f).deriveFont(java.awt.Font.BOLD) },
-            statusLabel,
+            statusPill,
         )
 
         // Row 1: what the kind needs, captioned, then the controls on one line - the
@@ -243,9 +252,10 @@ class XMakeServiceDetailPanel(
      *  with [setBusy] - the last call wins, which is what the tab's render path does. */
     fun show(state: XMakeServiceState, probed: Boolean) {
         lastState = state
-        statusLabel.text = state.shortStatus(probed)
-        statusLabel.icon = serviceStatusIcon(state, probed)
-        statusLabel.toolTipText = serviceStatusText(state, probed)
+        val word = state.shortStatus(probed)
+        statusPill.removeAll()
+        statusPill.add(Badge(word, serviceTone(state, probed)))
+        statusPill.toolTipText = serviceStatusText(state, probed)
         val ownEndpoint = project.getService(XMakeServiceEndpointsService::class.java)
             .configuredEndpoint(instanceName)
         if (!endpointField.isFocusOwner) {

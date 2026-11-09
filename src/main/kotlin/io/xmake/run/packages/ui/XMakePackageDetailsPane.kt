@@ -39,6 +39,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTextPane
 import javax.swing.ScrollPaneConstants
+import io.xmake.utils.ui.Badge
 
 /**
  * The packages page's right half: the selected package's header, its version list with
@@ -272,9 +273,9 @@ internal class XMakePackageDetailsPane(private val panel: XMakePackagesPanel) {
             row?.isHit == true -> AVAILABLE
             else -> DECLARED
         }
-        detailsBadges.add(Chip(state, badgeForeground(state)))
+        detailsBadges.add(Badge(state, badgeForeground(state)))
         info?.platforms?.forEach { platform ->
-            detailsBadges.add(Chip(platform, infoForeground()))
+            detailsBadges.add(Badge(platform, infoForeground()))
         }
         detailsBadges.revalidate()
         detailsBadges.repaint()

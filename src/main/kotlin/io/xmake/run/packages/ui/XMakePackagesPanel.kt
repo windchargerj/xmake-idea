@@ -89,6 +89,9 @@ internal class XMakePackagesPanel(
 
     internal val tableSorter get() = tableComponent.tableSorter
 
+    /** The row's status word - the table family's own triage, forwarded. */
+    internal fun statusOf(row: PackageRow): String? = tableComponent.statusOf(row)
+
     internal val tableScroll get() = tableComponent.tableScroll
 
     /** The snapshot the table was built from; an info-only update repaints, never
@@ -510,56 +513,9 @@ internal class XMakePackagesPanel(
      *  records its failures here instead of anywhere in the busy state. */
     internal fun failureFor(name: String): String? = service.snapshot?.infoFailures?.get(name)
 
-    /** The status of a row, in the table's own words: the installed truth when the info
-     *  cache holds one, "declared" for a project requirement otherwise - a hit is neither
-     *  until its info lands on selection. */
-    internal fun statusOf(row: PackageRow): String? = when {
-        infoFor(row.name)?.installed == true -> INSTALLED
-        row.isHit -> AVAILABLE
-        row.isInstalled -> INSTALLED
-        else -> DECLARED
-    }
-
-    /** The triage weight behind the status sort: installed first, then the project's own
-     *  declarations, then what the repositories merely offer. */
-    internal fun statusWeight(state: String?): Int = when (state) {
-        INSTALLED -> 0
-        DECLARED -> 1
-        AVAILABLE -> 2
-        else -> 3
-    }
-
-    /** The version sort's order: the dot-separated segments count numerically, so
-     *  1.10.0 lands after 1.9.0 - the lexicographic order reads the ten as a one. A
-     *  segment's leading digits are the number (the "(+n)" count a hit's cell carries
-     *  rides along harmlessly), a segment without digits counts 0, and a missing
-     *  version sorts last. */
-    internal fun compareVersions(left: String?, right: String?): Int {
-        if (left == null && right == null) return 0
-        if (left == null) return 1
-        if (right == null) return -1
-        val leftSegments = left.split('.')
-        val rightSegments = right.split('.')
-        for (index in 0 until maxOf(leftSegments.size, rightSegments.size)) {
-            val diff = leftSegments[index].leadingNumber() - rightSegments[index].leadingNumber()
-            if (diff != 0) return diff
-        }
-        return 0
-    }
-
-    /** The number a version segment opens with: its leading digits, or 0 without any. */
-    private fun String.leadingNumber(): Int = takeWhile(Char::isDigit).toIntOrNull() ?: 0
-
     /** The bare package name, the way the closure's require fields read. */
     internal fun bareName(pkgRequire: String?): String? =
         pkgRequire?.trim()?.substringBefore(" ")?.substringAfterLast("::")?.lowercase()
-
-    /** The row's source: the external-manager prefix for `vcpkg::`/`conan::` names, else
-     *  the repository `--info` reported. */
-    internal fun sourceLabel(name: String, info: XMakePackageInfo?): String? {
-        if ("::" in name) return "${name.substringBefore("::")}::"
-        return info?.repoName?.let { "from $it" }
-    }
 
     /** Esc leaves search mode from the table as from the field - and empties the field,
      *  so it does not claim a term the view no longer filters by. Outside search mode it
@@ -660,54 +616,6 @@ internal fun badgeForeground(state: String): Color = when (state) {
     else -> infoForeground()
 }
 
-/** One badge: a pill carrying a word - the state, or a platform the package answers -
- *  attached to the name, the way the Marketplace header carries its tags.
- *
- *  The fill is the tone at a low alpha over the pane, not a solid slab: it stays soft in
- *  both themes, the text keeps full contrast, and a hairline of the same tone closes the
- *  edge. Horizontal padding is generous, vertical snug - the proportion that reads as a
- *  label rather than a button. */
-internal class Chip(text: String, private val tone: Color) : JPanel(null) {
-
-    private val label = JBLabel(text)
-
-    init {
-        isOpaque = false
-        alignmentY = 0.5f
-        label.foreground = tone
-        label.font = JBFont.label()
-        add(label)
-    }
-
-    override fun paintComponent(graphics: Graphics) {
-        val g = graphics as Graphics2D
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        val radius = height
-        g.color = ColorUtil.toAlpha(tone, 26)
-        g.fillRoundRect(0, 0, width, height, radius, radius)
-        g.color = ColorUtil.toAlpha(tone, 60)
-        g.drawRoundRect(0, 0, width - 1, height - 1, radius, radius)
-    }
-
-    override fun getPreferredSize(): Dimension {
-        val text = label.preferredSize
-        return Dimension(text.width + JBUI.scale(PAD_X) * 2, text.height + JBUI.scale(PAD_Y) * 2)
-    }
-
-    override fun doLayout() {
-        label.setBounds(
-            JBUI.scale(PAD_X),
-            (height - label.preferredSize.height) / 2,
-            label.preferredSize.width,
-            label.preferredSize.height,
-        )
-    }
-
-    private companion object {
-        private const val PAD_X = 10
-        private const val PAD_Y = 3
-    }
-}
 
 internal class PackageRow(
     val name: String,

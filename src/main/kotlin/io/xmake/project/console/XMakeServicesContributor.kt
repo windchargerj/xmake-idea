@@ -235,6 +235,9 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
 private class XMakeRootOverviewPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val statusLabel = JBLabel()
+    private val hintLabel = JBLabel().apply {
+        foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+    }
 
     /** The bus subscription, alive only while the pane sits on a component tree - the
      *  same shape the detail panel's wiring takes. */
@@ -258,9 +261,7 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
                 add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
                 add(statusLabel)
                 add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
-                add(JBLabel("Select a service to edit its endpoint, connect, or disconnect").apply {
-                    foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
-                })
+                add(hintLabel)
                 add(javax.swing.Box.createVerticalGlue())
             },
             BorderLayout.NORTH,
@@ -296,6 +297,13 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
         if (project.isDisposed) return
         statusLabel.text = project.serviceOrNull<XMakeServicesSnapshotService>()?.statusMessage
             ?: "Open the XMake tool window to probe the build cache and service status"
+        // The hint answers the reader's actual next step: an empty tree says how to
+        // fill it, a filled one says what selecting does.
+        val instances = XMakeServicesTreeState.getInstance(project).instances()
+        hintLabel.text = when (instances.size) {
+            0 -> "Add one with + - Remote build, Distcc, or Remote cache"
+            else -> "${instances.size} instance(s) - select one to edit its endpoint, connect, or disconnect"
+        }
     }
 }
 

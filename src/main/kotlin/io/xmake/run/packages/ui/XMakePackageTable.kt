@@ -31,6 +31,7 @@ import java.awt.Dimension
 import java.awt.Font
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
+import io.xmake.run.packages.XMakePackageInfo
 
 /**
  * The master list: the columns, the model, the header-click sorter, and the cell
@@ -62,7 +63,7 @@ internal class XMakePackageTable(private val panel: XMakePackagesPanel) {
     private val repoColumn = object : ColumnInfo<PackageRow, String?>("Repo") {
 
         override fun valueOf(item: PackageRow): String? =
-            if (item.isHit) item.repo else panel.sourceLabel(item.name, panel.infoFor(item.name))
+            if (item.isHit) item.repo else sourceLabel(item.name, panel.infoFor(item.name))
     }
 
     private val statusColumn = object : ColumnInfo<PackageRow, String?>("Status") {
@@ -90,10 +91,10 @@ internal class XMakePackageTable(private val panel: XMakePackagesPanel) {
      *  1.10.0 lands after 1.9.0 where the lexicographic order would read it ahead. */
     internal val tableSorter = javax.swing.table.TableRowSorter(tableModel).apply {
         setComparator(COLUMN_VERSION, java.util.Comparator<String> { left, right ->
-            panel.compareVersions(left, right)
+            compareVersions(left, right)
         })
         setComparator(COLUMN_STATUS, java.util.Comparator<String> { left, right ->
-            panel.statusWeight(left) - panel.statusWeight(right)
+            statusWeight(left) - statusWeight(right)
         })
     }
 
@@ -206,6 +207,53 @@ internal class XMakePackageTable(private val panel: XMakePackagesPanel) {
         table.columnModel.getColumn(COLUMN_STATUS).cellRenderer = statusCellRenderer
     }
 
+
+    /** The status of a row, in the table's own words: the installed truth when the info
+     *  cache holds one, "declared" for a project requirement otherwise - a hit is neither
+     *  until its info lands on selection. */
+    internal fun statusOf(row: PackageRow): String? = when {
+        panel.infoFor(row.name)?.installed == true -> INSTALLED
+        row.isHit -> AVAILABLE
+        row.isInstalled -> INSTALLED
+        else -> DECLARED
+    }
+
+    /** The triage weight behind the status sort: installed first, then the project's own
+     *  declarations, then what the repositories merely offer. */
+    internal fun statusWeight(state: String?): Int = when (state) {
+        INSTALLED -> 0
+        DECLARED -> 1
+        AVAILABLE -> 2
+        else -> 3
+    }
+
+    /** The version sort's order: the dot-separated segments count numerically, so
+     *  1.10.0 lands after 1.9.0 - the lexicographic order reads the ten as a one. A
+     *  segment's leading digits are the number (the "(+n)" count a hit's cell carries
+     *  rides along harmlessly), a segment without digits counts 0, and a missing
+     *  version sorts last. */
+    internal fun compareVersions(left: String?, right: String?): Int {
+        if (left == null && right == null) return 0
+        if (left == null) return 1
+        if (right == null) return -1
+        val leftSegments = left.split('.')
+        val rightSegments = right.split('.')
+        for (index in 0 until maxOf(leftSegments.size, rightSegments.size)) {
+            val diff = leftSegments[index].leadingNumber() - rightSegments[index].leadingNumber()
+            if (diff != 0) return diff
+        }
+        return 0
+    }
+
+    /** The number a version segment opens with: its leading digits, or 0 without any. */
+    private fun String.leadingNumber(): Int = takeWhile(Char::isDigit).toIntOrNull() ?: 0
+
+    /** The row's source: the external-manager prefix for `vcpkg::`/`conan::` names, else
+     *  the repository `--info` reported. */
+    internal fun sourceLabel(name: String, info: XMakePackageInfo?): String? {
+        if ("::" in name) return "${name.substringBefore("::")}::"
+        return info?.repoName?.let { "from $it" }
+    }
 }
 
 /** The table's column order, by index. */
