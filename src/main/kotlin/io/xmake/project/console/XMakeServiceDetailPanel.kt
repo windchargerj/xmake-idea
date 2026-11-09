@@ -60,9 +60,6 @@ internal fun serviceStatusText(state: XMakeServiceState, probed: Boolean): Strin
     else -> "not connected"
 }
 
-/** The status icon of one service kind: green connected, yellow connected-but-server-
- *  down, red unreachable, gray idle/not configured. The colors carry the state the
- *  text spells out, so a Services tree scan answers "is my build server up?". */
 /** The short state words the summary line shows: two words at most - the full
  *  sentence (what is persisted vs what is live) rides the tooltip. */
 internal fun XMakeServiceState.shortStatus(probed: Boolean): String = when {
@@ -75,6 +72,9 @@ internal fun XMakeServiceState.shortStatus(probed: Boolean): String = when {
     else -> "not connected"
 }
 
+/** The status icon of one service kind: green connected, yellow connected-but-server-
+ *  down, red unreachable, gray idle/not configured. The colors carry the state the
+ *  text spells out, so a Services tree scan answers "is my build server up?". */
 internal fun serviceStatusIcon(state: XMakeServiceState, probed: Boolean): Icon = when {
     !probed || state.endpoint == null -> AllIcons.General.InspectionsOKEmpty
     state.connected && state.reachable != XMakeReachability.NO -> AllIcons.General.InspectionsOK

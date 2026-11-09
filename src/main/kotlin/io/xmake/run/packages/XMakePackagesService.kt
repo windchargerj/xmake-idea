@@ -52,6 +52,11 @@ import java.util.concurrent.atomic.AtomicReference
  * against builds and configuration by construction. Failures degrade: the last good
  * snapshot stays, [lastError] carries the message, and the view keeps working.
  */
+private sealed class Pipeline {
+    data object Idle : Pipeline()
+    data class Running(val mutation: Boolean, val doing: String?) : Pipeline()
+}
+
 /**
  * The pipeline's exclusive states. A query for "is the lane busy with a mutation and
  * what is it narrating" has one answer per state - the three flags the older fields
@@ -60,11 +65,6 @@ import java.util.concurrent.atomic.AtomicReference
  * decides whether the operation may be abandoned, [Pipeline.Running.doing] is what the
  * status line narrates (null: the caller narrates its own loading row).
  */
-private sealed class Pipeline {
-    data object Idle : Pipeline()
-    data class Running(val mutation: Boolean, val doing: String?) : Pipeline()
-}
-
 @Service(Service.Level.PROJECT)
 internal class XMakePackagesService(private val project: Project) {
 
@@ -184,48 +184,48 @@ internal class XMakePackagesService(private val project: Project) {
         project.xmakeExecutor.submitQuery {
             val base = snapshot
             try {
-            // ONE spawn: the bundled query runs xmake's own info and scan actions
-            // for this package - the answer carries no flag-version sensitivity,
-            // because the script calls the modules the CLI itself calls. The text
-            // parsers read the whole output; the store scan of the ask rides in
-            // the same answer.
-            val query = runQuery { packageFactory().createPackagesQuery(asked) }
-            val answer = query.getOrNull()
-            val info = answer?.let { text ->
-                runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
-            }
-            val closure = answer?.let { text ->
-                runCancellable { XMakePackageParsers.parsePackageClosureText(text) }.getOrNull()
-            }.orEmpty()
-            val bare = asked.name
-            val versions = if (answer == null || bare.isEmpty() || packageName.contains("::")) {
-                emptyList()
-            } else {
-                XMakePackageParsers.parseInstalledScan(answer)
-                    .filter { it.require == bare.lowercase() }
-                    .mapNotNull { it.version }
-            }
-            // The store composes the info: the asked version sitting in the scanned
-            // inventory is what "installed" means here - one truth, read from the
-            // same spawn. A landed answer - a failed parse included - is the record,
-            // whatever it said.
-            val composed = info?.copy(installed = versions.contains(info.version))
-            val failure = when {
-                composed != null -> null
-                answer == null -> query.exceptionOrNull()?.describeFailure()
-                    ?: "the query answered nothing"
-                else -> "the query output carried no info for '$packageName'"
-            }
-            base?.copy(
-                infos = base.infos + (packageName to composed),
-                closures = base.closures + (packageName to closure),
-                installedVersions = base.installedVersions + (bare.lowercase() to versions),
-                infoFailures = if (composed == null) {
-                    base.infoFailures + (packageName to (failure ?: "the info ask failed"))
+                // ONE spawn: the bundled query runs xmake's own info and scan actions
+                // for this package - the answer carries no flag-version sensitivity,
+                // because the script calls the modules the CLI itself calls. The text
+                // parsers read the whole output; the store scan of the ask rides in
+                // the same answer.
+                val query = runQuery { packageFactory().createPackagesQuery(asked) }
+                val answer = query.getOrNull()
+                val info = answer?.let { text ->
+                    runCancellable { XMakePackageParsers.parsePackageInfoText(text, packageName) }.getOrNull()
+                }
+                val closure = answer?.let { text ->
+                    runCancellable { XMakePackageParsers.parsePackageClosureText(text) }.getOrNull()
+                }.orEmpty()
+                val bare = asked.name
+                val versions = if (answer == null || bare.isEmpty() || packageName.contains("::")) {
+                    emptyList()
                 } else {
-                    base.infoFailures - packageName
-                },
-            )
+                    XMakePackageParsers.parseInstalledScan(answer)
+                        .filter { it.require == bare.lowercase() }
+                        .mapNotNull { it.version }
+                }
+                // The store composes the info: the asked version sitting in the scanned
+                // inventory is what "installed" means here - one truth, read from the
+                // same spawn. A landed answer - a failed parse included - is the record,
+                // whatever it said.
+                val composed = info?.copy(installed = versions.contains(info.version))
+                val failure = when {
+                    composed != null -> null
+                    answer == null -> query.exceptionOrNull()?.describeFailure()
+                        ?: "the query answered nothing"
+                    else -> "the query output carried no info for '$packageName'"
+                }
+                base?.copy(
+                    infos = base.infos + (packageName to composed),
+                    closures = base.closures + (packageName to closure),
+                    installedVersions = base.installedVersions + (bare.lowercase() to versions),
+                    infoFailures = if (composed == null) {
+                        base.infoFailures + (packageName to (failure ?: "the info ask failed"))
+                    } else {
+                        base.infoFailures - packageName
+                    },
+                )
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 Log.warn("XMake package info query failed", error)
@@ -239,17 +239,14 @@ internal class XMakePackagesService(private val project: Project) {
         }
     }
 
-    /** One captured query, with failures kept typed: the classifier's words ride in. */
+    /** One captured query; a failure keeps its own sentence. */
     private suspend fun runQuery(build: () -> XMakeCommand) = runCancellable {
         project.xmakeExecutor.captureStandardOutput(build())
     }
 
-    /** The failure's sentence, the taxonomy's own: a classified command failure reads
-     *  its describe, anything else keeps its message. */
-    private fun Throwable.describeFailure(): String = when (val failure = (this as? XMakeCommandException)?.failure) {
-        null -> message ?: toString()
-        else -> failure.describe()
-    }
+    /** The failure's own sentence; anything but a command failure keeps its message. */
+    private fun Throwable.describeFailure(): String =
+        (this as? XMakeCommandException)?.summary ?: message ?: toString()
 
     /**
      * Whether the active profile's toolkit answers [ask] - the panels question in the
