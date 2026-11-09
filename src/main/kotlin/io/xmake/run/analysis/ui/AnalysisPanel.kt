@@ -80,7 +80,6 @@ import java.io.File
 import java.util.Date
 import javax.swing.Icon
 import javax.swing.JComponent
-import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JTable
 import javax.swing.JTextArea
