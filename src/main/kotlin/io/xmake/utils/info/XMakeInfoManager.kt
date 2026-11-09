@@ -271,9 +271,6 @@ class XMakeInfoManager(
     }
 }
 
-/** One xmake installation at one version; the toolkit id already encodes the host and the
- *  installation path, so the version is the only extra dimension. A null version marks a
- *  toolkit that could not be resolved far enough to know it. */
 /** One map of cached query results, where in-flight loads join and invalidation cancels
  *  pending loads and drops values by generation. */
 private class CacheLayer<K : Any, R : Any>(

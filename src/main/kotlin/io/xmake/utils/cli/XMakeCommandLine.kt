@@ -162,7 +162,7 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
      *  A verb that takes a value renders the equals form xmake's help documents
      *  (`--add-user=root`) - one argv element, no two-element ambiguity; a missing value
      *  leaves the bare flag, which xmake then errors about visibly. The read-only verbs
-     *  are version-gated here, at the rendering, like [require]'s flags. */
+     *  answer with the clean query environment, like [require]'s queries. */
     fun service(configure: ServiceScope.() -> Unit): XMakeCommandLine = apply {
         val options = ServiceScope().apply(configure)
         beginAction("service")

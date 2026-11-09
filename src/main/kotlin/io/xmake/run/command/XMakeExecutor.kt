@@ -152,10 +152,8 @@ class XMakeExecutor(
         } catch (error: Exception) {
             // The refusal's classification rode in on the exception - one regex home,
             // the failure classifier's.
-            val refusal = (error as? XMakeCommandException)?.failure
-                as? XMakeCommandFailure.VersionRefusal
-                ?: throw error
-            throw XMakeVersionRefusalException(XMakeVersionRefusal(command.toolkit, refusal.required), error)
+            val required = (error as? XMakeCommandException)?.versionRefusal ?: throw error
+            throw XMakeVersionRefusalException(XMakeVersionRefusal(command.toolkit, required), error)
         }
         return output.toString()
     }

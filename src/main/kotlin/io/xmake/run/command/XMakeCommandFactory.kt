@@ -299,17 +299,10 @@ class XMakeCommandFactory(
         }
     }
 
-    /**
-     * One `xmake service` verb, e.g. `xmake service --connect --remote`. Its
-     * human-readable output (including xmake's own connect failures) belongs in the
-     * visible console, and callers must re-probe afterwards: the command exit code says
-     * nothing about the listener, and the connection state is persisted by the client.
-     */
     /** One `xmake service --<verb>` for a flag-only [verb], optionally scoped to [kind]
-     *  and, for the clean, widened with [all]. The read-only verbs are version-gated -
-     *  the guards refuse to emit a line a 2.8.7 answers with `Invalid flag`, the panels
-     *  ask [supports] before offering them - and ride the query environment. A verb
-     *  that carries a value belongs to its own factory method; landing here would
+     *  and, for the clean, widened with [all]. The read-only verbs ride the query
+     *  environment. A verb that carries a value belongs to its own factory method;
+     *  landing here would
      *  render the bare flag, so the guard refuses it loudly. */
     fun createServiceAction(
         verb: XMakeServiceVerb,

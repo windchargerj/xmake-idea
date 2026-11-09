@@ -215,15 +215,57 @@ class XMakeCommandProcessHandler(
 
 private val Log = logger<XMakeCommandProcessHandler>()
 
-/** One failed XMake command; the message stays short because [output] was already streamed
- *  live by the console, except on the captured path, which reads [output] itself. */
+/**
+ * One failed XMake command; the message stays short because [output] was already streamed
+ * live by the console, except on the captured path, which reads [output] itself.
+ *
+ * [summary] is the failure's own sentence - read once by whatever narrates it (the
+ * details pane's failure record, a balloon), so every surface says one failure the same
+ * way. The wording comes from xmake's stable output texts, each captured live on 2.8.7
+ * and 3.1.2. [versionRefusal] is the same output read as the one specialization any
+ * caller acts on: the project demands a newer xmake than the toolkit runs.
+ */
 internal class XMakeCommandException(
     val exitCode: Int,
     commandLine: String,
     val output: String,
 ) : ExecutionException("XMake command failed with exit code $exitCode (command: $commandLine)") {
 
-    /** The output classified once, here - the single place any caller learns what the
-     *  failure means; [XMakeCommandFailure.describe] owns the sentence. */
-    val failure: XMakeCommandFailure = XMakeCommandFailure.classify(exitCode, output)
+    /** The sentence this failure reads aloud. */
+    val summary: String = sentence()
+
+    /** Reads the output as the failure's sentence. The refusal names flags in its
+     *  explanation, so it wins over the flag pattern. */
+    private fun sentence(): String {
+        REFUSAL.find(output)?.let { return "this project asks for xmake ${it.groupValues[1]} or newer" }
+        INVALID_FLAG.find(output)?.let { match ->
+            val flag = match.groupValues[1]
+            return "'$flag' is newer than this toolkit - ${flag.trimStart('-')} needs a newer xmake"
+        }
+        NOT_FOUND.find(output)?.let { return "no installed package matches '${it.groupValues[1]}' on this platform and configuration" }
+        if (AUTH_REQUIRED.containsMatchIn(output)) {
+            return "xmake is asking for the service password on stdin, which no command channel can answer - store the token first"
+        }
+        return "xmake exited with code $exitCode"
+    }
+
+    /** The xmake version the project demands, when the failure is the interpreter's
+     *  version refusal; null for every other failure. */
+    val versionRefusal: String? = REFUSAL.find(output)?.groupValues?.get(1)
+
+    private companion object {
+        /** xmake 2.8.7 and 3.x, identical text: "xmake v3.1.2 < v3.2.1, please run …". */
+        private val REFUSAL = Regex("""xmake v\S+ < v(\S+), please run""")
+
+        /** Live on 2.8.7: `error: Invalid flag: --check`. */
+        private val INVALID_FLAG = Regex("""error: Invalid flag: (--?\S+)""")
+
+        /** Live on 2.8.7: `packages(zstd 1.5.6) not found, maybe they don't exactly
+         *  match the configuration`; the prefix is all the sentence needs. */
+        private val NOT_FOUND = Regex("""packages\((.+?)\) not found""")
+
+        /** xmake 2.8.7 `private/service/remote_cache/client.lua`: "Please input user
+         *  <user> password to connect <host:port>:". */
+        private val AUTH_REQUIRED = Regex("""Please input user \S+ password to connect""")
+    }
 }
