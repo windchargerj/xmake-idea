@@ -25,9 +25,12 @@ import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import io.xmake.project.console.XMakeConsole
 import io.xmake.run.ensureProjectIsOpen
@@ -77,6 +80,19 @@ internal suspend fun executeValgrind(
                 null
             }
             liveSession = if (wrapped != null) session else null
+            Log.info(
+                "Valgrind run presentation: session=${session != null}, console=${runConsole != null}, " +
+                    "nativeWrapper=${wrapped != null}",
+            )
+            if (session == null || wrapped == null) {
+                // The absence is part of the result: say where the findings went instead of
+                // leaving a console that looks like an ordinary run.
+                console.print(
+                    "The native Valgrind panel is not available in this CLion; the findings are " +
+                        "printed in this console and kept in the report file.",
+                    com.intellij.execution.ui.ConsoleViewContentType.SYSTEM_OUTPUT,
+                )
+            }
             showRunContent(
                 state.createExecutionResult(environment.executor, processHandler, wrapped ?: runConsole),
                 environment,
@@ -99,6 +115,9 @@ internal suspend fun executeValgrind(
                     state::toLocalSource,
                 )
                 session?.addNewErrors(errors, state::toLocalPath)
+                if (errors.isNotEmpty()) {
+                    revealValgrindResults(environment.project, content, environment.executor.toolWindowId)
+                }
                 notifyValgrindReport(environment.project, state.reportFile, errors)
             }
         })
@@ -108,6 +127,31 @@ internal suspend fun executeValgrind(
         throw error
     }
 }
+
+/**
+ * Brings the results panel to the front once a finished run found something. The panel is
+ * the reason the run happened: leaving the findings behind a console tab makes the user hunt
+ * for them, and the native wrapper only bounces the tab. A run without findings stays where
+ * it is - the console already says so, and pulling the window forward for an empty tree
+ * helps nobody.
+ */
+private fun revealValgrindResults(project: Project, content: RunContentDescriptor, toolWindowId: String) {
+    ApplicationManager.getApplication().invokeLater {
+        if (project.isDisposed) return@invokeLater
+        val ui = content.runnerLayoutUi ?: return@invokeLater
+        selectValgrindResults(ui)
+        ToolWindowManager.getInstance(project).getToolWindow(toolWindowId)?.activate(null)
+    }
+}
+
+/** Selects the panel's tab in [ui]; a run content without the panel keeps its console. */
+internal fun selectValgrindResults(ui: com.intellij.execution.ui.RunnerLayoutUi) {
+    val panel = ui.contents.firstOrNull { content -> content.displayName == VALGRIND_PANEL } ?: return
+    ui.contentManager.setSelectedContent(panel)
+}
+
+/** The results tab's name, the one the native wrapper gives the panel content. */
+private const val VALGRIND_PANEL = "Valgrind"
 
 /**
  * Polls the report while a run is in progress and hands every snapshot of it to [onReport],
@@ -170,3 +214,5 @@ private fun notifyValgrindReport(
         .createNotification("XMake Valgrind run finished", detail, NotificationType.INFORMATION)
         .notify(project)
 }
+
+private val Log = Logger.getInstance("io.xmake.debug.clion.valgrind.ValgrindExecution")
