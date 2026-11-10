@@ -105,4 +105,29 @@ class XMakeCoverageRunTest {
         assertFalse(declaresCoverageRule(tempFolder.newFolder("empty").path))
         assertFalse(declaresCoverageRule(null))
     }
+
+    @Test
+    fun `a directory with a nested gcda counts as gathered`() {
+        val root = tempFolder.newFolder("build")
+        val nested = File(root, ".objs/demo/src").apply { mkdirs() }
+        File(nested, "main.cpp.gcda").writeText("")
+        assertTrue(hasCoverageData(root))
+    }
+
+    @Test
+    fun `an empty or missing build directory gathers nothing`() {
+        val empty = tempFolder.newFolder("empty")
+        assertFalse(hasCoverageData(empty))
+        assertFalse(hasCoverageData(File(tempFolder.root, "does-not-exist")))
+        assertFalse(hasCoverageData(null))
+    }
+
+    @Test
+    fun `the missing-data message names the stale instrumentation cause and the remedy`() {
+        val message = missingCoverageDataMessage(tempFolder.newFolder("build"))
+        assertTrue(message.contains(".gcda"))
+        assertTrue(message.contains(".gcno"))
+        assertTrue(message.contains("stale"))
+        assertTrue(message.contains("xmake --clean"))
+    }
 }
