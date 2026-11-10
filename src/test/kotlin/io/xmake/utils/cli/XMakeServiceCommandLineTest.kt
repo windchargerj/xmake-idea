@@ -76,6 +76,56 @@ class XMakeServiceCommandLineTest {
     }
 
     @Test
+    fun `connect rides the session name when one is given`() {
+        val line = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.CONNECT
+                kind = XMakeServiceKind.REMOTE_CACHE
+                session = "foo"
+            }
+        }
+        assertEquals(listOf("service", "--connect", "--ccache", "--session=foo"), line.arguments)
+    }
+
+    @Test
+    fun `clean sweeps this project, and all widens the sweep`() {
+        val project = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.CLEAN
+                kind = XMakeServiceKind.DISTCC_BUILD
+            }
+        }
+        assertEquals(listOf("service", "--clean", "--distcc"), project.arguments)
+
+        val every = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.CLEAN
+                all = true
+            }
+        }
+        assertEquals(listOf("service", "--clean", "--all"), every.arguments)
+    }
+
+    @Test
+    fun `the read-only diagnostics verbs build bare`() {
+        val logs = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.LOGS
+                kind = XMakeServiceKind.REMOTE_BUILD
+            }
+        }
+        assertEquals(listOf("service", "--logs", "--remote"), logs.arguments)
+
+        val status = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            service {
+                verb = XMakeServiceVerb.STATUS
+                kind = XMakeServiceKind.REMOTE_BUILD
+            }
+        }
+        assertEquals(listOf("service", "--status", "--remote"), status.arguments)
+    }
+
+    @Test
     fun `a value verb without its value emits the bare flag - the caller's bug, visible`() {
         val line = xmake(CliInstallation("xmake", ToolkitHost())).apply {
             service { verb = XMakeServiceVerb.RM_USER }

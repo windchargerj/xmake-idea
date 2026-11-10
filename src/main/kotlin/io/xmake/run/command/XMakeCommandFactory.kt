@@ -308,15 +308,20 @@ class XMakeCommandFactory(
         verb: XMakeServiceVerb,
         kind: XMakeServiceKind? = null,
         all: Boolean = false,
+        session: String? = null,
     ): XMakeCommand {
         check(verb.takesValue.not()) {
             "$verb carries a value - use its dedicated factory method"
+        }
+        check(session == null || verb == XMakeServiceVerb.CONNECT) {
+            "--session rides the connect verb alone"
         }
         return createCommand {
             service {
                 this.verb = verb
                 kind?.let { this.kind = it }
                 this.all = all
+                session?.let { this.session = it }
             }
         }
     }

@@ -128,9 +128,29 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
      *  [endpoint] is the calling instance's own record when it has one: the kind's
      *  client.conf is re-pointed at it before the connect verb runs, so two instances
      *  of one kind connect to the addresses their nodes name instead of whichever
-     *  record was applied last. */
-    fun connectService(kind: XMakeServiceKind, endpoint: String? = null) {
-        val state = currentSnapshot?.services?.get(kind) ?: return
+     *  record was applied last. [session] rides the connect as `--session=<name>` -
+     *  a stable session id the name derives, so a second connection to one daemon
+     *  does not reuse the first one's session. */
+    fun connectService(kind: XMakeServiceKind, endpoint: String? = null, session: String? = null) {
+        val snapshot = currentSnapshot
+        // Before the first probe nothing is known - not even whether a token is stored -
+        // so a connect would either return silently or walk into the stdin prompt the
+        // token check exists to prevent. Say which step is missing.
+        if (snapshot == null) {
+            project.notify(
+                "XMake services",
+                "The services have not been probed yet - press Refresh in the Services toolbar, then connect.",
+            )
+            return
+        }
+        val state = snapshot.services[kind]
+        if (state == null) {
+            project.notify(
+                "XMake services",
+                "The probe reported no state for ${StringUtil.escapeXmlEntities(kindName(kind))} - press Refresh to try again.",
+            )
+            return
+        }
         val effective = endpoint ?: state.endpoint ?: return
         if (!state.tokenKnown) {
             project.notify(
@@ -145,7 +165,10 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
             if (endpoint != null && endpoint != state.endpoint) {
                 project.xmakeExecutor.execute(console, factory.createSetServiceEndpoint(kind, endpoint))
             }
-            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.CONNECT, kind))
+            project.xmakeExecutor.execute(
+                console,
+                factory.createServiceAction(XMakeServiceVerb.CONNECT, kind, session = session),
+            )
         }
     }
 
@@ -177,6 +200,44 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
                 console,
                 factory.createServicePull(kind, remotePath),
             )
+        }
+    }
+
+    /**
+     * Cleans the project's synced files off the daemon of [kind] (`--clean`); [all]
+     * widens the sweep to every project's files (`--clean --all`). The caller owns the
+     * confirmation - this only runs what was asked.
+     */
+    fun cleanFiles(kind: XMakeServiceKind, all: Boolean = false) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(
+                console,
+                factory.createServiceAction(XMakeServiceVerb.CLEAN, kind, all),
+            )
+        }
+    }
+
+    /** Syncs the xmake program files at [path] to the daemon of [kind]
+     *  (`--sync --xmakesrc=<path>`). */
+    fun syncXmakeSources(kind: XMakeServiceKind, path: String) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceXmakeSrcSync(kind, path))
+        }
+    }
+
+    /** Prints the daemon's own logs of [kind] into the XMake console (`--logs`). */
+    fun showLogs(kind: XMakeServiceKind) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.LOGS, kind))
+        }
+    }
+
+    /** Prints xmake's own status view of [kind] into the XMake console (`--status`).
+     *  The panel's state comes from the probe, which reads the status files directly;
+     *  this is the tool's own narration, for cross-checking. */
+    fun showStatus(kind: XMakeServiceKind) {
+        runThenReprobe { console, factory ->
+            project.xmakeExecutor.execute(console, factory.createServiceAction(XMakeServiceVerb.STATUS, kind))
         }
     }
 
@@ -220,9 +281,13 @@ class XMakeServicesSnapshotService(private val project: Project) : Disposable {
             setMessage(ENDPOINT_INVALID_MESSAGE)
             return
         }
-        if (endpoints.configuredEndpoint(key) == endpoint) {
-            // What this instance already points at: an apply would only queue a lane
-            // round trip.
+        if (endpoints.configuredEndpoint(key) == endpoint &&
+            currentSnapshot?.services?.get(kind)?.endpoint == endpoint
+        ) {
+            // What this instance already points at *and* what xmake already holds: an
+            // apply would only queue a lane round trip. A record that matches while the
+            // client's own endpoint differs (a sibling applied another address since)
+            // must still materialize - the record alone is not the configuration.
             return
         }
         endpoints.setConfiguredEndpoint(key, endpoint)

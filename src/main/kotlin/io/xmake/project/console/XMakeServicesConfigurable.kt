@@ -152,7 +152,7 @@ class XMakeServicesConfigurable(private val valProject: Project) : Configurable,
                                 { endpoints.configuredEndpoint(instance.name) ?: "" },
                                 { snapshotService.applyEndpoint(instance.name, kind, it) },
                             )
-                            .comment("host:port")
+                            .comment("Host and port, e.g. 192.168.0.192:9691")
                     }
                     // Enter in the field applies the page - the dialog's own default
                     // button would land on the same page.apply() either way.
@@ -160,7 +160,13 @@ class XMakeServicesConfigurable(private val valProject: Project) : Configurable,
                     // The verbs sit in the form's control column, under the endpoint
                     // field they act on, so the page's two rows read as one editor.
                     row("Actions") {
-                        val connect = button("Connect") { snapshotService.connectService(kind) }.component
+                        // Connect carries this instance's own endpoint: two instances
+                        // of one kind connect to the addresses their nodes name, not to
+                        // whichever record was applied last - the same rule the tree's
+                        // Connect follows.
+                        val connect = button("Connect") {
+                            snapshotService.connectService(kind, endpoints.configuredEndpoint(instance.name))
+                        }.component
                         val disconnect = button("Disconnect") { snapshotService.disconnectService(kind) }.component
                         val clear = button("Clear") { snapshotService.clearEndpoint(instance.name, kind) }.component
                         instanceRows += InstanceRow(instance, field, status, connect, disconnect, clear)
