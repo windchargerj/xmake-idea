@@ -28,6 +28,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.actionSystem.DataSink
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.components.PersistentStateComponent
@@ -41,9 +42,12 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.util.ui.JBUI
 import io.xmake.icons.XMakeIcons
+import io.xmake.run.command.xmakeExecutor
 import io.xmake.utils.cli.XMakeServiceKind
 import java.awt.BorderLayout
 import javax.swing.JComponent
@@ -214,6 +218,15 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
         override fun getToolbarActions(): ActionGroup = DefaultActionGroup(
             ConnectServiceAction(),
             DisconnectServiceAction(),
+            ReconnectServiceAction(),
+            Separator.create(),
+            SyncServiceAction(),
+            PullServiceAction(),
+            Separator.create(),
+            StartDaemonAction(),
+            StopDaemonAction(),
+            RestartDaemonAction(),
+            Separator.create(),
             RemoveServiceAction(),
             // The + rides the node's toolbar too: adding a second instance of one kind
             // must not start with a trip back to the root - the Docker pattern the tree
@@ -236,6 +249,23 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
 
     private val statusLabel = JBLabel()
     private val hintLabel = JBLabel().apply {
+        foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+    }
+
+    /** The quick-start row: one link per kind, each adding a configured instance
+     *  without a dialog - the Docker flow's spirit, that a first look costs no
+     *  typing. Hidden once the tree holds instances; the + path stays for the
+     *  deliberate second instance. */
+    private val quickStart = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
+
+    /** The build cache section: the persisted ccache option and the program the probe
+     *  resolved, the project-level half of the snapshot. The checkbox flips the option
+     *  through the same lane-and-reprobe flow every other verb takes. */
+    private val cacheHeading = JBLabel("Build cache").apply {
+        font = com.intellij.util.ui.JBFont.label().deriveFont(java.awt.Font.BOLD)
+    }
+    private val cacheToggle = javax.swing.JCheckBox("Project option: ccache")
+    private val cacheProgram = JBLabel().apply {
         foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
     }
 
@@ -262,10 +292,40 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
                 add(statusLabel)
                 add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
                 add(hintLabel)
+                add(javax.swing.Box.createVerticalStrut(JBUI.scale(8)))
+                add(quickStart)
+                add(javax.swing.Box.createVerticalStrut(JBUI.scale(16)))
+                add(cacheHeading)
+                add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
+                add(cacheToggle)
+                add(javax.swing.Box.createVerticalStrut(JBUI.scale(2)))
+                add(cacheProgram)
                 add(javax.swing.Box.createVerticalGlue())
             },
             BorderLayout.NORTH,
         )
+        // One link per kind: the click adds the instance at xmake's default endpoint
+        // and the probe the apply queues reports the truth into the same page.
+        XMakeServiceKind.entries.forEach { kind ->
+            quickStart.add(
+                com.intellij.ui.components.ActionLink("Add ${kindName(kind)}") {
+                    addInstanceWithDefaults(project, kind)
+                }.apply {
+                    toolTipText = "Adds a ${kindName(kind)} instance at ${kind.defaultEndpoint()} and probes it"
+                },
+            )
+            if (kind != XMakeServiceKind.entries.last()) {
+                quickStart.add(javax.swing.Box.createHorizontalStrut(JBUI.scale(16)))
+            }
+        }
+        // The cache toggle rides the executor lane and re-probes, the way every other
+        // verb on this page does; the render pass re-reads the answer.
+        cacheToggle.addActionListener {
+            val snapshots = project.serviceOrNull<XMakeServicesSnapshotService>() ?: return@addActionListener
+            snapshots.runThenReprobe { console, factory ->
+                project.xmakeExecutor.execute(console, factory.createCcacheToggle(cacheToggle.isSelected))
+            }
+        }
         render()
     }
 
@@ -295,16 +355,72 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
      *  standing in while reading it. */
     private fun render() {
         if (project.isDisposed) return
-        statusLabel.text = project.serviceOrNull<XMakeServicesSnapshotService>()?.statusMessage
+        val snapshots = project.serviceOrNull<XMakeServicesSnapshotService>()
+        statusLabel.text = snapshots?.statusMessage
             ?: "Open the XMake tool window to probe the build cache and service status"
-        // The hint answers the reader's actual next step: an empty tree says how to
-        // fill it, a filled one says what selecting does.
+        // The hint answers the reader's actual next step: an empty tree offers the
+        // one-click adds below; a filled one says what selecting does.
         val instances = XMakeServicesTreeState.getInstance(project).instances()
         hintLabel.text = when (instances.size) {
-            0 -> "Add one with + - Remote build, Distcc, or Remote cache"
+            0 -> "Start with a local default - everything stays editable afterwards"
             else -> "${instances.size} instance(s) - select one to edit its endpoint, connect, or disconnect"
         }
+        quickStart.isVisible = instances.isEmpty()
+        quickStart.parent?.revalidate()
+        quickStart.parent?.repaint()
+        // The cache half of the snapshot: the persisted option rides the checkbox, the
+        // resolved program reads beside it. A checkbox the user is editing keeps its
+        // state until the probe lands.
+        val snapshot = snapshots?.snapshot
+        val busy = snapshots?.probing ?: false
+        if (!cacheToggle.hasFocus()) {
+            cacheToggle.isSelected = snapshot?.cache?.enabled ?: false
+        }
+        cacheToggle.isEnabled = !busy
+        cacheToggle.toolTipText = when {
+            busy -> "Probing the build cache and service status..."
+            else -> "Flips the persisted ccache option (xmake f --ccache=y|n) and re-probes"
+        }
+        cacheProgram.text = when {
+            snapshot == null -> ""
+            snapshot.cache.program != null -> "Effective: ${snapshot.cache.program}"
+            else -> "No cache tool found - builds run uncached"
+        }
     }
+}
+
+/** The endpoint an instance of [kind] starts from: xmake's own daemon default on the
+ *  local host (client_config.lua's ports, G10 of build-services.md). */
+internal fun XMakeServiceKind.defaultEndpoint(): String = "127.0.0.1:$defaultPort"
+
+/** The default instance name: the endpoint's host, uniquified across the tree - the
+ *  names are the tree's identity keys and unique across kinds, so a second local
+ *  instance of any kind becomes `127.0.0.1-2`, not a duplicate. */
+internal fun defaultInstanceName(project: Project, endpoint: String): String {
+    val host = endpoint.substringBefore(':')
+    val treeState = XMakeServicesTreeState.getInstance(project)
+    val taken = treeState.instances().mapTo(mutableSetOf()) { instance -> instance.name }
+    return generateSequence(host) { candidate -> "$candidate-2" }.first { candidate -> candidate !in taken }
+}
+
+/**
+ * Adds an instance of [kind] at [kind]'s default endpoint and probes it: the whole
+ * quick-start in one call, the same path the Add dialog's OK takes with its fields
+ * untouched. The instance lands configured; the apply queues the re-probe that
+ * reports the real reachability.
+ */
+internal fun addInstanceWithDefaults(project: Project, kind: XMakeServiceKind) {
+    addInstance(project, kind, defaultInstanceName(project, kind.defaultEndpoint()), kind.defaultEndpoint())
+}
+
+/** The one add path the dialog and the quick links share: store the instance, apply
+ *  the endpoint (which queues the lane round trip and the re-probe), reset the tree. */
+internal fun addInstance(project: Project, kind: XMakeServiceKind, name: String, endpoint: String?) {
+    XMakeServicesTreeState.getInstance(project).add(XMakeServiceInstance(kind, name))
+    endpoint?.let { value ->
+        project.xmakeServicesSnapshots.applyEndpoint(name, kind, value)
+    }
+    resetTree(project)
 }
 
 /** The endpoint the instance carries: its own record if the user set one, else the
@@ -342,6 +458,10 @@ private class ConnectServiceAction :
         }
         event.presentation.isEnabled = instance != null &&
             snapshots?.probing == false &&
+            // A connect before the first probe has nothing to verify the token
+            // against; the service explains the missing probe, and the button stays
+            // off so the click cannot look dead.
+            snapshots.snapshot != null &&
             endpoint != null
     }
 
@@ -367,7 +487,7 @@ private class DisconnectServiceAction :
         val kind = event.getData(XMAKE_SERVICE_KIND_KEY)
         event.presentation.isEnabled = kind != null &&
             snapshots?.probing == false &&
-            snapshots?.snapshot?.services?.get(kind)?.connected == true
+            snapshots.snapshot?.services?.get(kind)?.connected == true
     }
 
     override fun actionPerformed(event: AnActionEvent) {
@@ -410,88 +530,67 @@ internal class AddServiceActionGroup : DefaultActionGroup {
                         val project = event.project ?: return
                         val dialog = AddServiceInstanceDialog(project, kind)
                         if (!dialog.showAndGet()) return
-                        val name = dialog.instanceName() ?: return
-                        XMakeServicesTreeState.getInstance(project)
-                            .add(XMakeServiceInstance(kind, name))
-                        // The endpoint the user typed in the dialog applies through the
-                        // same live path the detail panel uses, before the reset: the
-                        // node lands configured, and the reprobe that the apply queues
-                        // reports it.
-                        dialog.endpointValue()?.let { endpoint ->
-                            project.xmakeServicesSnapshots.applyEndpoint(name, kind, endpoint)
-                        }
-                        resetTree(project)
+                        // Add applies through the one shared path: the instance lands
+                        // configured, and the reprobe that the apply queues reports it.
+                        addInstance(project, kind, dialog.instanceName(), dialog.endpointValue())
                     }
                 }
             }.toTypedArray()
 }
 
-/** The Add dialog: everything the user already has in hand - the instance's name and
- *  its endpoint - lands in one pass, and Add applies the endpoint through the same
- *  live path the detail panel uses, so the node appears configured and the probe that
- *  follows reports the real thing. A blank name or a duplicate or a malformed endpoint
- *  is rejected in the dialog, not after it. */
+/**
+ * The Add dialog: both fields start filled - the name from the default endpoint's host,
+ * the endpoint at xmake's own daemon default - so accepting the dialog as it opened is
+ * a valid, sensible add. Editing either stays one field away; a duplicate or a
+ * malformed endpoint is rejected in the dialog, not after it.
+ */
 private class AddServiceInstanceDialog(
     project: Project,
-    private val kind: XMakeServiceKind,
+    kind: XMakeServiceKind,
 ) : DialogWrapper(project) {
 
     private val treeState = XMakeServicesTreeState.getInstance(project)
 
-    private val nameField = JBTextField(24).apply { emptyText.text = "e.g. the host it runs on" }
-    private val endpointField = JBTextField(24).apply { emptyText.text = "host:port (optional now - editable later)" }
+    private val nameField = JBTextField(24)
+    private val endpointField = JBTextField(24)
 
     init {
         title = "Add ${kindName(kind)}"
         setOKButtonText("Add")
+        // The defaults ARE the form: the name derives from the endpoint's host, the
+        // endpoint is the port xmake's own client.conf falls back to. A user who means
+        // the local default just presses Add.
+        val defaultEndpoint = kind.defaultEndpoint()
+        nameField.text = defaultInstanceName(project, defaultEndpoint)
+        endpointField.text = defaultEndpoint
         init()
     }
 
-    override fun createCenterPanel(): JComponent = JPanel(java.awt.GridBagLayout()).apply {
-        isOpaque = false
-        fun label(text: String, row: Int): Unit = add(
-            JBLabel(text),
-            java.awt.GridBagConstraints().apply {
-                gridx = 0
-                gridy = row
-                weightx = 0.0
-                anchor = java.awt.GridBagConstraints.WEST
-                insets = JBUI.insets(6, 0, 6, 8)
-            },
-        )
-        fun field(component: JComponent, row: Int): Unit = add(
-            component,
-            java.awt.GridBagConstraints().apply {
-                gridx = 1
-                gridy = row
-                weightx = 1.0
-                anchor = java.awt.GridBagConstraints.WEST
-                fill = java.awt.GridBagConstraints.HORIZONTAL
-                insets = JBUI.insets(6, 0, 6, 0)
-            },
-        )
-        label("Name:", 0)
-        field(nameField, 0)
-        label("Endpoint:", 1)
-        field(endpointField, 1)
+    override fun createCenterPanel(): JComponent = panel {
+        row("Name:") {
+            cell(nameField).align(AlignX.FILL)
+        }
+        row("Endpoint:") {
+            cell(endpointField).align(AlignX.FILL)
+        }
     }
 
     override fun getPreferredFocusedComponent(): JComponent = nameField
 
-    override fun doValidate(): com.intellij.openapi.ui.ValidationInfo? {
+    override fun doValidate(): ValidationInfo? {
         val name = nameField.text.trim()
         val endpoint = endpointField.text.trim()
         return when {
-            name.isEmpty() -> com.intellij.openapi.ui.ValidationInfo("Name the instance", nameField)
+            name.isEmpty() -> ValidationInfo("Name the instance", nameField)
             treeState.instances().any { it.name == name } ->
-                com.intellij.openapi.ui.ValidationInfo("\"$name\" is already in the tree", nameField)
+                ValidationInfo("\"$name\" is already in the tree", nameField)
             endpoint.isNotEmpty() && XMakeServiceEndpointFormat.parse(endpoint) == null ->
-                com.intellij.openapi.ui.ValidationInfo("The endpoint must read host:port", endpointField)
+                ValidationInfo("The endpoint must read host:port", endpointField)
             else -> null
         }
     }
 
-    fun instanceName(): String? = nameField.text.trim().takeUnless { it.isEmpty() }
+    fun instanceName(): String = nameField.text.trim()
 
     fun endpointValue(): String? = endpointField.text.trim().takeUnless { it.isEmpty() }
 }
@@ -547,7 +646,7 @@ private class ReconnectServiceAction : DumbAwareAction(
 
 /** Syncs the project files to this kind's daemon. */
 private class SyncServiceAction : DumbAwareAction(
-    "Sync project",
+    "Sync Project",
     "Sync current project files to the daemon (xmake service --sync)",
     AllIcons.Actions.Commit,
 ) {
@@ -568,9 +667,9 @@ private class SyncServiceAction : DumbAwareAction(
 
 /** Pulls a path from this kind's daemon, asked by input dialog. */
 private class PullServiceAction : DumbAwareAction(
-    "Pull from daemon",
+    "Pull from Daemon",
     "Pull a file or directory from the daemon into the project (xmake service --pull)",
-    com.intellij.icons.AllIcons.Actions.Download,
+    AllIcons.Actions.Download,
 ) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
@@ -596,9 +695,9 @@ private class PullServiceAction : DumbAwareAction(
 
 /** Starts this kind's daemon. */
 private class StartDaemonAction : DumbAwareAction(
-    "Start daemon",
+    "Start Daemon",
     "Start the daemon service (xmake service --start)",
-    com.intellij.icons.AllIcons.Actions.Execute,
+    AllIcons.Actions.Execute,
 ) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
@@ -617,9 +716,9 @@ private class StartDaemonAction : DumbAwareAction(
 
 /** Stops this kind's daemon. */
 private class StopDaemonAction : DumbAwareAction(
-    "Stop daemon",
+    "Stop Daemon",
     "Stop the daemon service (xmake service --stop)",
-    com.intellij.icons.AllIcons.Actions.Suspend,
+    AllIcons.Actions.Suspend,
 ) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
@@ -638,9 +737,9 @@ private class StopDaemonAction : DumbAwareAction(
 
 /** Restarts this kind's daemon. */
 private class RestartDaemonAction : DumbAwareAction(
-    "Restart daemon",
+    "Restart Daemon",
     "Restart the daemon service (xmake service --restart)",
-    com.intellij.icons.AllIcons.Actions.Rerun,
+    AllIcons.Actions.Rerun,
 ) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT

@@ -25,6 +25,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.util.ui.JBFont
@@ -118,13 +119,47 @@ class XMakeServiceDetailPanel(
 
     /** The state as a pill - the same badge language the packages page speaks, so one
      *  glance answers "is my build server up" in either panel. Rebuilt per render; the
-     *  full sentence rides the tooltip. */
+     *  full sentence reads as the subtitle under the title. */
     private val statusPill = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
+
+    /** The full status sentence under the title: what the pill's two words compress. */
+    private val statusSentence = JBLabel().apply {
+      foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+      setAllowAutoWrapping(true)
+    }
     private val endpointField = JBTextField(18).apply { emptyText.text = "host:port" }
     private val applyButton = JButton("Apply")
     private val clearButton = JButton("Clear")
     private val connectButton = JButton("Connect")
     private val disconnectButton = JButton("Disconnect")
+    private val reconnectButton = JButton("Reconnect")
+
+    /** The optional `--session` name the next Connect rides: a stable session id the
+     *  name derives, for a second connection to one daemon. Blank connects as usual;
+     *  the value is a connect-time option and is not persisted. */
+    private val sessionField = JBTextField(12).apply { emptyText.text = "optional" }
+
+    /** Whether a token is stored for the endpoint - the connect precondition, as a
+     *  fact on the page instead of a tooltip. */
+    private val tokenLabel = JBLabel()
+
+    /** The daemon verbs: server-side lifecycle, run through xmake like everything else. */
+    private val startButton = JButton("Start")
+    private val stopButton = JButton("Stop")
+    private val restartButton = JButton("Restart")
+
+    /** The file verbs: project sync to, and pulls from, the daemon; the xmake program
+     *  sync; and the clean that sweeps synced files off the daemon. */
+    private val syncButton = JButton("Sync Project")
+    private val pullButton = JButton("Pull from Daemon")
+    private val syncXmakeButton = JButton("Sync Xmake...")
+    private val cleanButton = JButton("Clean Files...")
+
+    /** The diagnostics verbs: the daemon's own logs and status view, printed into the
+     *  XMake console - the panel's state comes from the probe, these are the tool's
+     *  own words for cross-checking. */
+    private val logsButton = JButton("Show Logs")
+    private val statusButton = JButton("Raw Status")
 
     /** The kind-level connection the Connect/Disconnect verbs actually act on, spelled
      *  out beside them when it is not what this panel's field shows. */
@@ -140,7 +175,13 @@ class XMakeServiceDetailPanel(
     /** The last snapshot's state and the busy flag, so every control's enablement is
      *  recomputed from exactly what the probe allowed instead of guessed. */
     private var lastState: XMakeServiceState? = null
+    private var lastProbed = false
     private var busy = false
+
+    /** The annotation rows; hidden as rows, not as labels - a hidden label inside a grid
+     *  row still reserves the row's height, the panel's own version of an empty line. */
+    private var connectionTargetRow: Row? = null
+    private var hintRow: Row? = null
 
     /** The bus subscription, alive only while the panel sits on a component tree: the
      *  Services tree rebuilds its descriptors on every reset, and a retired panel must
@@ -149,13 +190,103 @@ class XMakeServiceDetailPanel(
 
     init {
         isOpaque = false
-        border = JBUI.Borders.empty(12, 16, 12, 16)
+        border = JBUI.Borders.empty(12, 16)
         // Rows live at the page's top, at their natural height: a BorderLayout NORTH
         // keeps the grid from stretching its rows over an otherwise empty pane.
         add(page(), BorderLayout.NORTH)
+
+        applyButton.addActionListener { applyEndpointField() }
+        clearButton.addActionListener {
+            project.xmakeServicesSnapshots.clearEndpoint(instanceName, kind)
+        }
+        connectButton.addActionListener {
+            // The instance's own record rides the connect: two instances of one kind
+            // connect to the addresses their nodes name, not to whichever was applied
+            // last. The session field rides along when the user named one.
+            project.xmakeServicesSnapshots.connectService(
+                kind,
+                project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(instanceName),
+                sessionField.text.trim().takeUnless { it.isEmpty() },
+            )
+        }
+        disconnectButton.addActionListener {
+            project.xmakeServicesSnapshots.disconnectService(kind)
+        }
+        reconnectButton.addActionListener {
+            project.xmakeServicesSnapshots.reconnectService(kind)
+        }
+        startButton.addActionListener { project.xmakeServicesSnapshots.startDaemon(kind) }
+        stopButton.addActionListener { project.xmakeServicesSnapshots.stopDaemon(kind) }
+        restartButton.addActionListener { project.xmakeServicesSnapshots.restartDaemon(kind) }
+        syncButton.addActionListener { project.xmakeServicesSnapshots.syncProject(kind) }
+        pullButton.addActionListener {
+            val path = com.intellij.openapi.ui.Messages.showInputDialog(
+                project,
+                "Pull which file or directory from the daemon?",
+                "Pull from ${kindName(kind)}",
+                null,
+            )?.trim().takeUnless { it.isNullOrEmpty() } ?: return@addActionListener
+            project.xmakeServicesSnapshots.pullFrom(kind, path)
+        }
+        syncXmakeButton.addActionListener {
+            val path = com.intellij.openapi.ui.Messages.showInputDialog(
+                project,
+                "Sync which xmake program directory to the daemon?",
+                "Sync Xmake Sources to ${kindName(kind)}",
+                null,
+            )?.trim().takeUnless { it.isNullOrEmpty() } ?: return@addActionListener
+            project.xmakeServicesSnapshots.syncXmakeSources(kind, path)
+        }
+        cleanButton.addActionListener {
+            // The sweep deletes files on the daemon's host, so the scope is chosen and
+            // confirmed here - the command itself only runs what was confirmed.
+            val scope = com.intellij.openapi.ui.Messages.showChooseDialog(
+                project,
+                "Which files should the ${kindName(kind)} daemon forget?",
+                "Clean Files",
+                com.intellij.util.ui.UIUtil.getQuestionIcon(),
+                arrayOf("This project's files", "Every project's files"),
+                "This project's files",
+            )
+            if (scope < 0) return@addActionListener
+            val all = scope == 1
+            val answer = com.intellij.openapi.ui.Messages.showYesNoDialog(
+                project,
+                if (all) {
+                    "Removes every project's synced files from the ${kindName(kind)} daemon. " +
+                        "The files stay on the machines that synced them."
+                } else {
+                    "Removes this project's synced files from the ${kindName(kind)} daemon. " +
+                        "The files stay on this machine."
+                },
+                "Clean Files",
+                com.intellij.util.ui.UIUtil.getWarningIcon(),
+            )
+            if (answer != com.intellij.openapi.ui.Messages.YES) return@addActionListener
+            project.xmakeServicesSnapshots.cleanFiles(kind, all)
+        }
+        logsButton.addActionListener { project.xmakeServicesSnapshots.showLogs(kind) }
+        statusButton.addActionListener { project.xmakeServicesSnapshots.showStatus(kind) }
+        // Enter in the field applies - the field is the primary input, the Apply button
+        // stays for mouse users.
+        endpointField.addActionListener { applyEndpointField() }
+        // Editing the field retires the red outline a refused apply left behind: the
+        // next apply is judged on its own text.
+        endpointField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(event: DocumentEvent) = clearEndpointError()
+            override fun removeUpdate(event: DocumentEvent) = clearEndpointError()
+            override fun changedUpdate(event: DocumentEvent) = clearEndpointError()
+
+            private fun clearEndpointError() {
+                endpointField.putClientProperty("JComponent.outline", null)
+            }
+        })
+        // Buttons start in their gated state; the first show() lands right after.
+        refreshEnabled()
     }
 
-    /** The page's one grid: the title with its pill, the endpoint editor, the connection
+    /** The page's one grid: the title with its pill and the full status under it, the
+     *  endpoint editor, the connection verbs, the token fact, the daemon and file
      *  verbs, and the two annotation rows. */
     private fun page(): JComponent = panel {
         row {
@@ -165,6 +296,9 @@ class XMakeServiceDetailPanel(
                 },
             ).align(AlignX.FILL)
             cell(statusPill)
+        }
+        row {
+            cell(statusSentence).align(AlignX.FILL)
         }
         row("Endpoint") {
             cell(endpointField).align(AlignX.FILL).apply {
@@ -179,11 +313,37 @@ class XMakeServiceDetailPanel(
         row("Connection") {
             cell(connectButton)
             cell(disconnectButton)
+            cell(reconnectButton)
         }
-        row {
+        row("Session") {
+            cell(sessionField).apply {
+                component.toolTipText =
+                    "Optional --session name for the next Connect: the name derives a stable session id, " +
+                        "so a second connection to one daemon does not reuse the first one's session"
+            }
+        }
+        row("Token") {
+            cell(tokenLabel)
+        }
+        row("Daemon") {
+            cell(startButton)
+            cell(stopButton)
+            cell(restartButton)
+        }
+        row("Files") {
+            cell(syncButton)
+            cell(pullButton)
+            cell(syncXmakeButton)
+            cell(cleanButton)
+        }
+        row("Diagnostics") {
+            cell(logsButton)
+            cell(statusButton)
+        }
+        connectionTargetRow = row {
             cell(connectionTargetLabel).align(AlignX.FILL)
         }
-        row {
+        hintRow = row {
             cell(hintLabel).align(AlignX.FILL)
         }
     }
@@ -193,18 +353,41 @@ class XMakeServiceDetailPanel(
      *  with [setBusy] - the last call wins, which is what the tab's render path does. */
     fun show(state: XMakeServiceState, probed: Boolean) {
         lastState = state
+        lastProbed = probed
         val word = state.shortStatus(probed)
         statusPill.removeAll()
         statusPill.add(Badge(word, serviceTone(state, probed)))
         statusPill.toolTipText = serviceStatusText(state, probed)
+        setWrappingText(statusSentence, serviceStatusText(state, probed))
         val ownEndpoint = project.getService(XMakeServiceEndpointsService::class.java)
             .configuredEndpoint(instanceName)
         if (!endpointField.isFocusOwner) {
             endpointField.text = ownEndpoint ?: state.endpoint ?: ""
         }
+        renderToken(state)
         renderHint(state)
         renderConnectionTarget(ownEndpoint)
         refreshEnabled()
+    }
+
+    /** The token fact: whether the endpoint on record has a stored token - the one
+     *  precondition Connect cannot satisfy from the IDE, so the page says where it
+     *  stands instead of leaving the reader to hit the balloon. */
+    private fun renderToken(state: XMakeServiceState) {
+        if (state.endpoint == null) {
+            tokenLabel.text = "-"
+            tokenLabel.toolTipText = null
+            return
+        }
+        if (state.tokenKnown) {
+            tokenLabel.text = "stored for ${state.endpoint}"
+            tokenLabel.toolTipText = null
+        } else {
+            tokenLabel.text = "not stored"
+            tokenLabel.toolTipText =
+                "Run `xmake service --connect --${kind.flag}` once in a terminal to store it " +
+                    "(server-side setup: `xmake service --add-user`, `xmake service --gen-token`)"
+        }
     }
 
     /** The busy gate's share: while an operation runs, every control is off. Between
@@ -255,7 +438,7 @@ class XMakeServiceDetailPanel(
         } else {
             com.intellij.util.ui.UIUtil.getLabelInfoForeground()
         }
-        hintLabel.parent?.isVisible = text.isNotEmpty()
+        hintRow?.visible(text.isNotEmpty())
         endpointField.putClientProperty(
             "JComponent.outline",
             if (message == XMakeServicesSnapshotService.ENDPOINT_INVALID_MESSAGE) "error" else null,
@@ -276,7 +459,7 @@ class XMakeServiceDetailPanel(
                     "Disconnect ends the connection it holds ($kindEndpoint)"
         }
         setWrappingText(connectionTargetLabel, text)
-        connectionTargetLabel.parent?.isVisible = text.isNotEmpty()
+        connectionTargetRow?.visible(text.isNotEmpty())
     }
 
     /** The apply verb sets what the field holds: a blank field would silently clear
@@ -300,9 +483,10 @@ class XMakeServiceDetailPanel(
         // The verbs stay on the page and say why they are off, the way the tree node's
         // toolbar actions do: a button that vanishes leaves the row jumping and the
         // reason unspoken.
-        connectButton.isEnabled = !busy && state?.endpoint != null && state?.connected != true
+        connectButton.isEnabled = !busy && lastProbed && state?.endpoint != null && state.connected != true
         connectButton.toolTipText = when {
             busy -> "Probing the build cache and service status..."
+            !lastProbed -> "Probe the services first - press Refresh in the toolbar"
             state == null -> "The status is unknown until a probe runs"
             state.connected -> "Connected - disconnect first"
             state.endpoint == null -> "Configure an endpoint before connecting"
@@ -315,6 +499,25 @@ class XMakeServiceDetailPanel(
             state.connected -> "Disconnect this service instance through xmake service"
             else -> "Not connected"
         }
+        reconnectButton.isEnabled = !busy && lastProbed
+        reconnectButton.toolTipText = when {
+            busy -> "Probing the build cache and service status..."
+            !lastProbed -> "Probe the services first - press Refresh in the toolbar"
+            else -> "Reconnect this service through xmake service --reconnect"
+        }
+        // The daemon, file, and diagnostics verbs run real xmake commands; their
+        // outcome is the command's own error, so the gate is only the busy lane - the
+        // same rule the node toolbar's actions apply.
+        startButton.isEnabled = !busy
+        stopButton.isEnabled = !busy
+        restartButton.isEnabled = !busy
+        syncButton.isEnabled = !busy
+        pullButton.isEnabled = !busy
+        syncXmakeButton.isEnabled = !busy
+        cleanButton.isEnabled = !busy
+        logsButton.isEnabled = !busy
+        statusButton.isEnabled = !busy
+        sessionField.isEnabled = !busy
     }
 
     override fun addNotify() {

@@ -303,11 +303,13 @@ enum class XMakeServiceVerb(internal val flag: String, internal val takesValue: 
 
 /** The `xmake service` kinds. The remote cache answers to xmake's `--ccache` flag, and
  *  [statusDir] is the directory name its client persists its status under (which is also
- *  the kind name the bundled probeservices.lua script reports). */
-enum class XMakeServiceKind(internal val flag: String, internal val statusDir: String) {
-    REMOTE_BUILD("remote", "remote_build"),
-    DISTCC_BUILD("distcc", "distcc_build"),
-    REMOTE_CACHE("ccache", "remote_cache"),
+ *  the kind name the bundled probeservices.lua script reports). [defaultPort] is the
+ *  daemon port xmake's own client.conf defaults to (client_config.lua, verified against
+ *  the generated conf files) - the endpoint a new instance starts from. */
+enum class XMakeServiceKind(internal val flag: String, internal val statusDir: String, val defaultPort: Int) {
+    REMOTE_BUILD("remote", "remote_build", 9691),
+    DISTCC_BUILD("distcc", "distcc_build", 9693),
+    REMOTE_CACHE("ccache", "remote_cache", 9692),
 }
 
 @CliDsl

@@ -20,7 +20,6 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
-import io.xmake.utils.cli.XMakeServiceKind
 
 /** What an editable service endpoint may look like: `addr:port` with a numeric port,
  *  the one shape xmake's own client accepts in client.conf (`socket.connect` splits on
@@ -60,7 +59,8 @@ object XMakeServiceEndpointFormat {
 class XMakeServiceEndpointsService : PersistentStateComponent<XMakeServiceEndpointsService.State> {
 
     class State {
-        /** Keyed by [XMakeServiceKind.name]; XmlSerializer round-trips the string map. */
+        /** Keyed by the service kind's name for kind-level entries, by the instance's
+         *  name for tree instances; XmlSerializer round-trips the string map. */
         var endpoints: MutableMap<String, String> = mutableMapOf()
     }
 
