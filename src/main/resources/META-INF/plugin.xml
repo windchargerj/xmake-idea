@@ -246,6 +246,18 @@
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
             <reference ref="XMake.CheckClangTidy"/>
         </group>
+
+        <!-- The sanitizer's entry in the Run menu: the selected XMake configuration turns
+             into a sanitizer configuration of the picked kind and starts. The type split
+             moved the kind out of the plain configuration's editor, so this is where the
+             "run it under a sanitizer" intent lives. -->
+        <group id="XMake.RunWithSanitizer"
+               class="io.xmake.run.sanitizer.RunWithSanitizerGroup"
+               popup="true"
+               text="Run with Sanitizer"
+               description="Instrument the selected XMake configuration with a sanitizer and run it">
+            <add-to-group group-id="RunMenu" anchor="last"/>
+        </group>
     </actions>
 
     <projectListeners>
