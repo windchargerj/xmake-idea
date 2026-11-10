@@ -158,8 +158,11 @@ internal class AnalysisService(private val project: Project) {
 
     /**
      * Publishes [report] and narrates it the way both producing runs did: the console line
-     * that says what was found and points at the view, and the view itself - shown, not
-     * activated, so a rerun landing while the user works elsewhere never steals focus.
+     * that says what was found and points at the view, and the view itself - brought to
+     * the front when the run found something, the way the valgrind panel is. The run was
+     * started to see its findings; leaving them behind another tool window makes the user
+     * hunt for the result they asked for. A clean run stays where it is: the console
+     * already says so, and an empty view would only interrupt.
      * Runs on the EDT hop; [console] is optional because a sanitized run may have none.
      */
     fun publishAndNarrate(report: AnalysisReport, console: XMakeConsole?, sourceLabel: String) {
@@ -178,7 +181,7 @@ internal class AnalysisService(private val project: Project) {
             if (report.issues.isNotEmpty()) {
                 ToolWindowManager.getInstance(project)
                     .getToolWindow(ANALYSIS_TOOL_WINDOW_ID)
-                    ?.show()
+                    ?.activate(null)
             }
         }
     }
