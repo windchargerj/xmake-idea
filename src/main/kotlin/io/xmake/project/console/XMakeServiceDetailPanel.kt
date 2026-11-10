@@ -20,9 +20,12 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -31,8 +34,8 @@ import io.xmake.utils.cli.XMakeServiceKind
 import io.xmake.utils.ui.Badge
 import java.awt.BorderLayout
 import java.awt.Dimension
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
+import java.awt.FlowLayout
+import java.awt.Font
 import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -94,6 +97,12 @@ internal fun serviceStatusIcon(state: XMakeServiceState, probed: Boolean): Icon 
  * tool window's tab embeds one per kind, and the platform Services contributor shows
  * the selected node's instance in its detail pane.
  *
+ * The page is built on the platform's own DSL, the same grid the settings page uses:
+ * the title row carries the instance's name and its status pill at the far edge, and
+ * the Endpoint and Connection rows share one label column, so fields and verbs line up
+ * down the page instead of each row starting wherever its caption ended. Long
+ * annotations wrap to the pane's width rather than clipping at its edge.
+ *
  * The panel is a plain view: it renders the state its owner pushes via [show], re-renders
  * itself on every [XMakeServicesSnapshotService.TOPIC] event so an action's result is
  * visible where the action happened, and every button forwards to
@@ -107,15 +116,10 @@ class XMakeServiceDetailPanel(
     val instanceName: String = kind.name,
 ) : JPanel(BorderLayout()), Disposable {
 
-    /** The rows live in their own grid, anchored to the top of the pane: a GridBag in a
-     *  BorderLayout's NORTH keeps its own height instead of floating in the middle of an
-     *  otherwise empty page. */
-    private val rows = JPanel(GridBagLayout())
-
     /** The state as a pill - the same badge language the packages page speaks, so one
      *  glance answers "is my build server up" in either panel. Rebuilt per render; the
      *  full sentence rides the tooltip. */
-    private val statusPill = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
+    private val statusPill = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
     private val endpointField = JBTextField(18).apply { emptyText.text = "host:port" }
     private val applyButton = JButton("Apply")
     private val clearButton = JButton("Clear")
@@ -126,8 +130,12 @@ class XMakeServiceDetailPanel(
      *  out beside them when it is not what this panel's field shows. */
     private val connectionTargetLabel = JBLabel().apply {
         foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+        setAllowAutoWrapping(true)
     }
-    private val hintLabel = JBLabel()
+    private val hintLabel = JBLabel().apply {
+        foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
+        setAllowAutoWrapping(true)
+    }
 
     /** The last snapshot's state and the busy flag, so every control's enablement is
      *  recomputed from exactly what the probe allowed instead of guessed. */
@@ -142,109 +150,42 @@ class XMakeServiceDetailPanel(
     init {
         isOpaque = false
         border = JBUI.Borders.empty(12, 16, 12, 16)
-        rows.isOpaque = false
-        add(rows, BorderLayout.NORTH)
-
-        // Row 0: the summary line - name and the state beside it. The instance name
-        // rides the title: two instances of one kind must read apart here the way
-        // their tree nodes do. The full state sentence rides the tooltip.
-        addRow(
-            0,
-            JBLabel("${kindName(kind)} - $instanceName")
-                .apply { font = JBFont.label().biggerOn(2f).deriveFont(java.awt.Font.BOLD) },
-            statusPill,
-        )
-
-        // Row 1: what the kind needs, captioned, then the controls on one line - the
-        // field a field's width, the buttons at their natural size.
-        addRow(1, caption("Endpoint"), endpointField.apply {
-            preferredSize = Dimension(JBUI.scale(260), preferredSize.height)
-            // Narrow details panes shrink the field instead of clipping the row's
-            // buttons away.
-            minimumSize = Dimension(JBUI.scale(120), minimumSize.height)
-        }, applyButton, clearButton)
-
-        // Row 2: the connection verbs, mutually exclusive in enablement as before,
-        // plus the annotation of the kind-level connection they act on when this
-        // instance's own endpoint record is not it.
-        addRow(2, caption("Connection"), connectButton, disconnectButton, connectionTargetLabel)
-
-        // Row 3: what the last action produced or the connection is missing; the row
-        // hides itself when empty.
-        hintLabel.foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
-        addRow(3, hintLabel)
-
-        applyButton.addActionListener { applyEndpointField() }
-        clearButton.addActionListener {
-            project.xmakeServicesSnapshots.clearEndpoint(instanceName, kind)
-        }
-        connectButton.addActionListener {
-            // The instance's own record rides the connect: two instances of one kind
-            // connect to the addresses their nodes name, not to whichever was applied
-            // last.
-            project.xmakeServicesSnapshots.connectService(
-                kind,
-                project.getService(XMakeServiceEndpointsService::class.java).configuredEndpoint(instanceName),
-            )
-        }
-        disconnectButton.addActionListener {
-            project.xmakeServicesSnapshots.disconnectService(kind)
-        }
-        // Enter in the field applies - the field is the primary input, the Apply button
-        // stays for mouse users.
-        endpointField.addActionListener { applyEndpointField() }
-        // Editing the field retires the red outline a refused apply left behind: the
-        // next apply is judged on its own text.
-        endpointField.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(event: DocumentEvent) = clearEndpointError()
-            override fun removeUpdate(event: DocumentEvent) = clearEndpointError()
-            override fun changedUpdate(event: DocumentEvent) = clearEndpointError()
-
-            private fun clearEndpointError() {
-                endpointField.putClientProperty("JComponent.outline", null)
-            }
-        })
+        // Rows live at the page's top, at their natural height: a BorderLayout NORTH
+        // keeps the grid from stretching its rows over an otherwise empty pane.
+        add(page(), BorderLayout.NORTH)
     }
 
-    /** A caption in the label's gray, the same rule the details pages use for theirs. */
-    private fun caption(text: String): JComponent = JBLabel(text).apply {
-        foreground = com.intellij.util.ui.UIUtil.getLabelInfoForeground()
-        preferredSize = Dimension(JBUI.scale(84), preferredSize.height)
-    }
-
-    private fun addRow(row: Int, vararg components: JComponent) {
-        val constraints = GridBagConstraints().apply {
-            gridy = row
-            gridx = 0
-            weightx = 1.0
-            anchor = GridBagConstraints.WEST
-            // A summary line keeps its own height; control rows stretch across the page.
-            fill = if (row == 0) GridBagConstraints.NONE else GridBagConstraints.HORIZONTAL
-            // Rows own only their top gap: one rhythm of 8px between every line,
-            // instead of the doubled 16px side insets added up to.
-            insets = JBUI.insetsTop(if (row == 0) 0 else 8)
-        }
-        val line = JPanel(GridBagLayout()).apply { isOpaque = false }
-        components.forEachIndexed { index, component ->
-            line.add(
-                component,
-                GridBagConstraints().apply {
-                    gridx = index
-                    anchor = GridBagConstraints.WEST
-                    // The endpoint field is the one stretchable cell: it yields width
-                    // when the pane is narrow, so the row's buttons stay visible.
-                    if (component === endpointField) {
-                        fill = GridBagConstraints.HORIZONTAL
-                        weightx = 1.0
-                    } else {
-                        fill = GridBagConstraints.NONE
-                        weightx = 0.0
-                    }
-                    insets = JBUI.insetsRight(if (index == 0) 10 else 6)
+    /** The page's one grid: the title with its pill, the endpoint editor, the connection
+     *  verbs, and the two annotation rows. */
+    private fun page(): JComponent = panel {
+        row {
+            cell(
+                JBLabel("${kindName(kind)} - $instanceName").apply {
+                    font = JBFont.label().biggerOn(2f).deriveFont(Font.BOLD)
                 },
-            )
+            ).align(AlignX.FILL)
+            cell(statusPill)
         }
-        rows.add(line, constraints)
+        row("Endpoint") {
+            cell(endpointField).align(AlignX.FILL).apply {
+                component.preferredSize = Dimension(JBUI.scale(260), component.preferredSize.height)
+                // Narrow details panes shrink the field instead of clipping the row's
+                // buttons away.
+                component.minimumSize = Dimension(JBUI.scale(120), component.minimumSize.height)
+            }
+            cell(applyButton)
+            cell(clearButton)
+        }
+        row("Connection") {
+            cell(connectButton)
+            cell(disconnectButton)
+        }
+        row {
+            cell(connectionTargetLabel).align(AlignX.FILL)
+        }
+        row {
+            cell(hintLabel).align(AlignX.FILL)
+        }
     }
 
     /** Renders one probe result. A focused endpoint field keeps the user's typing: the
@@ -302,18 +243,19 @@ class XMakeServiceDetailPanel(
         // the status message's failure flag spells out.
         val refused = message == XMakeServicesSnapshotService.ENDPOINT_INVALID_MESSAGE ||
             message == SELECT_BUILD_PROFILE_FIRST
-        hintLabel.text = when {
+        val text = when {
             failed || refused -> message ?: ""
             state.endpoint == null -> "Set an endpoint first - connecting needs one"
             state.tokenKnown -> ""
             else -> "No token is stored for this endpoint - run `xmake service --connect --${kind.flag}` once in a terminal"
         }
+        setWrappingText(hintLabel, text)
         hintLabel.foreground = if (failed || refused) {
             JBColor.RED
         } else {
             com.intellij.util.ui.UIUtil.getLabelInfoForeground()
         }
-        hintLabel.parent?.isVisible = hintLabel.text.isNotEmpty()
+        hintLabel.parent?.isVisible = text.isNotEmpty()
         endpointField.putClientProperty(
             "JComponent.outline",
             if (message == XMakeServicesSnapshotService.ENDPOINT_INVALID_MESSAGE) "error" else null,
@@ -327,13 +269,14 @@ class XMakeServiceDetailPanel(
     private fun renderConnectionTarget(ownEndpoint: String?) {
         val kindEndpoint = project.serviceOrNull<XMakeServicesSnapshotService>()
             ?.snapshot?.services?.get(kind)?.endpoint
-        connectionTargetLabel.text = when {
+        val text = when {
             ownEndpoint == null || kindEndpoint == null || kindEndpoint == ownEndpoint -> ""
             else ->
                 "Connect points the shared ${kindName(kind)} connection at this instance's $ownEndpoint first; " +
                     "Disconnect ends the connection it holds ($kindEndpoint)"
         }
-        connectionTargetLabel.isVisible = connectionTargetLabel.text.isNotEmpty()
+        setWrappingText(connectionTargetLabel, text)
+        connectionTargetLabel.parent?.isVisible = text.isNotEmpty()
     }
 
     /** The apply verb sets what the field holds: a blank field would silently clear
@@ -394,4 +337,14 @@ class XMakeServiceDetailPanel(
     }
 
     override fun dispose() {}
+}
+
+/**
+ * Writes [text] into a wrapping label: HTML makes the platform measure the words at the
+ * pane's width instead of clipping the tail, and the label keeps the plain text as its
+ * tooltip so a fully wrapped caption still reads in one line.
+ */
+internal fun setWrappingText(label: JBLabel, text: String) {
+    label.text = if (text.isEmpty()) "" else "<html>${StringUtil.escapeXmlEntities(text)}</html>"
+    label.toolTipText = text.ifEmpty { null }
 }

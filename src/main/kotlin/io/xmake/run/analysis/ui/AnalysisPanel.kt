@@ -137,6 +137,12 @@ internal class AnalysisPanel(
         margin = JBUI.insets(0, 12, 0, 0)
     }
 
+    /** The details pane's heading: the selection's location, so the lower half says which
+     *  finding it reports once the table above scrolled away from the row. */
+    private val detailsHeading = JBLabel(DETAILS_TITLE).apply {
+        border = JBUI.Borders.empty(8, 12, 4, 8)
+    }
+
     /** The component the tool window focuses when it activates: the findings table, so
      *  the keyboard flow - walk the findings, jump to source - starts without a mouse
      *  click first. */
@@ -346,16 +352,20 @@ internal class AnalysisPanel(
             }
         }.installOn(treeTable)
         treeTable.tree.addTreeSelectionListener {
-            when (val node = treeTable.tree.lastSelectedPathComponent) {
-                is IssueNode -> showDetails(renderDetails(node.issue))
+            val node = treeTable.tree.lastSelectedPathComponent as? DefaultMutableTreeNode
+            when (node) {
+                is IssueNode -> showDetails(renderDetails(node.issue), node.issue)
                 // The raw stderr lines a parser never consumed: the details pane is where
                 // they read verbatim, the tree row only carries a clipped preview.
                 is UnparsedGroupNode -> showDetails(node.lines.joinToString("\n"))
                 is UnparsedLineNode -> showDetails(node.line)
                 // A stack or frame row shows its finding's report too - the ancestor
                 // issue's - so reading the frames never blanks the pane they belong to.
-                is DefaultMutableTreeNode ->
-                    showDetails(node.owningIssue()?.let { renderDetails(it.issue) })
+                is DefaultMutableTreeNode -> {
+                    val issue = node.owningIssue()?.issue
+                    showDetails(issue?.let(::renderDetails), issue)
+                }
+
                 else -> showDetails(null)
             }
         }
@@ -392,9 +402,11 @@ internal class AnalysisPanel(
         )
 
         toolbar = toolbarActions.component
-        // The Problems view's shape: the findings above, the selected one's report below,
-        // the split remembered between sessions.
-        val split = OnePixelSplitter(true, SPLIT_KEY, 0.72f).apply {
+        // The platform's Problems view: the findings beside the selected one's report,
+        // not stacked above it - the bottom tool window is wide and short, and a
+        // left/right split gives both halves a readable width. The split is remembered
+        // between sessions.
+        val split = OnePixelSplitter(false, SPLIT_KEY, 0.62f).apply {
             firstComponent = ScrollPaneFactory.createScrollPane(treeTable, true)
             secondComponent = detailsPanel()
         }
@@ -442,7 +454,7 @@ internal class AnalysisPanel(
     }
 
     private fun detailsPanel(): JComponent = JBUI.Panels.simplePanel().apply {
-        addToTop(JBLabel("Details").apply { border = JBUI.Borders.empty(8, 12, 4, 8) })
+        addToTop(detailsHeading)
         addToCenter(ScrollPaneFactory.createScrollPane(details, true).apply { border = JBUI.Borders.empty() })
     }
 
@@ -845,8 +857,15 @@ internal class AnalysisPanel(
     }
 
     /** The details pane's one write path: a finding's own words, or - [text] null, when
-     *  nothing is selected - the gray placeholder that names what the pane is for. */
-    private fun showDetails(text: String?) {
+     *  nothing is selected - the gray placeholder that names what the pane is for. The
+     *  heading follows the selection: the finding's file and line while a row is chosen,
+     *  the bare title otherwise. */
+    private fun showDetails(text: String?, issue: AnalysisIssue? = null) {
+        detailsHeading.text = issue?.primaryFrame?.let { frame ->
+            frame.file?.let { file ->
+                "Details - ${File(file).name}${frame.line?.let { line -> ":$line" } ?: ""}"
+            }
+        } ?: DETAILS_TITLE
         if (text == null) {
             details.text = DETAILS_HINT
             details.foreground = SimpleTextAttributes.GRAYED_ATTRIBUTES.fgColor
@@ -1227,6 +1246,9 @@ internal class AnalysisPanel(
 
         /** The details pane's words when no row is selected: what the pane is for. */
         private const val DETAILS_HINT = "Select a finding to see its report"
+
+        /** The details heading's bare form; the selection adds the finding's location. */
+        private const val DETAILS_TITLE = "Details"
 
         /** The legend's severity colors: the platform's label error/warning foregrounds,
          *  theme-aware like the commit legend's own file-status attributes. */
