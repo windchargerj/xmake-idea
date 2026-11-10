@@ -17,31 +17,13 @@
 package io.xmake.debug.clion.valgrind
 
 import com.intellij.execution.ui.ConsoleView
-import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
 
 /**
  * The door to CLion's own Valgrind results panel: the panel, its tree, the console wrapper and
- * the data model live in CLion's memory profiling module, whose classes only a plugin that
- * depends on CLion can see. The factory is contributed through this module's own extension
- * point; where CLion does not provide the panel, [open] returns null and the run presents its
- * findings in the console instead.
- */
-interface XMakeValgrindNativeSessionFactory {
-
-    /** Opens the native session for a run, or returns null when it is not available. */
-    fun open(project: Project): XMakeValgrindNativeSession?
-
-    companion object {
-        @JvmField
-        val EP = ExtensionPointName<XMakeValgrindNativeSessionFactory>("xmake-idea.clion.valgrindNativeSession")
-    }
-}
-
-/**
- * A native results session opened for one run: the panel and its model exist from the start of
- * the run and are filled while it runs, so the results follow the tool the way the native
- * runner's do.
+ * the data model live in CLion's memory profiling module, whose classes are reached through
+ * CLion's own class loader. Where CLion does not provide the panel, the factory answers null
+ * and the run presents its findings in the console instead.
  */
 interface XMakeValgrindNativeSession {
 
@@ -60,12 +42,10 @@ interface XMakeValgrindNativeSession {
     fun addNewErrors(errors: List<XMakeValgrindError>, toLocalPath: (String) -> String)
 }
 
-/** The first native session the installed modules can provide, or null. A factory that
- *  fails says so in the log; the next one, or the fallback panel, takes over. */
+/**
+ * Opens the native session for a run, or null where this CLion cannot provide it. The call is
+ * direct because both ends live in this module; the factory already answers every absence -
+ * a CLion without the memory profiling module, an API that moved - with null and a log line.
+ */
 internal fun openXMakeValgrindNativeSession(project: Project): XMakeValgrindNativeSession? =
-    XMakeValgrindNativeSessionFactory.EP.extensionList.firstNotNullOfOrNull { factory ->
-        runCatching { factory.open(project) }.onFailure { error ->
-            com.intellij.openapi.diagnostic.Logger.getInstance("io.xmake.run.valgrind")
-                .warn("A native Valgrind session factory failed; falling back", error)
-        }.getOrNull()
-    }
+    ClionValgrindNativeSessionFactory.open(project)

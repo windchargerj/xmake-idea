@@ -12,14 +12,9 @@
         <plugin id="com.intellij.modules.profiler"/>
     </dependencies>
 
-    <!-- The native Valgrind results UI, behind this module's own extension point: the API and
-         its implementation both live here, and a CLion without the memory profiling module
-         answers through the factory's null return instead. -->
-    <extensionPoints>
-        <extensionPoint name="valgrindNativeSession"
-                        interface="io.xmake.debug.clion.valgrind.XMakeValgrindNativeSessionFactory"/>
-    </extensionPoints>
-
+    <!-- The native Valgrind results UI: the API and its implementation both live here, and a
+         CLion without the memory profiling module answers through the factory's null return
+         instead. No extension point: the only contributor would be this module itself. -->
     <extensions defaultExtensionNs="io.xmake">
         <debugSupport implementation="io.xmake.debug.clion.ClionDebugSupport"/>
         <analysisSupport implementation="io.xmake.debug.clion.ClionAnalysisSupport"/>
@@ -27,10 +22,6 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <postStartupActivity implementation="io.xmake.debug.XMakeCompDBAutoLinkActivity"/>
-    </extensions>
-
-    <extensions defaultExtensionNs="xmake-idea.clion">
-        <valgrindNativeSession implementation="io.xmake.debug.clion.valgrind.ClionValgrindNativeSessionFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij.profiler.api">

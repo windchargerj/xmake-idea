@@ -16,6 +16,7 @@
  */
 package io.xmake.debug.clion.valgrind
 
+import com.intellij.execution.ExecutorRegistry
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
@@ -26,7 +27,6 @@ import com.intellij.openapi.project.Project
 import io.xmake.debug.clion.valgrind.XMakeValgrindError
 import io.xmake.debug.clion.valgrind.XMakeValgrindFrame
 import io.xmake.debug.clion.valgrind.XMakeValgrindNativeSession
-import io.xmake.debug.clion.valgrind.XMakeValgrindNativeSessionFactory
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import javax.swing.Icon
@@ -48,23 +48,24 @@ import javax.swing.Icon
  * configuration, which an xmake project does not have, and the environment only ever maps the
  * paths of frames, which the run's own toolkit mapping does instead.
  */
-class ClionValgrindNativeSessionFactory : XMakeValgrindNativeSessionFactory {
+object ClionValgrindNativeSessionFactory {
 
-    override fun open(project: Project): XMakeValgrindNativeSession? = runCatching {
+    /** Opens the native session for a run, or null where this CLion cannot provide it. */
+    fun open(project: Project): XMakeValgrindNativeSession? = runCatching {
         // The panel installs its context menu from this action group, registered by the memory
         // profiling module itself; without it the native path is not usable.
-        if (ActionManager.getInstance().getAction(TREE_POPUP_ID) == null) return null
+        if (ActionManager.getInstance().getAction(TREE_POPUP_ID) == null) {
+            Log.warn("The native Valgrind tree popup action $TREE_POPUP_ID is not registered")
+            return null
+        }
         val native = NativeMemoryProfileClasses.load() ?: return null
         ClionValgrindNativeSession(project, native)
     }.onFailure { error ->
         Log.warn("The native Valgrind panel is unavailable; using the platform-only panel", error)
-    }.getOrNull()
+    }.getOrNull()?.also { Log.info("Opened the native Valgrind results panel") }
 
-    private companion object {
-        private val Log = Logger.getInstance(ClionValgrindNativeSessionFactory::class.java)
-
-        private const val TREE_POPUP_ID = "ValgrindToolWindow.TreePopup"
-    }
+    private val Log = Logger.getInstance(ClionValgrindNativeSessionFactory::class.java)
+    private const val TREE_POPUP_ID = "ValgrindToolWindow.TreePopup"
 }
 
 /** One run's native session: the model, the panel and the console wrapper, opened together. */
@@ -195,6 +196,8 @@ private class NativeMemoryProfileClasses private constructor(
 
     companion object {
 
+        private val Log = Logger.getInstance(NativeMemoryProfileClasses::class.java)
+
         private const val PROFILER_NAME = "Valgrind"
 
         private const val TREE_POPUP_ID = "ValgrindToolWindow.TreePopup"
@@ -203,14 +206,25 @@ private class NativeMemoryProfileClasses private constructor(
         private val PANEL_ICON = AllIcons.Actions.StartMemoryProfile
 
         /**
-         * The classes of the memory profiling module, in the loader of the plugin that ships
-         * them; null where that plugin or its classes are absent. The tree popup action the
-         * panel needs is registered by that same plugin, so the action's own class carries the
-         * right loader here, without reaching for internal plugin manager APIs.
+         * The classes of the memory profiling module, resolved in the loader that ships them;
+         * null where that module or its classes are absent.
+         *
+         * The loader is taken from CLion's own Valgrind executor, a class of the same module
+         * jar as the panel. The tree popup action cannot serve that role: it is declared as an
+         * action group without a class, so the platform builds it with the core loader, which
+         * cannot see plugin modules - reflection through it fails with ClassNotFoundException
+         * even though the panel classes are right there.
          */
         fun load(): NativeMemoryProfileClasses? {
-            val action = ActionManager.getInstance().getAction(TREE_POPUP_ID) ?: return null
-            val loader = action.javaClass.classLoader
+            // The popup group is the panel's context menu; without it the panel is unusable.
+            if (ActionManager.getInstance().getAction(TREE_POPUP_ID) == null) {
+                Log.warn("The native Valgrind tree popup action $TREE_POPUP_ID is not registered")
+                return null
+            }
+            val loader = ExecutorRegistry.getInstance()
+                .getExecutorById(VALGRIND_EXECUTOR_ID)
+                ?.javaClass?.classLoader
+                ?: return null
             return runCatching {
                 NativeMemoryProfileClasses(
                     modelClass = forName(loader, MEMORY + "MemoryProfileTreeDataModel"),
@@ -222,10 +236,17 @@ private class NativeMemoryProfileClasses private constructor(
                     settingsActionClass = forName(loader, VALGRIND + "actions.EditValgrindSettingsAction"),
                     consoleWrapperClass = forName(loader, MEMORY + "MemoryProfileConsoleViewWrapper"),
                 )
+            }.onFailure { error ->
+                // The panel is a presentation of the results, never a precondition: a CLion
+                // that moved the API falls back to the console, and the cause stays named.
+                Log.warn("The native memory profiling classes are unavailable in this CLion", error)
             }.getOrNull()
         }
 
         private fun forName(loader: ClassLoader, name: String): Class<*> = Class.forName(name, true, loader)
+
+        /** CLion's Valgrind executor id; its implementation lives in the memory profiling module. */
+        private const val VALGRIND_EXECUTOR_ID = "Valgrind"
 
         private const val MEMORY = "com.intellij.cidr.profiling.memory."
 
