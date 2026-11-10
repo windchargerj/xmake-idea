@@ -39,6 +39,7 @@ import io.xmake.project.directory.ui.DirectoryBrowser
 import io.xmake.project.toolkit.Toolkit
 import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.run.sanitizer.SanitizerKind
+import io.xmake.run.sanitizer.XMakeSanitizerRunConfigurationType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -72,6 +73,10 @@ class XMakeRunConfigurationEditor(
 
     /** Rewrites the sanitizer row's comment; wired to the real line in [createEditor]. */
     private var sanitizerComment: (String) -> Unit = {}
+
+    /** The sanitizer row, shown only for sanitizer-type configurations: the main XMake
+     *  configuration runs the target plain, and its editor carries no sanitizer MCQ. */
+    private var sanitizerRow: com.intellij.ui.dsl.builder.Row? = null
 
     private val useDapDriver = JBCheckBox(
         "Use an external DAP driver instead of CLion's active debug profile",
@@ -165,6 +170,7 @@ class XMakeRunConfigurationEditor(
             launchWorkingDirectory.text = configuration.launchWorkingDirectory
             environmentVariables.envData = configuration.runEnvironment
             emulateTerminalInConsole.isSelected = configuration.emulateTerminalInConsole
+            sanitizerRow?.visible(configuration.type is XMakeSanitizerRunConfigurationType)
             sanitizerKind.selectedItem = SanitizerKind.entries
                 .firstOrNull { it.name == configuration.sanitizerKind }?.displayName ?: NO_SANITIZER
             useDapDriver.isSelected = configuration.useDapDriver
@@ -187,8 +193,12 @@ class XMakeRunConfigurationEditor(
         configuration.launchWorkingDirectory = launchWorkingDirectory.text
         configuration.runEnvironment = environmentVariables.envData
         configuration.emulateTerminalInConsole = emulateTerminalInConsole.isSelected
-        configuration.sanitizerKind = SanitizerKind.entries
-            .firstOrNull { it.displayName == sanitizerKind.selectedItem }?.name.orEmpty()
+        // The kind is the sanitizer type's field: the plain configuration's editor hides
+        // the row and writes nothing, so opening a plain editor never authors a kind.
+        if (configuration.type is XMakeSanitizerRunConfigurationType) {
+            configuration.sanitizerKind = SanitizerKind.entries
+                .firstOrNull { it.displayName == sanitizerKind.selectedItem }?.name.orEmpty()
+        }
         configuration.useDapDriver = useDapDriver.isSelected
         configuration.dapDriverAutoDetect = dapDriverAutoDetect.isSelected
         configuration.dapDriverPath = dapDriverPath.text
@@ -216,7 +226,7 @@ class XMakeRunConfigurationEditor(
             cell(emulateTerminalInConsole)
         }
 
-        row("Sanitizer:") {
+        sanitizerRow = row("Sanitizer:") {
             sanitizerComment = cell(sanitizerKind).align(AlignX.FILL).mutableComment(SANITIZER_ROW_COMMENT)
         }
 

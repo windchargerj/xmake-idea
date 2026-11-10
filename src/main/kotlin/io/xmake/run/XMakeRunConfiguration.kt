@@ -92,8 +92,10 @@ class XMakeRunConfiguration(
 
     /**
      * The sanitizer the run instruments with, as a [io.xmake.run.sanitizer.SanitizerKind]
-     * name; empty runs the target plain. A sanitized run configures and rebuilds with the
-     * sanitizer's xmake mode, then presents the runtime's findings in the analysis view.
+     * name; empty runs the target plain. Only configurations of the sanitizer type read
+     * this field - the plain XMake configuration runs plain even when older XML still
+     * carries a chosen kind. A sanitized run configures and rebuilds with the sanitizer's
+     * xmake mode, then presents the runtime's findings in the analysis view.
      */
     @OptionTag(tag = "sanitizerKind")
     var sanitizerKind: String = ""

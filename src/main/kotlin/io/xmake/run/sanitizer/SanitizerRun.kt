@@ -38,9 +38,14 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** The sanitizer a configuration selected, or null for a plain run. */
+/**
+ * The sanitizer a configuration of the sanitizer type selected, or null: the plain XMake
+ * configuration runs plain even if its XML still carries a chosen kind from before the
+ * sanitizer became a configuration type of its own.
+ */
 internal val XMakeRunConfiguration.sanitizer: SanitizerKind?
-    get() = sanitizerKind.takeIf(String::isNotEmpty)
+    get() = if (type !is XMakeSanitizerRunConfigurationType) null
+    else sanitizerKind.takeIf(String::isNotEmpty)
         ?.let { selected -> SanitizerKind.entries.firstOrNull { it.name == selected } }
 
 /**
