@@ -95,6 +95,11 @@ class XMakeCoverageRunner : CoverageRunner() {
         val gcdaFiles = root.walkTopDown().filter { it.extension == "gcda" }.toList()
         if (gcdaFiles.isEmpty()) {
             Log.info("No gcda files found under $root")
+            errorReporter.reportError(
+                "The build directory holds no coverage data files (.gcda) - the target run left no data " +
+                        "to read back. A build directory that moved or was copied with the project writes " +
+                        "beside its old recorded paths; delete the build directory and run coverage again.",
+            )
             return
         }
         val distribution = toolkit

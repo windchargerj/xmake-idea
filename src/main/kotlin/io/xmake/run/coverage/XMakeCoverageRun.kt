@@ -232,10 +232,28 @@ private suspend fun attachSuiteBeforeRun(configuration: XMakeRunConfiguration, d
 /**
  * Activates the suite that [attachSuiteBeforeRun] created. Called once the target process has
  * exited; this is what the platform's CMake coverage path does after its composer has run.
+ *
+ * A target whose data never reached the build directory is stopped before the platform gather:
+ * gathering would activate the attached suite anyway and open an empty coverage view under a
+ * "data collected" line, which is exactly the silence a moved project produces - its stale
+ * `.gcno` notes record the old absolute paths, the runtimes write the data beside them, and
+ * this run's directory walk never looks there. One line says what happened and what clears it.
  */
-internal fun reportCoverageData(configuration: XMakeRunConfiguration, console: XMakeConsole) {
+internal fun reportCoverageData(
+    configuration: XMakeRunConfiguration,
+    environment: ExecutionEnvironment,
+    console: XMakeConsole,
+) {
     val project = configuration.project
     if (project.isDisposed) return
+
+    val profile = project.requireXMakeBuildProfileFor(environment.executionTarget)
+    val dataRoot = coverageDataRoot(project, profile)
+    if (!hasCoverageData(dataRoot)) {
+        console.print(missingCoverageDataMessage(dataRoot), ConsoleViewContentType.ERROR_OUTPUT)
+        Log.info("Coverage data missing after the run (root=${dataRoot?.path})")
+        return
+    }
 
     // The two-argument overload only acts when the settings are CoverageRunnerData; it is the
     // gate the platform uses to tell coverage runs apart, and passing null makes it a no-op.
@@ -262,6 +280,24 @@ internal fun reportCoverageData(configuration: XMakeRunConfiguration, console: X
         Log.info("Coverage suite activated (bundle present=${bundle != null})")
     }
 }
+
+/** Whether the build directory holds at least one `.gcda` file: the minimum a coverage
+ *  report can be read back from. */
+internal fun hasCoverageData(dataRoot: File?): Boolean =
+    dataRoot?.walkTopDown()?.any { it.isFile && it.extension == GCDA_EXTENSION } ?: false
+
+/**
+ * The message for a run whose target exited without leaving any `.gcda` under [dataRoot].
+ * The stale-instrumentation cause leads: a build directory that moved or was copied with the
+ * project keeps `.gcno` notes recording the old absolute paths, and the runtimes write the
+ * data beside them, where this run's walk never looks.
+ */
+internal fun missingCoverageDataMessage(dataRoot: File?): String =
+    "The target ran, but the build directory ${dataRoot?.path ?: ""} holds no coverage data files " +
+        "(.gcda) - there is nothing to report. The usual cause is stale instrumentation: a build " +
+        "directory that moved or was copied with the project keeps .gcno notes recording the old " +
+        "paths, and the runtimes write the data beside them. Delete the build directory (or run " +
+        "`xmake --clean`) and run coverage again."
 
 /** The profile's build directory when it exists, the project root otherwise. xmake writes the
  *  instrumented objects, and with them the gcda data, under this directory. */

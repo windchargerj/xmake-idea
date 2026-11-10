@@ -157,7 +157,7 @@ class XMakeRunner : AsyncProgramRunner<RunnerSettings>() {
             },
             onTerminated = {
                 if (isCoverage) {
-                    reportCoverageData(state.configuration, console)
+                    reportCoverageData(state.configuration, environment, console)
                 }
                 if (sanitizer != null && findings != null) {
                     // The mirror files exist only where the plugin could read them back:
