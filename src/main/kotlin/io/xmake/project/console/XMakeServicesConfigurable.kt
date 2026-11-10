@@ -157,7 +157,9 @@ class XMakeServicesConfigurable(private val valProject: Project) : Configurable,
                     // Enter in the field applies the page - the dialog's own default
                     // button would land on the same page.apply() either way.
                     field.addActionListener { page?.apply() }
-                    row {
+                    // The verbs sit in the form's control column, under the endpoint
+                    // field they act on, so the page's two rows read as one editor.
+                    row("Actions") {
                         val connect = button("Connect") { snapshotService.connectService(kind) }.component
                         val disconnect = button("Disconnect") { snapshotService.disconnectService(kind) }.component
                         val clear = button("Clear") { snapshotService.clearEndpoint(instance.name, kind) }.component
