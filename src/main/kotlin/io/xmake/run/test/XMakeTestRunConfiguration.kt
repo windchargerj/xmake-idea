@@ -25,10 +25,10 @@ import com.intellij.execution.configurations.RunConfigurationBase
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.annotations.OptionTag
-import io.xmake.icons.XMakeIcons
 import io.xmake.run.target.findXMakeBuildProfileFor
 import io.xmake.run.target.requireXMakeBuildProfileFor
 
@@ -74,7 +74,7 @@ class XMakeTestRunConfigurationType : ConfigurationTypeBase(
     ID,
     "XMake Test",
     "Run the project's tests through xmake test",
-    XMakeIcons.XMAKE,
+    AllIcons.RunConfigurations.TestMark,
 ) {
     init {
         addFactory(object : ConfigurationFactory(this) {

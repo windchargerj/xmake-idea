@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <clipPath id="circle"><circle cx="32" cy="32" r="27"/></clipPath>
+    </defs>
+    <!-- The xmake pinwheel, flattened from the official logo: the plate shows through
+         the arm the drawing leaves open, the band is the green accent, and the body is
+         the brand teal. The platform picks this file in light themes and the _dark twin
+         in dark ones. -->
+    <circle cx="32" cy="32" r="30" fill="#e0f2f1"/>
+    <g clip-path="url(#circle)">
+        <g transform="translate(0,5)">
+            <polygon points="64,4 64,62 62,64 1,64 0,63 0,40 60,3" fill="#ffffff"/>
+            <polygon points="0,63 1,64 62,64 64,62 64,50 4,13 1,12.5 0,13" fill="#8BC34A"/>
+            <polygon points="64,4 64,62 62,64 1,64 0,63 0,40 60,3" fill="#009688" fill-opacity="0.76"/>
+        </g>
+    </g>
+</svg>

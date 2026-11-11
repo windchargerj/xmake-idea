@@ -128,7 +128,7 @@ class XMakePackRunConfigurationType : ConfigurationTypeBase(
     ID,
     "XMake Pack",
     "Run xmake pack for the project's xpack packages",
-    XMakeIcons.XMAKE,
+    XMakeIcons.PACK,
 ) {
     init {
         addFactory(object : ConfigurationFactory(this) {

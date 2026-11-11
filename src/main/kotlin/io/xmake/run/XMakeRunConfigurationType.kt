@@ -31,7 +31,7 @@ class XMakeRunConfigurationType : ConfigurationTypeBase(
     "XMakeRunConfiguration",
     "XMake",
     "XMake run command configuration",
-    XMakeIcons.XMAKE
+    XMakeIcons.COLORED
 ) {
     init {
         addFactory(object : ConfigurationFactory(this) {

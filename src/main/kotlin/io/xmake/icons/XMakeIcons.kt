@@ -29,8 +29,31 @@ object XMakeIcons {
     // logo icon
     val XMAKE = load("/icons/xmake.svg")
 
+    /** The brand mark in its colour, theme-neutral: the run configuration type and the
+     *  Services view keep the official pinwheel's colour in both themes, the way CMake's
+     *  run configurations carry the coloured CMake mark. */
+    val COLORED = load("/icons/xmake-color.svg")
+
+    /** The brand mark in its brand-teal treatment: the same strokes as [XMAKE] over a
+     *  10%-opacity disc. Theme-neutral - the teal reads on light and dark panels - so it
+     *  carries the file identity, where a colour belongs and no theme twin is needed. */
+    val TRANSLUCENT = load("/icons/xmake-translucent.svg")
+
     // file icon
-    val FILE = load("/icons/xmake.svg")
+    val FILE = TRANSLUCENT
+
+    // Most product surfaces carry the platform's own icons (AllIcons), chosen per
+    // surface at its call site: the Analysis view (a tab in the XMake window), the test
+    // run type, and the Services view. Two marks stay composites:
+    //   - PACKAGES: the gray brand mark with a small square at its lower right;
+    //   - PACK: the package box with the platform's green run marker, the same
+    //     base-plus-run composition Valgrind and coverage use.
+
+    /** The Packages tool window: the gray brand mark with a small package square. */
+    val PACKAGES = load("/icons/xmake-packages.svg")
+
+    /** The pack run: the package box with the platform's run marker. */
+    val PACK = load("/icons/xmake-pack.svg")
 
     // error icon
     val ERROR = AllIcons.General.Error

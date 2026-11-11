@@ -172,7 +172,7 @@ class XMakeServicesContributor : ServiceViewContributor<XMakeServicesContributor
         private val overview: JComponent by lazy { XMakeRootOverviewPanel(project) }
 
         override fun getPresentation(): ItemPresentation =
-            PresentationData("XMake", null, XMakeIcons.XMAKE, null)
+            PresentationData("XMake", null, XMakeIcons.COLORED, null)
 
         override fun getContentComponent(): JComponent = overview
 
@@ -282,7 +282,7 @@ private class XMakeRootOverviewPanel(private val project: Project) : JPanel(Bord
             JPanel().apply {
                 isOpaque = false
                 layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-                add(JBLabel("Build services", XMakeIcons.XMAKE, javax.swing.SwingConstants.LEADING).apply {
+                add(JBLabel("Build services", XMakeIcons.COLORED, javax.swing.SwingConstants.LEADING).apply {
                     font = com.intellij.util.ui.JBFont.create(
                         com.intellij.util.ui.UIUtil.getLabelFont().deriveFont(java.awt.Font.BOLD, 16f),
                     )
@@ -512,7 +512,7 @@ internal class AddServiceActionGroup : DefaultActionGroup {
     init {
         // The mark and the plain name, not a generic plus carrying an "Add" command: the
         // entry announces what lives under it, and the dropdown's kinds carry the act.
-        templatePresentation.icon = XMakeIcons.XMAKE
+        templatePresentation.icon = XMakeIcons.COLORED
         templatePresentation.description = "The build service kinds to put in the tree"
     }
 

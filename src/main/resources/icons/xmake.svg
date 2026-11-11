@@ -1,10 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-    <title>file_type_xmake</title>
-    <circle cx="16" cy="16" r="14" style="fill:#e0f2f1"/>
-    <path d="M23.518,5.888A12.6,12.6,0,0,0,5.654,8.811l6.562,4.047Z" style="fill:#e0f2f1"/>
-    <path d="M3.591,18.177l8.625-5.319L5.654,8.811A12.543,12.543,0,0,0,3.4,16,12.7,12.7,0,0,0,3.591,18.177Z"
-          style="fill:#8bc34a"/>
-    <path d="M27.072,22.019A12.607,12.607,0,0,0,23.518,5.888l-11.3,6.97Z" style="fill:#3dafa4"/>
-    <path d="M3.591,18.177a12.6,12.6,0,0,0,23.481,3.842L12.216,12.858Z" style="fill:#22a079"/>
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <clipPath id="circle"><circle cx="32" cy="32" r="27"/></clipPath>
+    </defs>
+    <!-- The xmake pinwheel, flattened from the official logo: the plate shows through
+         the arm the drawing leaves open, the band is the green accent, and the body is
+         the brand teal. The platform picks this file in light themes and the _dark twin
+         in dark ones. -->
+    <circle cx="32" cy="32" r="30" fill="#e0f2f1"/>
+    <g clip-path="url(#circle)">
+        <g transform="translate(0,5)">
+            <polygon points="64,4 64,62 62,64 1,64 0,63 0,40 60,3" fill="#ffffff"/>
+            <polygon points="0,63 1,64 62,64 64,62 64,50 4,13 1,12.5 0,13" fill="#8BC34A"/>
+            <polygon points="64,4 64,62 62,64 1,64 0,63 0,40 60,3" fill="#009688" fill-opacity="0.76"/>
+        </g>
+    </g>
 </svg>
