@@ -421,7 +421,18 @@ internal class AnalysisPanel(
                 invokeLater { if (!project.isDisposed) refresh(report) }
             },
         )
+    }
+
+    /** The narration tick runs only while the tab is on screen: the panel now lives in
+     *  the XMake window, and an unselected Analysis tab must not poll on its behalf. */
+    override fun addNotify() {
+        super.addNotify()
         narrationTimer.start()
+    }
+
+    override fun removeNotify() {
+        narrationTimer.stop()
+        super.removeNotify()
     }
 
     /** The subscriptions and the narration timer ride on the content's disposal; nothing

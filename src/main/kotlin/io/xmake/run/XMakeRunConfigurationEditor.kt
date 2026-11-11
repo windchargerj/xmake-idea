@@ -314,7 +314,7 @@ class XMakeRunConfigurationEditor(
 
         /** What the sanitizer row always explains: the policy that instruments the build, and where the findings land. */
         const val SANITIZER_ROW_COMMENT =
-            "Rebuilds with the sanitizer's build.sanitizer.* policy and shows the findings in the XMake Analysis view"
+            "Rebuilds with the sanitizer's build.sanitizer.* policy and shows the findings in the Analysis tab"
 
         /** The note the row appends when the active toolkit cannot run every sanitizer. */
         const val WINDOWS_LOCAL_SANITIZER_NOTE =

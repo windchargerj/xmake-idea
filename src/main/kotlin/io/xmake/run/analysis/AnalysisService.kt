@@ -31,6 +31,8 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.util.messages.Topic
+import io.xmake.project.console.XMAKE_ANALYSIS_TAB_TITLE
+import io.xmake.project.console.XMAKE_TOOL_WINDOW_ID
 import io.xmake.project.console.XMakeConsole
 import kotlinx.coroutines.Deferred
 import java.util.concurrent.atomic.AtomicBoolean
@@ -174,14 +176,12 @@ internal class AnalysisService(private val project: Project) {
                     "$sourceLabel: no findings\n"
                 } else {
                     "$sourceLabel: ${report.totalFindings} finding(s) at " +
-                            "${report.issues.size} unique place(s) - see the XMake Analysis view\n"
+                            "${report.issues.size} unique place(s) - see the Analysis tab\n"
                 },
                 ConsoleViewContentType.SYSTEM_OUTPUT,
             )
             if (report.issues.isNotEmpty()) {
-                ToolWindowManager.getInstance(project)
-                    .getToolWindow(ANALYSIS_TOOL_WINDOW_ID)
-                    ?.activate(null)
+                showAnalysisView(project)
             }
         }
     }
@@ -214,5 +214,14 @@ internal class AnalysisService(private val project: Project) {
     }
 }
 
-/** The tool window id of the sanitizer analysis view. */
-internal const val ANALYSIS_TOOL_WINDOW_ID = "XMake Analysis"
+/** Brings the findings to the front: the XMake window with its Analysis tab selected.
+ *  The view lives inside the build window, so there is no analysis window to look up. */
+internal fun showAnalysisView(project: Project) {
+    val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(XMAKE_TOOL_WINDOW_ID) ?: return
+    toolWindow.activate(null)
+    val content = toolWindow.contentManager.contents
+        .firstOrNull { it.displayName == XMAKE_ANALYSIS_TAB_TITLE }
+    if (content != null) {
+        toolWindow.contentManager.setSelectedContent(content)
+    }
+}

@@ -25,6 +25,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
+import io.xmake.run.analysis.ui.AnalysisPanel
 
 class XMakeToolWindowFactory : ToolWindowFactory, DumbAware {
 
@@ -44,6 +45,17 @@ class XMakeToolWindowFactory : ToolWindowFactory, DumbAware {
         toolWindow.contentManager.setSelectedContent(outputTab)
         XMakeConsoleManager.getInstance(project).register(toolWindow, outputPanel, outputTab)
 
+        // The findings ride the same window as the console: analysis is part of a build
+        // session, and a separate tool window only crowded the stripe. This tab is the
+        // analysis view's one home now; the service activates this window and selects
+        // this content instead of looking up a window of its own.
+        val analysisTab = ContentFactory.getInstance().createContent(null, XMAKE_ANALYSIS_TAB_TITLE, false)
+        val analysisPanel = AnalysisPanel(project, analysisTab)
+        analysisTab.component = analysisPanel
+        analysisTab.preferredFocusableComponent = analysisPanel.focusTarget
+        analysisTab.setDisposer(analysisPanel)
+        toolWindow.contentManager.addContent(analysisTab)
+
         // Instantiate the snapshot service: it owns the probe dispatch that the platform
         // Services window's XMake contributor and the pack editor's enumeration share.
         project.xmakeServicesSnapshots
@@ -51,3 +63,6 @@ class XMakeToolWindowFactory : ToolWindowFactory, DumbAware {
 }
 
 const val XMAKE_TOOL_WINDOW_ID = "XMake"
+
+/** The findings tab beside the console, the one place the analysis view lives. */
+const val XMAKE_ANALYSIS_TAB_TITLE = "Analysis"
