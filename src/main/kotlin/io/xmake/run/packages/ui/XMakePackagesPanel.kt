@@ -46,10 +46,12 @@ import javax.swing.JPanel
 import javax.swing.KeyStroke
 
 /**
- * The XMake Packages view: the search field over the package table, and the selected
- * package's details in a headered pane on the right - the name in the Marketplace page's
- * title face, the repository meta beside it, the one action that fits the row, and the
- * `--info` data as the info grid below.
+ * The Packages tab of the XMake Packages tool window: the search field over the package
+ * table, and the selected package's details in a headered pane on the right - the name
+ * in the Marketplace page's title face, the repository meta beside it, the one action
+ * that fits the row, and the `--info` data as the info grid below. The repositories the
+ * packages resolve against have their own tab ([XMakeRepositoriesPanel]); this page
+ * only names them in the rows and the details.
  *
  * The rows come from `require --list` - name, the version the project asks for, the
  * repository, and the installed/declared status that the lazily fetched, cached
@@ -92,6 +94,9 @@ internal class XMakePackagesPanel(
      *  rebuilds, so a selection (and its loading detail) survives a background info
      *  landing. */
     private var tableSource: XMakePackagesSnapshot? = null
+
+    /** The master/details splitter; the table on the left, the details page right. */
+    private lateinit var split: OnePixelSplitter
 
     /** The status line's label: the list's size, the search mode, the operation the grayed
      *  actions wait for, and the failure note; red when the last operation failed. */
@@ -142,7 +147,7 @@ internal class XMakePackagesPanel(
         javax.swing.Timer(SEARCH_DEBOUNCE_MS) { searchNow(searchField.text) }
     }
 
-    /** Hands [term] to the repositories - the debounce and Enter both land here. An
+    /** Hands [rawTerm] to the repositories - the debounce and Enter both land here. An
      *  empty term leaves search mode; a one-letter term asks nothing of the
      *  repositories, and the line says so instead of the Enter landing silent. */
     private fun searchNow(rawTerm: String) {
@@ -265,7 +270,7 @@ internal class XMakePackagesPanel(
             addToRight(actions.toolbar().component)
         }
 
-        val split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
+        split = OnePixelSplitter(false, SPLIT_KEY, 0.7f).apply {
             firstComponent = JPanel(BorderLayout()).apply {
                 add(searchRow, BorderLayout.NORTH)
                 add(tableScroll, BorderLayout.CENTER)
@@ -430,7 +435,14 @@ internal class XMakePackagesPanel(
                     SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES,
                 ) { leaveSearch() }
             }
-            else -> empty.text = "No packages declared"
+            else -> {
+                empty.text = "No packages declared"
+                empty.appendSecondaryText(
+                    "Type in the search field to find a package, or declare add_requires(...) in xmake.lua",
+                    SimpleTextAttributes.GRAYED_ATTRIBUTES,
+                    null as java.awt.event.ActionListener?,
+                )
+            }
         }
     }
 
@@ -438,10 +450,10 @@ internal class XMakePackagesPanel(
      *  the 2.8.7 repo query's cause of death (exit 255), and the exact command to run is
      *  worth more than the diagnosis repeated. */
     internal fun unpackHint(): String? {
-        val evidence = sequenceOf(service.lastError, service.snapshot?.searchResults?.diagnostics?.firstOrNull())
+        val brokenToolchain = sequenceOf(service.lastError, service.snapshot?.searchResults?.diagnostics?.firstOrNull())
             .filterNotNull()
-            .firstOrNull { it.contains("unzip", ignoreCase = true) || it.contains("7zip", ignoreCase = true) }
-            ?: return null
+            .any { it.contains("unzip", ignoreCase = true) || it.contains("7zip", ignoreCase = true) }
+        if (!brokenToolchain) return null
         return "fix: install unzip or p7zip on the toolkit host (e.g. sudo apt install unzip), or update xmake"
     }
 
@@ -564,12 +576,6 @@ internal class XMakePackagesPanel(
         /** Shorter than this, a term asks nothing of the repositories - one letter
          *  matches too much to be worth a remote round trip. */
         private const val MIN_SEARCH_LENGTH = 2
-
-        private const val COLUMN_NAME = 0
-        private const val COLUMN_DESCRIPTION = 1
-        private const val COLUMN_VERSION = 2
-        private const val COLUMN_REPO = 3
-        private const val COLUMN_STATUS = 4
     }
 }
 

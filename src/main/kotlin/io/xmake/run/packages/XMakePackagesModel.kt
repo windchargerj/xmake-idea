@@ -113,4 +113,19 @@ data class XMakePackagesSnapshot(
      *  complaint. The no-info state in the details pane reads it instead of a blank
      *  "answered nothing" - "xmake answered garbage" and "never asked" stay apart. */
     val infoFailures: Map<String, String> = emptyMap(),
+    /** The package repositories `xmake repo --list` reports, project-local first. */
+    val repositories: List<XMakeRepoState> = emptyList(),
+)
+
+/**
+ * One package repository `xmake repo --list` reported: its name (the key the `repo`
+ * fields and the add/remove verbs speak), its url or on-disk path, the branch a remote
+ * git repository pins, and the scope the listing found it under.
+ */
+data class XMakeRepoState(
+    val name: String,
+    val url: String,
+    val branch: String?,
+    /** "local" or "global"; the built-in repository reports under "global". */
+    val scope: String,
 )

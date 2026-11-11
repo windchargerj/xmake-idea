@@ -442,6 +442,49 @@ class XMakeCommandFactory(
             require { search = true; packages = listOf(term) }
         }
 
+    /** One `xmake repo --list`: the repositories the package asks resolve against -
+     *  the project-local ones first, then the global ones, then the built-in. */
+    fun createRepoList(): XMakeCommand =
+        createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            repo { list = true }
+        }
+
+    /** One `xmake repo --add <name> <url> [branch]`: registers a package repository.
+     *  [global] saves it to the user's global set instead of the project's. */
+    fun createRepoAdd(name: String, url: String, branch: String?, global: Boolean): XMakeCommand =
+        createCommand {
+            repo {
+                add = true
+                this.name = name
+                this.url = url
+                branch?.let { this.branch = it }
+                this.global = global
+            }
+        }
+
+    /** One `xmake repo --remove <name>`: takes one added repository out. [global] names
+     *  the set the repository lives in - without it xmake answers for the project's set
+     *  only, and a global repository would silently survive the remove. */
+    fun createRepoRemove(name: String, global: Boolean): XMakeCommand =
+        createCommand {
+            repo { remove = true; this.name = name; this.global = global }
+        }
+
+    /** One `xmake repo --update`: refreshes every local repository from its remote -
+     *  xmake's own update reads both sets. */
+    fun createRepoUpdate(): XMakeCommand =
+        createCommand {
+            repo { update = true }
+        }
+
+    /** One `xmake repo --clear`: removes every added repository in the set [global]
+     *  names - the built-in stays. The confirmation is the caller's seat; the command
+     *  only runs what was confirmed. */
+    fun createRepoClear(global: Boolean): XMakeCommand =
+        createCommand {
+            repo { clear = true; this.global = global }
+        }
+
     /** One `xmake require --depgraph --format=json`: which declared package needs which. */
     fun createRequireDepgraph(): XMakeCommand =
         createCommand {

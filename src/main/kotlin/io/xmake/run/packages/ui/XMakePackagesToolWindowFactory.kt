@@ -23,17 +23,31 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
 
 /**
- * The XMake Packages tool window: the project's xrepo packages, searchable and mutable
- * behind confirmations. It needs no CLion API - only `xmake require` queries through the
+ * The XMake Packages tool window: the project's xrepo packages and the repositories they
+ * resolve against, as two tabs of one window - the declared packages and the search
+ * surface first, the repository list beside it. A tab, not a mode, because the way back
+ * must never depend on remembering which button brought the page in.
+ *
+ * It needs no CLion API - only `xmake require` and `xmake repo` queries through the
  * executor - so it lives in the main module beside the Analysis view it mirrors.
  */
 internal class XMakePackagesToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val content = ContentFactory.getInstance().createContent(null, "Packages", false)
-        val panel = XMakePackagesPanel(project, content)
-        content.component = panel
-        content.setDisposer(panel)
-        toolWindow.contentManager.addContent(content)
+        val contentManager = toolWindow.contentManager
+
+        val packagesContent = ContentFactory.getInstance().createContent(null, "Packages", false)
+        val packagesPanel = XMakePackagesPanel(project, packagesContent)
+        packagesContent.component = packagesPanel
+        packagesContent.setDisposer(packagesPanel)
+        contentManager.addContent(packagesContent)
+
+        // The repositories page: created after the packages page, whose init issues the
+        // first refresh both pages render from.
+        val repositoriesContent = ContentFactory.getInstance().createContent(null, "Repositories", false)
+        val repositoriesPanel = XMakeRepositoriesPanel(project, repositoriesContent)
+        repositoriesContent.component = repositoriesPanel
+        repositoriesContent.setDisposer(repositoriesPanel)
+        contentManager.addContent(repositoriesContent)
     }
 }

@@ -468,4 +468,46 @@ class XMakePackageParsersTest {
         assertTrue(XMakePackageParsers.dependencyChildren(null, "a").isEmpty())
         assertNull(XMakePackageParsers.parseDepgraph("error: something went wrong\n"))
     }
+
+    @Test
+    fun `parses the repo listing with its scopes`() {
+        val output = """
+            local repositories:
+                my-repo https://github.com/me/my-repo.git main
+
+            global repositories:
+                xmake-repo https://gitee.com/tboox/xmake-repo.git master
+                builtin-repo /usr/share/xmake/repository
+
+            3 repositories were found!
+        """.trimIndent() + "\n"
+        val repos = XMakePackageParsers.parseRepositories(output)
+        assertEquals(
+            listOf(
+                XMakeRepoState("my-repo", "https://github.com/me/my-repo.git", "main", "local"),
+                XMakeRepoState("xmake-repo", "https://gitee.com/tboox/xmake-repo.git", "master", "global"),
+                XMakeRepoState("builtin-repo", "/usr/share/xmake/repository", null, "global"),
+            ),
+            repos,
+        )
+    }
+
+    @Test
+    fun `a repository description is not read as its branch`() {
+        // xmake prints the description in parentheses after the branch slot; a branch
+        // never opens with one, so the description must not land in the fact.
+        val output = """
+            global repositories:
+                builtin-repo /usr/share/xmake/repository (shipped with xmake)
+                my-repo https://github.com/me/my-repo.git main (my own packages)
+        """.trimIndent() + "\n"
+        val repos = XMakePackageParsers.parseRepositories(output)
+        assertEquals(
+            listOf(
+                XMakeRepoState("builtin-repo", "/usr/share/xmake/repository", null, "global"),
+                XMakeRepoState("my-repo", "https://github.com/me/my-repo.git", "main", "global"),
+            ),
+            repos,
+        )
+    }
 }

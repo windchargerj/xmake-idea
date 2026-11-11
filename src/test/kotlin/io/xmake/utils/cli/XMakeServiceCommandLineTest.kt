@@ -126,6 +126,53 @@ class XMakeServiceCommandLineTest {
     }
 
     @Test
+    fun `repo add carries the name url branch triple and the global scope`() {
+        val local = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            repo {
+                add = true
+                name = "my-repo"
+                url = "https://github.com/me/my-repo.git"
+                branch = "main"
+            }
+        }
+        assertEquals(
+            listOf("repo", "--add", "my-repo", "https://github.com/me/my-repo.git", "main"),
+            local.arguments,
+        )
+
+        val global = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            repo {
+                add = true
+                global = true
+                name = "my-repo"
+                url = "https://github.com/me/my-repo.git"
+            }
+        }
+        assertEquals(
+            listOf("repo", "--add", "--global", "my-repo", "https://github.com/me/my-repo.git"),
+            global.arguments,
+        )
+    }
+
+    @Test
+    fun `the repo management verbs build their flags bare`() {
+        val remove = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            repo { remove = true; name = "my-repo" }
+        }
+        assertEquals(listOf("repo", "--remove", "my-repo"), remove.arguments)
+
+        val update = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            repo { update = true }
+        }
+        assertEquals(listOf("repo", "--update"), update.arguments)
+
+        val clear = xmake(CliInstallation("xmake", ToolkitHost())).apply {
+            repo { clear = true }
+        }
+        assertEquals(listOf("repo", "--clear"), clear.arguments)
+    }
+
+    @Test
     fun `a value verb without its value emits the bare flag - the caller's bug, visible`() {
         val line = xmake(CliInstallation("xmake", ToolkitHost())).apply {
             service { verb = XMakeServiceVerb.RM_USER }

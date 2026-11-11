@@ -327,4 +327,37 @@ internal object XMakePackageParsers {
         }
         return null
     }
+
+    /**
+     * Parses `xmake repo --list`'s answer: `local repositories:` / `global repositories:`
+     * headings, then one indented line per repository - name, url (or on-disk path for
+     * the built-in), optional branch. The scope rides the heading the line follows.
+     * Anything outside the headings and the indented rows (a "N repositories were found!"
+     * tail, log noise) is ignored.
+     */
+    fun parseRepositories(output: String): List<XMakeRepoState> {
+        val repositories = mutableListOf<XMakeRepoState>()
+        var scope = "local"
+        for (line in output.lines()) {
+            val trimmed = line.trim()
+            when {
+                trimmed.startsWith("local repositories", ignoreCase = true) -> scope = "local"
+                trimmed.startsWith("global repositories", ignoreCase = true) -> scope = "global"
+                line.startsWith(" ") && trimmed.isNotEmpty() -> {
+                    val tokens = trimmed.split(Regex("\\s+"))
+                    if (tokens.size >= 2) {
+                        repositories += XMakeRepoState(
+                            name = tokens[0],
+                            url = tokens[1],
+                            // A parenthesized token opens the description xmake prints
+                            // in the same line; a branch never starts with a paren.
+                            branch = tokens.getOrNull(2)?.takeUnless { it.startsWith("(") },
+                            scope = scope,
+                        )
+                    }
+                }
+            }
+        }
+        return repositories
+    }
 }
