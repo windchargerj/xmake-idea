@@ -232,6 +232,25 @@ internal class XMakeCommandLine internal constructor(installation: CliInstallati
         if (options.query) environment.putAll(QUERY_ENVIRONMENT)
     }
 
+    /** Adds `repo`; the package-repository management verbs: list, add, remove, update,
+     *  clear. `--list` is the one read and answers with the clean query environment;
+     *  the mutations carry -y by construction, the same baked channel safety the
+     *  require verbs take. The positional order is xmake's own: name, then url, then
+     *  the optional branch (`xmake repo --add <name> <url> [branch]`), and `--global`
+     *  saves the add to the user's global repositories instead of the project's. */
+    fun repo(configure: RepoScope.() -> Unit): XMakeCommandLine = apply {
+        val options = RepoScope().apply(configure)
+        beginAction("repo")
+        flag("--add", options.add)
+        flag("--remove", options.remove)
+        flag("--update", options.update)
+        flag("--clear", options.clear)
+        flag("--list", options.list)
+        flag("--global", options.global)
+        args(listOfNotNull(options.name, options.url, options.branch))
+        if (options.query) environment.putAll(QUERY_ENVIRONMENT)
+    }
+
     /** Adds `pack`; [configure] fills the options and the package names. The scope exists so
      *  options are structurally emitted before the names - xmake's plugin-task parser swallows
      *  everything after the first package name as another name (docs/roadmap-designs/packaging.md,
@@ -391,6 +410,27 @@ internal class ServiceScope internal constructor() {
     var all = false
 }
 
+@CliDsl
+internal class RepoScope internal constructor() {
+    var add = false
+    var remove = false
+    var update = false
+    var clear = false
+    var list = false
+
+    /** `--global`: the add saves to the user's global repositories, not the project's. */
+    var global = false
+
+    /** The positional triple, in xmake's own order: name, url, optional branch. */
+    var name: String? = null
+    var url: String? = null
+    var branch: String? = null
+
+    /** `--list` is the one read; everything else mutates the repository set. */
+    val query: Boolean
+        get() = list
+}
+
 /** The value a takes-value verb reads off the scope it belongs to. */
 private fun XMakeServiceVerb.valueFrom(options: ServiceScope): String? = when (this) {
     XMakeServiceVerb.ADD_USER, XMakeServiceVerb.RM_USER -> options.user
@@ -399,8 +439,7 @@ private fun XMakeServiceVerb.valueFrom(options: ServiceScope): String? = when (t
 }
 
 @CliDsl
-internal class RequireScope internal constructor() {
-    var list: Boolean = false
+internal class RequireScope internal constructor() {    var list: Boolean = false
     var info: Boolean = false
     var search: Boolean = false
     var uninstall: Boolean = false

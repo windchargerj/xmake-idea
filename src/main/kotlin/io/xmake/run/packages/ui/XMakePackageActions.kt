@@ -42,10 +42,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * The panel's verbs: the composed action table, the two confirmation shapes, and the
- * bespoke trio (refresh, the installed toggle, the console hop). One collaborator of
+ * The Packages page's verbs: the composed action table, the two confirmation shapes,
+ * and the bespoke pair (refresh, the console hop). One collaborator of
  * [XMakePackagesPanel]; reads the panel's selection and info helpers, owns nothing the
- * panel needs back except the toolbar.
+ * panel needs back except the toolbar. The repository verbs live with their own page,
+ * [XMakeRepositoryActions].
  */
 internal class XMakePackageActions(private val panel: XMakePackagesPanel) {
 
@@ -143,9 +144,8 @@ internal class XMakePackageActions(private val panel: XMakePackagesPanel) {
      * a fact set - what it says, when it enables, what it runs - and [PanelAction]
      * renders the AnAction shell around any row. Gates and executions all read one
      * composed pass of the decision state ([PanelState]), so no action re-derives its
-     * own truth between dimming and running. Refresh, the installed toggle, and the
-     * console hop keep their bespoke classes: they carry state or leave this panel's
-     * grammar.
+     * own truth between dimming and running. Refresh and the console hop keep their
+     * bespoke classes: they carry state or leave this panel's grammar.
      */
     private val packageActions: List<PanelAction> = listOf(
         PanelAction(
@@ -304,16 +304,16 @@ internal class XMakePackageActions(private val panel: XMakePackagesPanel) {
     /** Composes one pass of the decision state from the panel's own sources. */
     private fun state(): PanelState {
         val row = panel.selectedRow()
-        val name = row?.name
+        val installed = row != null && (
+            panel.infoFor(row.name)?.installed == true ||
+                row.isInstalled ||
+                panel.onDiskVersions(row.name).isNotEmpty()
+            )
         return PanelState(
             idle = !panel.service.busy,
             selected = row != null,
-            name = name,
-            installed = name != null && (
-                panel.infoFor(name)?.installed == true ||
-                    row?.isInstalled == true ||
-                    panel.onDiskVersions(name).isNotEmpty()
-                ),
+            name = row?.name,
+            installed = installed,
             capable = { ask -> panel.service.supports(ask) },
         )
     }
@@ -333,34 +333,6 @@ internal class XMakePackageActions(private val panel: XMakePackagesPanel) {
         val capable: (XMakeCommandLine.() -> Unit) -> Boolean,
     ) {
         fun supports(ask: XMakeCommandLine.() -> Unit): Boolean = capable(ask)
-    }
-
-
-    /** Toggles the table between the declared packages and the `--scan` inventory of
-     *  what is actually installed. The scan runs once on first show; the snapshot keeps
-     *  the inventory, so re-entering the view costs nothing until a refresh drops it. */
-    private inner class ShowInstalledToggle : DumbAwareAction(
-        "Installed",
-        "Show the packages actually installed (xmake require --scan)",
-        com.intellij.icons.AllIcons.Nodes.PackageLocal,
-    ) {
-
-        private var showing = false
-
-        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-        override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !panel.service.busy
-        }
-
-        override fun actionPerformed(event: AnActionEvent) {
-            showing = !showing
-            if (showing) {
-                panel.service.scanInstalled()
-            } else {
-                panel.service.exitInstalled()
-            }
-        }
     }
 
 
@@ -390,6 +362,8 @@ internal class XMakePackageActions(private val panel: XMakePackagesPanel) {
             consoleScope.launch {
                 try {
                     XMakeConsoleManager.getInstance(panel.project).awaitReady().showOutput()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
                 } catch (error: Exception) {
                     // The console does not exist in a disposed panel.project; nothing to show then.
                     if (!panel.project.isDisposed) {

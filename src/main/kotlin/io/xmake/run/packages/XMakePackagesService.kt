@@ -123,6 +123,28 @@ internal class XMakePackagesService(private val project: Project) {
         claim("refreshing the package list") { factory -> loadSnapshot(factory) }
     }
 
+    /**
+     * Reloads just the repository listing and publishes it - the Repositories tab's
+     * refresh, which costs one local `xmake repo --list` instead of the package list
+     * and the dependency graph. Before the first full load lands there is nothing to
+     * patch, so the full [refresh] runs in its place.
+     */
+    fun refreshRepositories() {
+        if (busy) return
+        val base = snapshot
+        if (base == null) {
+            refresh()
+            return
+        }
+        claim("loading the repositories") { factory ->
+            base.copy(
+                repositories = XMakePackageParsers.parseRepositories(
+                    project.xmakeExecutor.captureStandardOutput(factory.createRepoList()),
+                ),
+            )
+        }
+    }
+
     /** Searches the configured repositories; the hits - and the `note:`/`error:` lines
      *  xmake printed around them - replace the tree's rows until [exitSearch]. A search
      *  behind a read preempts it; behind a mutation - or before the catalog ever landed
@@ -181,8 +203,8 @@ internal class XMakePackagesService(private val project: Project) {
         // busy flag and narrates nothing, so selections answer live while a build or
         // an install holds the exclusive lane. Both reads degrade honestly on a store
         // mid-write, which is the price of not freezing the browsing.
+        @Suppress("DeferredResultUnused") // fire-and-forget: the answer lands through applyInfo
         project.xmakeExecutor.submitQuery {
-            val base = snapshot
             try {
                 // ONE spawn: the bundled query runs xmake's own info and scan actions
                 // for this package - the answer carries no flag-version sensitivity,
@@ -216,28 +238,55 @@ internal class XMakePackagesService(private val project: Project) {
                         ?: "the query answered nothing"
                     else -> "the query output carried no info for '$packageName'"
                 }
-                base?.copy(
-                    infos = base.infos + (packageName to composed),
-                    closures = base.closures + (packageName to closure),
-                    installedVersions = base.installedVersions + (bare.lowercase() to versions),
-                    infoFailures = if (composed == null) {
-                        base.infoFailures + (packageName to (failure ?: "the info ask failed"))
-                    } else {
-                        base.infoFailures - packageName
-                    },
-                )
+                val landed = InfoAnswer(packageName, bare, composed, closure, versions, failure)
+                invokeLater { if (!project.isDisposed) applyInfo(landed) }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 Log.warn("XMake package info query failed", error)
-                snapshot?.let {
-                    finish(
-                        it.copy(infoFailures = it.infoFailures + (packageName to (error.message ?: error.toString()))),
-                        null,
-                    )
-                }
+                val landed = InfoAnswer(
+                    packageName,
+                    asked.name,
+                    null,
+                    emptyList(),
+                    emptyList(),
+                    error.message ?: error.toString(),
+                )
+                invokeLater { if (!project.isDisposed) applyInfo(landed) }
             }
         }
     }
+
+    /**
+     * Lands one quiet query's answer on the published snapshot. The merge runs against
+     * the latest snapshot, not the one the query started from, so a refresh that landed
+     * while the query was in flight is not reverted by its answer. The topic then tells
+     * both tabs - the details page re-renders from the info cache it was waiting on.
+     */
+    private fun applyInfo(answer: InfoAnswer) {
+        val latest = snapshot ?: return
+        snapshot = latest.copy(
+            infos = latest.infos + (answer.packageName to answer.info),
+            closures = latest.closures + (answer.packageName to answer.closure),
+            installedVersions = latest.installedVersions + (answer.bare.lowercase() to answer.versions),
+            infoFailures = if (answer.info == null) {
+                latest.infoFailures + (answer.packageName to (answer.failure ?: "the info ask failed"))
+            } else {
+                latest.infoFailures - answer.packageName
+            },
+        )
+        project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)
+    }
+
+    /** One info query's landed answer, carried from the quiet lane to the EDT so the
+     *  merge can read the snapshot the lane last published. */
+    private class InfoAnswer(
+        val packageName: String,
+        val bare: String,
+        val info: XMakePackageInfo?,
+        val closure: List<XMakePackageInfo>,
+        val versions: List<String>,
+        val failure: String?,
+    )
 
     /** One captured query; a failure keeps its own sentence. */
     private suspend fun runQuery(build: () -> XMakeCommand) = runCancellable {
@@ -296,6 +345,168 @@ internal class XMakePackagesService(private val project: Project) {
         if (current.installed == null) return
         snapshot = current.copy(installed = null)
         project.messageBus.syncPublisher(TOPIC).packagesChanged(snapshot)
+    }
+
+    /**
+     * Adds a package repository (`xmake repo --add <name> <url> [branch]`) and refreshes,
+     * so the repos view shows what xmake registered. [global] saves to the user's global
+     * set instead of the project's - the add dialog's checkbox, not a guess.
+     */
+    fun addRepository(name: String, url: String, branch: String?, global: Boolean) {
+        if (busy) return
+        holdClaim(mutation = true, doing = "adding the repository '$name'")
+        val deferred = project.xmakeExecutor.submit {
+            var failed: Exception? = null
+            try {
+                val console = XMakeConsoleManager.getInstance(project).awaitReady()
+                console.clear()
+                console.print("xmake: adding the repository '$name'\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+                project.xmakeExecutor.execute(
+                    console,
+                    packageFactory().createRepoAdd(name, url, branch, global),
+                    XMakeConsoleOptions(showConsole = true),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                failed = error
+                Log.warn("XMake repository add failed: $name", error)
+            }
+            invokeLater {
+                if (project.isDisposed) return@invokeLater
+                releaseClaimNow()
+                failed?.let { error ->
+                    project.notify(
+                        "XMake repositories",
+                        "adding the repository '$name' failed: " +
+                            StringUtil.escapeXmlEntities(error.message ?: "an unknown error"),
+                    )
+                }
+                refreshRepositories()
+            }
+        }
+        inFlight = deferred
+    }
+
+    /** Removes one added repository (`xmake repo --remove <name>`) and refreshes. The
+     *  confirmation is the caller's seat; [global] names the set the repository lives
+     *  in. The built-in repository xmake itself refuses. */
+    fun removeRepository(name: String, global: Boolean) {
+        if (busy) return
+        val scope = if (global) "global" else "project"
+        holdClaim(mutation = true, doing = "removing the $scope repository '$name'")
+        val deferred = project.xmakeExecutor.submit {
+            var failed: Exception? = null
+            try {
+                val console = XMakeConsoleManager.getInstance(project).awaitReady()
+                console.clear()
+                console.print("xmake: removing the $scope repository '$name'\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+                project.xmakeExecutor.execute(
+                    console,
+                    packageFactory().createRepoRemove(name, global),
+                    XMakeConsoleOptions(showConsole = true),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                failed = error
+                Log.warn("XMake repository remove failed: $name", error)
+            }
+            invokeLater {
+                if (project.isDisposed) return@invokeLater
+                releaseClaimNow()
+                failed?.let { error ->
+                    project.notify(
+                        "XMake repositories",
+                        "removing the repository '$name' failed: " +
+                            StringUtil.escapeXmlEntities(error.message ?: "an unknown error"),
+                    )
+                }
+                refreshRepositories()
+            }
+        }
+        inFlight = deferred
+    }
+
+    /** Updates every local repository from its remote (`xmake repo --update`) and
+     *  refreshes. Network work lives inside xmake; the console carries its progress. */
+    fun updateRepositories() {
+        if (busy) return
+        holdClaim(mutation = true, doing = "updating the repositories")
+        val deferred = project.xmakeExecutor.submit {
+            var failed: Exception? = null
+            try {
+                val console = XMakeConsoleManager.getInstance(project).awaitReady()
+                console.clear()
+                console.print("xmake: updating the repositories\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+                project.xmakeExecutor.execute(
+                    console,
+                    packageFactory().createRepoUpdate(),
+                    XMakeConsoleOptions(showConsole = true),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                failed = error
+                Log.warn("XMake repository update failed", error)
+            }
+            invokeLater {
+                if (project.isDisposed) return@invokeLater
+                releaseClaimNow()
+                failed?.let { error ->
+                    project.notify(
+                        "XMake repositories",
+                        "updating the repositories failed: " +
+                            StringUtil.escapeXmlEntities(error.message ?: "an unknown error"),
+                    )
+                }
+                refreshRepositories()
+            }
+        }
+        inFlight = deferred
+    }
+
+    /** Removes every added repository in one set (`xmake repo --clear`); the built-in
+     *  stays. [global] names the set; the double confirm is the caller's seat, the same
+     *  seat Clean Files takes. */
+    fun clearRepositories(global: Boolean) {
+        if (busy) return
+        val scope = if (global) "global" else "project"
+        holdClaim(mutation = true, doing = "clearing the $scope repositories")
+        val deferred = project.xmakeExecutor.submit {
+            var failed: Exception? = null
+            try {
+                val console = XMakeConsoleManager.getInstance(project).awaitReady()
+                console.clear()
+                console.print("xmake: clearing the $scope repositories\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+                project.xmakeExecutor.execute(
+                    console,
+                    packageFactory().createRepoClear(global),
+                    XMakeConsoleOptions(showConsole = true),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                failed = error
+                Log.warn("XMake repository clear failed", error)
+            }
+            invokeLater {
+                if (project.isDisposed) return@invokeLater
+                releaseClaimNow()
+                failed?.let { error ->
+                    project.notify(
+                        "XMake repositories",
+                        "clearing the repositories failed: " +
+                            StringUtil.escapeXmlEntities(error.message ?: "an unknown error"),
+                    )
+                }
+                refreshRepositories()
+            }
+        }
+        inFlight = deferred
+    }
+
+    /** Releases the live claim from inside a completed mutation, before the trailing
+     *  refresh asks for the lane: the release must land on this EDT pass, the way
+     *  [runPackageCommand]'s does. */
+    private fun releaseClaimNow() {
+        claimToken.get()?.let(::releaseClaim)
     }
 
 
@@ -453,6 +664,13 @@ internal class XMakePackagesService(private val project: Project) {
         } else {
             null
         }
+        // The repositories ride every refresh: one local `xmake repo --list` per load,
+        // no network - the repos view and the details' repository field read from here.
+        val repositories = runCancellable {
+            XMakePackageParsers.parseRepositories(
+                project.xmakeExecutor.captureStandardOutput(factory.createRepoList()),
+            )
+        }.getOrNull().orEmpty()
         // The installed inventory, when the view is on, is re-scanned rather than
         // carried: a mutation just changed the store, and the view's whole job is to
         // say what the store holds now. Its names refill the version cache - the one
@@ -469,6 +687,7 @@ internal class XMakePackagesService(private val project: Project) {
             searchResults = snapshot?.searchResults,
             installed = inventory,
             installedVersions = inventory?.groupByVersion() ?: snapshot?.installedVersions ?: emptyMap(),
+            repositories = repositories,
         )
     }
 
