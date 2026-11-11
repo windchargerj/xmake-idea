@@ -24,6 +24,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
+import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.ui.Messages
@@ -57,6 +58,7 @@ internal class XMakePackageActions(private val panel: XMakePackagesPanel) {
         val group = DefaultActionGroup(
             RefreshAction(),
             Separator.create(),
+            InstalledToggle(),
             *packageActions.map { it as AnAction }.toTypedArray(),
             Separator.create(),
             ShowInConsoleAction(),
@@ -347,6 +349,27 @@ internal class XMakePackageActions(private val panel: XMakePackagesPanel) {
 
         override fun actionPerformed(event: AnActionEvent) {
             panel.service.refresh()
+        }
+    }
+
+    /** Toggles the table between the declared packages and the `--scan` inventory of
+     *  what is actually installed. A toggle, so the lit button says which list the rows
+     *  are: the panel's own rule for its modes. The scan rides the lane once; the
+     *  snapshot keeps the inventory, so re-entering the view costs nothing until a
+     *  refresh drops it - and a refresh while the view is on re-scans, because a
+     *  mutation just changed the store. */
+    private inner class InstalledToggle : DumbAwareToggleAction(
+        "Installed",
+        "Show the packages actually installed (xmake require --scan)",
+        AllIcons.Nodes.PackageLocal,
+    ) {
+
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun isSelected(event: AnActionEvent): Boolean = panel.service.installedShown
+
+        override fun setSelected(event: AnActionEvent, state: Boolean) {
+            panel.service.showInstalled(state)
         }
     }
 
