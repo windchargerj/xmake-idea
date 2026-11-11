@@ -20,23 +20,22 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.icons.AllIcons
 import io.xmake.project.directory.hasXMakeProjectDirectorySource
-import io.xmake.run.analysis.ANALYSIS_TOOL_WINDOW_ID
 import io.xmake.run.analysis.AnalysisService
+import io.xmake.run.analysis.showAnalysisView
 import io.xmake.run.tidy.runClangTidy
 
 /**
  * The project-wide entry to the clang-tidy check, beside XMake's Run and Build: the same
  * run the analysis view's toolbar action starts, reachable from the XMake menu and the
  * editor and project view popups, where a check is wanted without hunting for the tool
- * window first. The findings land in the XMake Analysis view, which this shows (without
- * stealing focus) so the entry keeps its promise from any context.
+ * window first. The findings land in the Analysis tab of the XMake window, which this
+ * shows (without stealing focus) so the entry keeps its promise from any context.
  */
 class CheckClangTidyAction : DumbAwareAction(
     "Run Clang-Tidy",
-    "Run the Clang-Tidy check on the project (xmake check clang.tidy) and show the findings in the XMake Analysis view",
+    "Run the Clang-Tidy check on the project (xmake check clang.tidy) and show the findings in the Analysis tab",
     AllIcons.Actions.Execute,
 ) {
 
@@ -53,8 +52,6 @@ class CheckClangTidyAction : DumbAwareAction(
     override fun actionPerformed(event: AnActionEvent) {
         val project: Project = event.project ?: return
         runClangTidy(project)
-        ToolWindowManager.getInstance(project)
-            .getToolWindow(ANALYSIS_TOOL_WINDOW_ID)
-            ?.show()
+        showAnalysisView(project)
     }
 }
