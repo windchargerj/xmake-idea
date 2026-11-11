@@ -34,7 +34,7 @@ class XMakeSanitizerRunConfigurationType :
         "XMakeSanitizerRunConfiguration",
         "XMake Sanitizer",
         "XMake run instrumented with a sanitizer (ASan, LSan, MSan, TSan, UBSan)",
-        XMakeIcons.XMAKE,
+        XMakeIcons.COLORED,
     ) {
 
     init {
