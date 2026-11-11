@@ -246,7 +246,10 @@ internal class XMakeRepositoriesPanel(
                 }
             }
             snapshot == null -> showEmpty("Loading the repositories...")
-            snapshot.repositories.isEmpty() -> showEmpty("No repositories - add one to resolve packages from")
+            snapshot.repositories.isEmpty() -> showEmpty(
+                "No repositories - add one to resolve packages from",
+                "Add Repository",
+            ) { actions.addRepositoryDialog(defaultGlobal = false) }
             model.size == 0 && query.isNotEmpty() -> showEmpty("No repository matches '${filterField.text.trim()}'")
             else -> showList()
         }

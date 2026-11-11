@@ -324,6 +324,27 @@ internal class XMakePackagesService(private val project: Project) {
         }
     }
 
+    /** Whether the table shows the installed inventory: the toggle's state, read from
+     *  the snapshot so the view and the service never disagree. */
+    val installedShown: Boolean
+        get() = snapshot?.installed != null
+
+    /** Turns the installed view on - scanning the store when it has never been read -
+     *  or off. Entering costs one scan the first time; the snapshot keeps the inventory,
+     *  so re-entering until the next refresh is free. A search term does not survive the
+     *  flip: the two lists answer different questions, so the field empties with it. */
+    fun showInstalled(on: Boolean) {
+        if (on) {
+            if (installedShown) return
+            if (snapshot?.searchResults != null) {
+                exitSearch()
+            }
+            scanInstalled()
+        } else {
+            exitInstalled()
+        }
+    }
+
     /** One full-store scan: the inventory rows, or empty when the scan died. */
     private suspend fun scanInventory(factory: XMakeCommandFactory): List<XMakePackageInfo> =
         runCancellable {

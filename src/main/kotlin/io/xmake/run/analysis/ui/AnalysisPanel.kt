@@ -17,6 +17,7 @@
 package io.xmake.run.analysis.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.ui.Messages
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
@@ -965,9 +966,23 @@ internal class AnalysisPanel(
 
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
+        override fun update(event: AnActionEvent) {
+            // Nothing to wipe, nothing to ask about: the button grays out on an empty
+            // view instead of confirming a no-op.
+            val service = AnalysisService.getInstance(project)
+            event.presentation.isEnabled = service.report != null || service.history.isNotEmpty()
+        }
+
         override fun actionPerformed(event: AnActionEvent) {
-            // A clear drops both the current report and the history - a clean slate again.
-            // It is the only wipe: a plain run's null publish keeps the history.
+            // The wipe takes the session with it - the history can hold a whole debugging
+            // afternoon - so the click asks, the way the repositories' clear does.
+            if (Messages.showYesNoDialog(
+                    project,
+                    "Clear the current findings and the whole run history?",
+                    "Clear Analysis Findings",
+                    Messages.getQuestionIcon(),
+                ) != Messages.YES
+            ) return
             AnalysisService.getInstance(project).clearAll()
         }
     }
