@@ -45,6 +45,8 @@ import io.xmake.run.command.XMakeCompileCommandsContext
 import io.xmake.run.command.XMakeCompileCommandsToolchainRequirement
 import io.xmake.run.command.compileCommandsContext
 import io.xmake.run.command.compileCommandsFile
+import io.xmake.run.command.msvcToolsetVersion
+import io.xmake.run.command.msvcVisualStudioRoot
 import io.xmake.run.command.sshConfig
 import io.xmake.run.command.toolchainRequirement
 import io.xmake.run.command.wslDistributionName
@@ -266,6 +268,20 @@ class XMakeCompDBToolchainBindingService(
                 val configId = context.sshConfig?.id
                 candidates.firstOrNull { configId != null && it.hostData?.sshConfig?.id == configId }
             }
+            XMakeCompileCommandsToolchainRequirement.MSVC -> {
+                val root = context.msvcVisualStudioRoot
+                if (root != null) {
+                    // The compiler names one Visual Studio installation; binding another
+                    // one would feed its version's headers to this compiler.
+                    candidates.firstOrNull {
+                        sameToolSetPath(it.toolSetPath, root)
+                    }
+                } else {
+                    requirement.preferredToolSetKinds().firstNotNullOfOrNull { kind ->
+                        candidates.firstOrNull { it.toolSetKind == kind }
+                    }
+                }
+            }
             else -> requirement.preferredToolSetKinds().firstNotNullOfOrNull { kind ->
                 candidates.firstOrNull { it.toolSetKind == kind }
             }
@@ -304,6 +320,11 @@ class XMakeCompDBToolchainBindingService(
         if (existing != null) {
             if (!derivedToolchains.contains(name)) return@edtWriteAction null
             if (existing.toolSetKind !in requirement.preferredToolSetKinds()) return@edtWriteAction null
+            if (requirement == XMakeCompileCommandsToolchainRequirement.MSVC &&
+                !sameToolSetPath(existing.toolSetPath, context.msvcVisualStudioRoot)
+            ) {
+                return@edtWriteAction null
+            }
             repairPersistedRemoteIdentity(existing, requirement, context)
             return@edtWriteAction existing
         }
@@ -322,6 +343,16 @@ class XMakeCompDBToolchainBindingService(
                     setName(name)
                     toolSetKind = CPPToolSet.Kind.SSH
                     hostData = HostData(config.id, config)
+                }
+            }
+            XMakeCompileCommandsToolchainRequirement.MSVC -> {
+                val root = context.msvcVisualStudioRoot ?: return@edtWriteAction null
+                // On Windows the default constructor prefers bundled GDB; an MSVC
+                // toolchain uses the bundled LLDB, which CLion also installs.
+                CPPToolchains.Toolchain(OS.CURRENT, true, false).apply {
+                    setName(name)
+                    toolSetKind = CPPToolSet.Kind.MSVC
+                    toolSetPath = root
                 }
             }
             else -> return@edtWriteAction null
@@ -414,7 +445,19 @@ private fun XMakeCompileCommandsContext.derivedToolchainName(
     XMakeCompileCommandsToolchainRequirement.SSH -> sshConfig?.let { config ->
         "${DERIVED_PREFIX}${config.presentableShortName} (${config.id.take(8)})"
     }
+    XMakeCompileCommandsToolchainRequirement.MSVC -> {
+        val root = msvcVisualStudioRoot
+        val version = msvcToolsetVersion?.split('.')?.take(2)?.joinToString(".")
+        if (root != null && version != null) "${DERIVED_PREFIX}MSVC $version" else null
+    }
     else -> null
+}
+
+/** Windows paths compare case-insensitively. */
+private fun sameToolSetPath(left: String?, right: String?): Boolean {
+    if (left.isNullOrEmpty() || right.isNullOrEmpty()) return false
+    return FileUtil.toSystemIndependentName(left).trimEnd('/')
+        .equals(FileUtil.toSystemIndependentName(right).trimEnd('/'), ignoreCase = true)
 }
 
 private fun XMakeCompileCommandsContext.environmentKey(): String? {

@@ -47,6 +47,27 @@ val XMakeCompileCommandsContext.wslDistributionName: String?
 val XMakeCompileCommandsContext.sshConfig: SshConfig?
     get() = host?.takeIf { it.type == ToolkitHostType.SSH }?.sshConfig
 
+/** The Visual Studio installation root that owns this `cl.exe`, when the compiler
+ *  came from the `<root>\VC\Tools\MSVC\<version>\bin\Host<arch>\<target>\cl.exe`
+ *  layout xmake uses. A bare toolset package, which carries no `vcvarsall.bat`
+ *  for CLion's MSVC toolchain, answers null. */
+val XMakeCompileCommandsContext.msvcVisualStudioRoot: String?
+    get() {
+        val match = MSVC_COMPILER_PATH.matchEntire(compilerPath) ?: return null
+        val root = match.groupValues[1]
+        val vcvarsall = Path.of(root, "VC", "Auxiliary", "Build", "vcvarsall.bat")
+        return root.takeIf { Files.isRegularFile(vcvarsall) }
+    }
+
+/** The MSVC toolset version of this `cl.exe`, e.g. `14.51.36231`. */
+val XMakeCompileCommandsContext.msvcToolsetVersion: String?
+    get() = MSVC_COMPILER_PATH.matchEntire(compilerPath)?.groupValues?.get(2)
+
+private val MSVC_COMPILER_PATH = Regex(
+    """^(.+?)[\\/]+VC[\\/]+Tools[\\/]+MSVC[\\/]+([^\\/]+)[\\/]+bin[\\/]+Host[^\\/]*[\\/]+[^\\/]+[\\/]+cl(?:\.exe)?$""",
+    RegexOption.IGNORE_CASE,
+)
+
 private fun firstCommandEntry(project: Project): JsonObject? {
     val file = compileCommandsFile(project)?.takeIf { Files.isRegularFile(it) } ?: return null
     return runCatching {
