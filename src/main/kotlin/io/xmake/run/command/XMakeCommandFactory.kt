@@ -75,6 +75,8 @@ internal class XMakeCommandFactory(
     }.arguments
 
     private val projectDirectory: String = project.xmakeProjectDirectories.resolveProjectDirectory(this.toolkit)
+    /** The directory every command from this factory runs in. */
+    val workingDirectory: String get() = projectDirectory
     private val configurationDirectory: String = profileConfigurationDirectory(
         profile.id,
         this.toolkit,
@@ -131,10 +133,12 @@ internal class XMakeCommandFactory(
         }
     }
 
-    fun createUpdateCompileCommands(): XMakeCommand = createCommand {
+    fun createUpdateCompileCommands(
+        lspMode: String? = CLANGD_COMPILE_COMMANDS_LSP,
+    ): XMakeCommand = createCommand {
         project {
             kind = "compile_commands"
-            lsp = "clangd"
+            lsp = lspMode
             outputDirectory = compileCommandsOutputDirectory
         }
     }
@@ -176,6 +180,17 @@ internal class XMakeCommandFactory(
         createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
             show(queryName, json = jsonOutput)
         }
+
+    /** One `xmake lua` query over every target; the script prints its payload between markers. */
+    fun createCompilersQuery(): XMakeCommand {
+        val scriptPath = SystemUtils.getScriptPath("compilers.lua")
+            ?: throw ExecutionException("The compilers query script was not found")
+        return createCommand(environmentOverrides = QUERY_ENVIRONMENT) {
+            lua {
+                script = scriptPath
+            }
+        }
+    }
 
     private fun createCommand(
         environmentVariables: EnvironmentVariablesData = EnvironmentVariablesData.DEFAULT,

@@ -24,6 +24,9 @@ internal class XMakeBuildTask(
     private val presentableName: String,
     val fetchOnSuccess: String? = null,
     commands: List<XMakeCommand>,
+    /** Builds the compile-commands command once [commands] configured the profile:
+     *  the generation flags depend on the compiler that step resolves. */
+    val updateCompileCommands: (suspend () -> XMakeCommand)? = null,
 ) : ProjectTask {
     val commands: List<XMakeCommand> = commands.toList()
     val workingDirectory: String

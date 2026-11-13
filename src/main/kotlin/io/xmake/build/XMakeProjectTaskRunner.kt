@@ -33,6 +33,7 @@ import com.intellij.task.ProjectTaskRunner
 import io.xmake.project.console.FileReferenceFilter
 import io.xmake.utils.notify
 import io.xmake.project.directory.xmakeProjectDirectories
+import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeConsoleOptions
 import io.xmake.run.command.xmakeExecutor
 import io.xmake.shared.XMakeProblem
@@ -88,25 +89,32 @@ class XMakeProjectTaskRunner : ProjectTaskRunner() {
         session: BuildSession,
     ): Result {
         val progress = session.progress
+        suspend fun runCommand(command: XMakeCommand) {
+            project.xmakeExecutor.awaitBuild(
+                command,
+                XMakeConsoleOptions(showProblems = true, preserveAnsiEscapes = true),
+                onTextAvailable = { text, outputType ->
+                    progress.output(text, ProcessOutputType.fromKey(outputType))
+                },
+                onProblems = { problems ->
+                    progress.reportProblems(problems)
+                },
+            )
+        }
         return try {
             for (task in tasks) {
                 for (command in task.commands) {
-                    project.xmakeExecutor.awaitBuild(
-                        command,
-                        XMakeConsoleOptions(showProblems = true, preserveAnsiEscapes = true),
-                        onTextAvailable = { text, outputType ->
-                            progress.output(text, ProcessOutputType.fromKey(outputType))
-                        },
-                        onProblems = { problems ->
-                            progress.reportProblems(problems)
-                        },
-                    )
+                    runCommand(command)
                 }
+                val generatedCommand = task.updateCompileCommands?.let { resolve ->
+                    val command = resolve()
+                    runCommand(command)
+                    command
+                } ?: task.commands.last()
                 task.fetchOnSuccess?.let { generatedPath ->
-                    val lastCommand = task.commands.last()
                     try {
                         fetchGeneratedFile(
-                            project, lastCommand.toolkit, lastCommand.workingDirectory,
+                            project, generatedCommand.toolkit, generatedCommand.workingDirectory,
                             project.xmakeProjectDirectories.resolveLocalSyncDirectory(), generatedPath)
                     } catch (error: CancellationException) {
                         throw error

@@ -26,9 +26,11 @@ import io.xmake.utils.notify
 import io.xmake.project.console.XMakeConsole
 import io.xmake.project.console.XMakeConsoleManager
 import io.xmake.project.directory.xmakeProjectDirectories
+import io.xmake.project.toolkit.Toolkit
 import io.xmake.run.command.XMakeCommand
 import io.xmake.run.command.XMakeCommandFactory
 import io.xmake.run.command.XMakeConsoleOptions
+import io.xmake.run.command.resolveCompileCommandsLsp
 import io.xmake.run.command.xmakeExecutor
 import io.xmake.run.command.xmakeCommands
 import io.xmake.run.target.activeOrSingleXMakeBuildProfile
@@ -78,15 +80,49 @@ abstract class XMakeCommandAction : XMakeProjectAction() {
         updateCommand: XMakeCommand,
         generatedFileRelativePath: String,
     ) {
+        updateGeneratedArtifact(
+            project, console, commandFactory,
+            updateCommand.toolkit, updateCommand.workingDirectory,
+            { updateCommand }, generatedFileRelativePath,
+        )
+    }
+
+    /** Updates the compile commands after the configure step: the generator's
+     *  include flags depend on the compiler that step resolves. */
+    internal suspend fun updateGeneratedCompileCommands(
+        project: Project,
+        console: XMakeConsole,
+        commandFactory: XMakeCommandFactory,
+        generatedFileRelativePath: String,
+    ) {
+        updateGeneratedArtifact(
+            project, console, commandFactory,
+            commandFactory.toolkit, commandFactory.workingDirectory,
+            {
+                commandFactory.createUpdateCompileCommands(
+                    commandFactory.resolveCompileCommandsLsp(project),
+                )
+            },
+            generatedFileRelativePath,
+        )
+    }
+
+    private suspend fun updateGeneratedArtifact(
+        project: Project,
+        console: XMakeConsole,
+        commandFactory: XMakeCommandFactory,
+        toolkit: Toolkit,
+        workingDirectory: String,
+        updateCommand: suspend () -> XMakeCommand,
+        generatedFileRelativePath: String,
+    ) {
         val execution = project.xmakeExecutor
-        val toolkit = updateCommand.toolkit
-        val workingDirectory = updateCommand.workingDirectory
         val localDirectory = project.xmakeProjectDirectories.resolveLocalSyncDirectory()
         syncBeforeFetch(project, toolkit, workingDirectory, localDirectory)
         execution.execute(console, commandFactory.createConfigure())
         execution.execute(
             console,
-            updateCommand,
+            updateCommand(),
             XMakeConsoleOptions(showConsole = false, showProblems = true, showExitCode = true),
         )
         fetchGeneratedFile(project, toolkit, workingDirectory, localDirectory, generatedFileRelativePath)

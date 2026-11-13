@@ -30,11 +30,10 @@ class UpdateCompileCommandsAction : XMakeCommandAction() {
         console: XMakeConsole,
         commandFactory: XMakeCommandFactory,
     ) {
-        updateGeneratedArtifact(
+        updateGeneratedCompileCommands(
             project,
             console,
             commandFactory,
-            commandFactory.createUpdateCompileCommands(),
             commandFactory.compileCommandsGeneratedPath,
         )
     }

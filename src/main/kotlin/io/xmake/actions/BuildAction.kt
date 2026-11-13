@@ -25,6 +25,7 @@ import io.xmake.build.XMakeBuildTask
 import io.xmake.project.profile.XMakeBuildProfile
 import io.xmake.project.xmakeSettings
 import io.xmake.run.command.XMakeCommandFactory
+import io.xmake.run.command.resolveCompileCommandsLsp
 
 open class BuildAction : XMakeBuildAction() {
 
@@ -32,17 +33,24 @@ open class BuildAction : XMakeBuildAction() {
         project: Project,
         profile: XMakeBuildProfile,
         commandFactory: XMakeCommandFactory,
-    ): XMakeBuildTask = XMakeBuildTask(
-        presentableName = "Build '${profile.name}'",
-        commands = buildList {
-            add(commandFactory.createConfigure())
-            add(commandFactory.createBuild())
-            if (project.xmakeSettings.autoUpdateCompileCommands) {
-                add(commandFactory.createUpdateCompileCommands())
-            }
-        },
-        fetchOnSuccess = if (project.xmakeSettings.autoUpdateCompileCommands) {
-            commandFactory.compileCommandsGeneratedPath
-        } else null,
-    )
+    ): XMakeBuildTask {
+        val updateCompileCommands = project.xmakeSettings.autoUpdateCompileCommands
+        return XMakeBuildTask(
+            presentableName = "Build '${profile.name}'",
+            commands = buildList {
+                add(commandFactory.createConfigure())
+                add(commandFactory.createBuild())
+            },
+            updateCompileCommands = if (updateCompileCommands) {
+                {
+                    commandFactory.createUpdateCompileCommands(
+                        commandFactory.resolveCompileCommandsLsp(project),
+                    )
+                }
+            } else null,
+            fetchOnSuccess = if (updateCompileCommands) {
+                commandFactory.compileCommandsGeneratedPath
+            } else null,
+        )
+    }
 }
