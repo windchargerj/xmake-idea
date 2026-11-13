@@ -53,6 +53,7 @@ import io.xmake.project.toolkit.installationKey
 import io.xmake.utils.runCancellable
 import io.xmake.project.directory.xmakeProjectDirectories
 import io.xmake.project.toolkit.Toolkit
+import io.xmake.project.toolkit.ToolkitHostType
 import io.xmake.project.toolkit.ui.ToolkitComboBox
 import io.xmake.project.toolkit.ui.ToolkitListItem
 import io.xmake.utils.execute.SyncDirection
@@ -167,7 +168,9 @@ internal class XMakeBuildProfileForm(
                 startFileTransfer(SyncDirection.REMOTE_TO_LOCAL)
             }
         }.visibleIf(ComboBoxPredicate<ToolkitListItem>(toolkitComboBox) { item ->
-            (item as? ToolkitListItem.Entry)?.toolkit?.requiresBackend == true
+            // WSL works in the local project directory through its mount, so it never needs
+            // to transfer files. Only an SSH host keeps a separate copy.
+            (item as? ToolkitListItem.Entry)?.toolkit?.host?.type == ToolkitHostType.SSH
         })
     }.apply {
         border = IntelliJSpacingConfiguration().dialogUnscaledGaps.toJBEmptyBorder()

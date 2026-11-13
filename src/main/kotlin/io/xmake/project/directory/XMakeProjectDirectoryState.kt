@@ -3,6 +3,7 @@ package io.xmake.project.directory
 import com.intellij.util.xmlb.annotations.Attribute
 import com.intellij.util.xmlb.annotations.OptionTag
 import com.intellij.util.xmlb.annotations.Tag
+import io.xmake.project.toolkit.ToolkitHostType
 
 /** The persisted project-directory schema. An empty [localDirectory] means "not configured":
  *  resolution then falls back to the IDE project root when it contains a root xmake.lua.
@@ -13,7 +14,8 @@ data class XMakeProjectDirectoryState(
     var localDirectory: String = "",
     var hostDirectories: MutableList<HostDirectory> = mutableListOf(),
 ) {
-    /** A project directory location specific to a non-local toolkit host. */
+    /** A project directory location specific to an SSH host. WSL runs in the local project
+     *  directory through its mount and never needs a host entry. */
     @Tag("hostDirectory")
     data class HostDirectory(
         @Attribute("host")
@@ -25,13 +27,20 @@ data class XMakeProjectDirectoryState(
     fun copyState(): XMakeProjectDirectoryState =
         copy(hostDirectories = hostDirectories.map(HostDirectory::copy).toMutableList())
 
-    /** Returns the canonical snapshot: trimmed values, no blank entries, one entry per host. */
+    /** Returns the canonical snapshot: trimmed values, no blank entries, one entry per host.
+     *  WSL entries persisted by older versions are dropped: WSL now always uses the local
+     *  project directory, and a stale entry must not keep the project looking configured. */
     fun normalized(): XMakeProjectDirectoryState = XMakeProjectDirectoryState(
         localDirectory = localDirectory.trim(),
         hostDirectories = hostDirectories
+            .asSequence()
             .map { it.copy(hostId = it.hostId.trim(), directory = it.directory.trim()) }
             .filter { it.hostId.isNotEmpty() && it.directory.isNotEmpty() }
+            .filterNot { it.isWslHost() }
             .distinctBy { it.hostId }
             .toMutableList(),
     )
+
+    private fun HostDirectory.isWslHost(): Boolean =
+        hostId == ToolkitHostType.WSL.name || hostId.startsWith("${ToolkitHostType.WSL.name}:")
 }
