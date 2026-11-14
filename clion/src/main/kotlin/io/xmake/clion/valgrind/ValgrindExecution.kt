@@ -215,4 +215,4 @@ private fun notifyValgrindReport(
         .notify(project)
 }
 
-private val Log = Logger.getInstance("io.xmake.debug.clion.valgrind.ValgrindExecution")
+private val Log = Logger.getInstance("io.xmake.clion.valgrind.ValgrindExecution")
