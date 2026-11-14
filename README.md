@@ -202,8 +202,8 @@ as it does when the finished build holds no instrumented objects.
 | Coverage (`-m coverage`, gcov) | Run with coverage | Coverage view + line highlighting | any |
 | Valgrind memcheck (`-m valgrind`) | Valgrind executor | CLion memory view | CLion |
 | perf profiling (`-m profile`) | Profiler executor | Flame graph | CLion |
-| Sanitizers (ASan/LSan/MSan/TSan/UBSan) | Run configuration | XMake Analysis view, editor marks, Problems view | any |
-| clang-tidy | XMake Analysis toolbar | XMake Analysis view, editor marks, Problems view | any |
+| Sanitizers (ASan/LSan/MSan/TSan/UBSan) | Run configuration | Analysis tab (XMake window), editor marks, Problems view | any |
+| clang-tidy | Analysis tab toolbar | Analysis tab (XMake window), editor marks, Problems view | any |
 
 ### Sanitizers
 
@@ -212,7 +212,7 @@ as it does when the finished build holds no instrumented objects.
 2. Run as usual. The run reconfigures with the sanitizer's `build.sanitizer.*` policy
    (not the deprecated `mode.asan`-style rules, so it works on every project), rebuilds
    with full debug information, and runs the target.
-3. The findings land in the **XMake Analysis** tool window: grouped by error type,
+3. The findings land in the **Analysis** tab of the XMake tool window: grouped by error type,
    identical reports merged with a count, every stack frame clickable back to its source
    line, the full report text in the details pane, and the blamed lines marked in the
    open editors. WSL and SSH runs map the reported paths back to your local files.
@@ -228,7 +228,7 @@ and on Windows AddressSanitizer runs under MSVC or clang.
 
 ### clang-tidy
 
-The XMake Analysis view's toolbar runs `xmake check clang.tidy` over the project; xmake
+The Analysis tab's toolbar in the XMake tool window runs `xmake check clang.tidy` over the project; xmake
 builds the compile database the checker reads (and installs clang-tidy itself on first
 use), and the findings land in the same view as the sanitizers - findings grouped by
 check, repeats merged with a count, every location clickable back to its source line.
